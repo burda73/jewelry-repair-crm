@@ -558,7 +558,16 @@ export class OrdersService {
   /** Найти клиента по телефону или создать нового (ТЗ п. 2.1: поиск по телефону). */
   private async resolveCustomer(
     tx: Parameters<Parameters<PrismaService['runInTransaction']>[0]>[0],
-    data: { customer?: { fullName: string; phone: string; consentCallRecording: boolean; consentMarketing: boolean; email?: string; notes?: string } },
+    data: {
+      customer?: {
+        fullName: string;
+        phone: string;
+        consentCallRecording: boolean;
+        consentMarketing: boolean;
+        email?: string;
+        notes?: string;
+      };
+    },
     user: AuthenticatedUser,
   ): Promise<string> {
     if (!data.customer) {
@@ -668,7 +677,8 @@ export class OrdersService {
     if (query.overdue) conditions.push({ dueAt: { lt: new Date() } });
     if (query.isWarranty !== undefined) conditions.push({ isWarranty: query.isWarranty });
     if (query.priority) conditions.push({ priority: query.priority });
-    if (query.orderNo) conditions.push({ orderNo: { contains: query.orderNo, mode: 'insensitive' } });
+    if (query.orderNo)
+      conditions.push({ orderNo: { contains: query.orderNo, mode: 'insensitive' } });
     if (query.customerPhone) {
       const phoneNormalized = normalizePhone(query.customerPhone);
       if (phoneNormalized) conditions.push({ customer: { phoneNormalized } });
@@ -793,10 +803,7 @@ export class OrdersService {
     }
 
     // Доступные действия для текущего пользователя — UI не дублирует матрицу прав.
-    const availableActions = this.workflow.getAvailableTransitions(
-      order.status,
-      user.primaryRole,
-    );
+    const availableActions = this.workflow.getAvailableTransitions(order.status, user.primaryRole);
 
     return {
       ...order,

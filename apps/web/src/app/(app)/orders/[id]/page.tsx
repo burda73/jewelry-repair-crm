@@ -87,8 +87,7 @@ export default function OrderDetailPage(): ReactNode {
   // получает все права автоматически (ROLE_PERMISSIONS[ADMIN] = все права).
   // Приёмщик платежи ВИДИТ, но не принимает — это разделение ответственности
   // за наличные (docs/02-domain-and-roles.md).
-  const canPay =
-    can('payment:create') && data.status !== 'CANCELLED' && data.status !== 'REFUSED';
+  const canPay = can('payment:create') && data.status !== 'CANCELLED' && data.status !== 'REFUSED';
   const hasDebt = data.remainingMinor > 0;
 
   /*
@@ -224,7 +223,10 @@ export default function OrderDetailPage(): ReactNode {
         ) : null}
       </header>
 
-      <Tabs.Root defaultValue="overview" className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <Tabs.Root
+        defaultValue="overview"
+        className="rounded-xl border border-slate-200 bg-white shadow-sm"
+      >
         <Tabs.List className="flex gap-1 overflow-x-auto border-b border-slate-200 px-2">
           {(
             [
@@ -315,7 +317,9 @@ export default function OrderDetailPage(): ReactNode {
                   <Row
                     label={t.order.remaining}
                     value={
-                      <span className={data.remainingMinor > 0 ? 'text-amber-600' : 'text-emerald-600'}>
+                      <span
+                        className={data.remainingMinor > 0 ? 'text-amber-600' : 'text-emerald-600'}
+                      >
                         {formatMinorExact(data.remainingMinor)}
                       </span>
                     }
@@ -331,7 +335,9 @@ export default function OrderDetailPage(): ReactNode {
                 ) : null}
               </div>
 
-              <h2 className="mb-2 mt-4 text-sm font-semibold text-slate-500">{t.order.production}</h2>
+              <h2 className="mb-2 mt-4 text-sm font-semibold text-slate-500">
+                {t.order.production}
+              </h2>
               <div className="rounded-lg border border-slate-200 p-3">
                 <dl>
                   <Row label={t.orders.store} value={data.createdStore.name} />
@@ -386,9 +392,7 @@ export default function OrderDetailPage(): ReactNode {
                         {formatMinorExact(work.unitPriceMinor)}
                       </td>
                       <td className="px-3 py-2 text-right font-medium tabular-nums">
-                        {formatMinorExact(
-                          work.unitPriceMinor * Math.round(Number(work.quantity)),
-                        )}
+                        {formatMinorExact(work.unitPriceMinor * Math.round(Number(work.quantity)))}
                       </td>
                     </tr>
                   ))}
@@ -493,11 +497,7 @@ export default function OrderDetailPage(): ReactNode {
         </Tabs.Content>
       </Tabs.Root>
 
-      <TransitionDialog
-        open={transitionOpen}
-        onOpenChange={setTransitionOpen}
-        order={data}
-      />
+      <TransitionDialog open={transitionOpen} onOpenChange={setTransitionOpen} order={data} />
 
       <PaymentDialog open={paymentOpen} onOpenChange={setPaymentOpen} order={data} />
 

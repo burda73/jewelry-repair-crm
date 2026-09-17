@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  UnauthorizedException,
-  BadRequestException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { hash, verify } from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
@@ -73,10 +68,7 @@ export class AuthService {
    * «нет такого пользователя» и «неверный пароль» — чтобы не раскрывать
    * существование учётных записей.
    */
-  async login(
-    input: unknown,
-    meta: { ip?: string; userAgent?: string },
-  ): Promise<AuthResult> {
+  async login(input: unknown, meta: { ip?: string; userAgent?: string }): Promise<AuthResult> {
     const parsed = loginSchema.safeParse(input);
     if (!parsed.success) {
       throw new BadRequestException({
@@ -277,7 +269,9 @@ export class AuthService {
     }
 
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
-    const currentValid = await verify(user.passwordHash, parsed.data.currentPassword).catch(() => false);
+    const currentValid = await verify(user.passwordHash, parsed.data.currentPassword).catch(
+      () => false,
+    );
 
     if (!currentValid) {
       throw new BadRequestException({

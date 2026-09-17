@@ -149,10 +149,7 @@ export function buildReceiptBarcode(data: { orderNo: string }): string {
  * Гарантийный заказ печатается без денег: клиент не платит за повторный
  * ремонт по гарантии, и приёмщик не должен вписывать сумму от руки.
  */
-export function receiptNotice(data: {
-  isWarranty: boolean;
-  requiresPrepayment: boolean;
-}): string {
+export function receiptNotice(data: { isWarranty: boolean; requiresPrepayment: boolean }): string {
   if (data.isWarranty) {
     return 'Гарантийный ремонт — выполняется без оплаты.';
   }

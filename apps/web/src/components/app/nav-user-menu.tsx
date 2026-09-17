@@ -51,9 +51,7 @@ export function NavUserMenu(): ReactNode {
           {user.fullName.slice(0, 1).toUpperCase()}
         </span>
         <span className="hidden min-w-0 sm:block">
-          <span className="block truncate text-sm font-medium text-slate-800">
-            {user.fullName}
-          </span>
+          <span className="block truncate text-sm font-medium text-slate-800">{user.fullName}</span>
           <span className="block truncate text-xs text-slate-500">{roleLabel}</span>
         </span>
         <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />

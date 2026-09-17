@@ -35,7 +35,9 @@ let shuttingDown = false;
 
 function log(message: string): void {
   // Структурированный лог: воркеры не имеют requestId, поэтому указываем имя.
-  process.stdout.write(`${JSON.stringify({ level: 'info', worker: 'runner', message, ts: new Date().toISOString() })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({ level: 'info', worker: 'runner', message, ts: new Date().toISOString() })}\n`,
+  );
 }
 
 function logError(workerName: string, error: unknown): void {

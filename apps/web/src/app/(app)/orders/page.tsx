@@ -4,11 +4,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Plus, SlidersHorizontal, X } from 'lucide-react';
-import {
-  ALL_ORDER_STATUSES,
-  STATUS_LABELS,
-  type OrderStatus,
-} from '@app/shared';
+import { ALL_ORDER_STATUSES, STATUS_LABELS, type OrderStatus } from '@app/shared';
 import { useAuth } from '@/lib/auth-context';
 import { useOrders } from '@/lib/queries';
 import { formatDate, formatMinor, formatPhoneValue, daysUntil, plural } from '@/lib/format';
@@ -40,8 +36,7 @@ function DueCell({ order }: { order: OrderListItem }): ReactNode {
   if (days <= 2) {
     return (
       <span className="font-medium text-amber-600">
-        {formatDate(order.dueAt)} · {t.order.daysLeft} {days}{' '}
-        {plural(days, 'день', 'дня', 'дней')}
+        {formatDate(order.dueAt)} · {t.order.daysLeft} {days} {plural(days, 'день', 'дня', 'дней')}
       </span>
     );
   }
@@ -127,7 +122,9 @@ export default function OrdersPage(): ReactNode {
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">{t.orders.status}</span>
+              <span className="mb-1 block text-sm font-medium text-slate-700">
+                {t.orders.status}
+              </span>
               <Select
                 value={filters.status?.[0] ?? ''}
                 onChange={(event) => {

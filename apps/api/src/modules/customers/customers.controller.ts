@@ -52,10 +52,7 @@ export class CustomersController {
   @RequirePermission(PERMISSION.ORDER_CREATE)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Создать клиента (409, если телефон уже зарегистрирован)' })
-  create(
-    @Body() body: unknown,
-    @CurrentUser() user: AuthenticatedUser,
-  ): Promise<CustomerDetails> {
+  create(@Body() body: unknown, @CurrentUser() user: AuthenticatedUser): Promise<CustomerDetails> {
     return this.customersService.create(body, user);
   }
 

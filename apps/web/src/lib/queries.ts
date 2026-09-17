@@ -46,8 +46,7 @@ export const orderKeys = {
   timeline: (id: string) => ['orders', 'timeline', id] as const,
   search: (term: string) => ['orders', 'search', term] as const,
   payments: (orderId: string) => ['orders', 'payments', orderId] as const,
-  photos: (orderId: string, itemId: string) =>
-    ['orders', 'photos', orderId, itemId] as const,
+  photos: (orderId: string, itemId: string) => ['orders', 'photos', orderId, itemId] as const,
 };
 
 /**
@@ -400,14 +399,10 @@ export function usePrintReceipt(): UseMutationResult<void, Error, string> {
  * обновить только список фотографий, а не всю карточку с платежами и историей.
  * Карточка при этом тоже инвалидируется — фото приходят и в ней.
  */
-export function useItemPhotos(
-  orderId: string,
-  itemId: string,
-): UseQueryResult<ItemPhotoView[]> {
+export function useItemPhotos(orderId: string, itemId: string): UseQueryResult<ItemPhotoView[]> {
   return useQuery<ItemPhotoView[]>({
     queryKey: orderKeys.photos(orderId, itemId),
-    queryFn: () =>
-      api.get<ItemPhotoView[]>(`/orders/${orderId}/items/${itemId}/photos`),
+    queryFn: () => api.get<ItemPhotoView[]>(`/orders/${orderId}/items/${itemId}/photos`),
     enabled: orderId !== '' && itemId !== '',
   });
 }
@@ -435,10 +430,7 @@ export function useUploadPhoto(
       const form = new FormData();
       for (const file of files) form.append('files', file);
       form.append('kind', kind);
-      return api.postForm<ItemPhotoView[]>(
-        `/orders/${orderId}/items/${itemId}/photos`,
-        form,
-      );
+      return api.postForm<ItemPhotoView[]>(`/orders/${orderId}/items/${itemId}/photos`, form);
     },
     onSuccess: (photos) => {
       toast.showSuccess(
@@ -547,7 +539,8 @@ export function useCustomerSearch(term: string): UseQueryResult<CustomerSearchIt
 
   return useQuery<CustomerSearchItem[], Error>({
     queryKey: ['customers', 'search', trimmed],
-    queryFn: () => api.get<CustomerSearchItem[]>(`/customers/search?q=${encodeURIComponent(trimmed)}`),
+    queryFn: () =>
+      api.get<CustomerSearchItem[]>(`/customers/search?q=${encodeURIComponent(trimmed)}`),
     enabled: trimmed.length >= 3,
     placeholderData: (previous) => previous,
   });
@@ -611,8 +604,7 @@ export function useCreateOrder(): UseMutationResult<
   const queryClient = useQueryClient();
 
   return useMutation<CreatedOrderResponse, Error, CreateOrderVariables>({
-    mutationFn: (input: CreateOrderVariables) =>
-      api.post<CreatedOrderResponse>('/orders', input),
+    mutationFn: (input: CreateOrderVariables) => api.post<CreatedOrderResponse>('/orders', input),
     onSuccess: () => {
       // Список заказов и счётчики дашборда изменились: новый заказ виден и там.
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });

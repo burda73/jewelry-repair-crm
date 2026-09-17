@@ -112,9 +112,9 @@ describe('Хранилище: сохранение фотографий', () => 
     const small = makeService(dir, 100);
     await small.onModuleInit();
     const png = await makePng(500, 500);
-    await expect(
-      small.savePhoto({ buffer: png, folder: 'orders/o5/items/i5' }),
-    ).rejects.toThrow(/больше допустимого/);
+    await expect(small.savePhoto({ buffer: png, folder: 'orders/o5/items/i5' })).rejects.toThrow(
+      /больше допустимого/,
+    );
   });
 
   it('отклоняет не-изображение', async () => {

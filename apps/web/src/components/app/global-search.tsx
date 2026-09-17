@@ -115,7 +115,9 @@ export function GlobalSearch(): ReactNode {
                   <span className="truncate">
                     {result.customer.fullName} · {formatPhoneValue(result.customer.phoneNormalized)}
                   </span>
-                  <span className="shrink-0 tabular-nums">{formatMinor(result.totalAmountMinor)}</span>
+                  <span className="shrink-0 tabular-nums">
+                    {formatMinor(result.totalAmountMinor)}
+                  </span>
                 </div>
                 <div className="mt-0.5 flex items-center justify-between gap-2 text-xs text-slate-400">
                   <span>{result.createdStore.name}</span>

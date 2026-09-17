@@ -38,9 +38,24 @@ async function hashDemoPassword(): Promise<string> {
 
 async function seedStores() {
   const stores = [
-    { code: 'MSK1', name: 'Магазин на Тверской', address: 'Москва, ул. Тверская, 12', phone: '+74951234567' },
-    { code: 'MSK2', name: 'Магазин в ТЦ «Афимолл»', address: 'Москва, Пресненская наб., 2', phone: '+74952345678' },
-    { code: 'SPB1', name: 'Магазин на Невском', address: 'Санкт-Петербург, Невский пр., 88', phone: '+78123456789' },
+    {
+      code: 'MSK1',
+      name: 'Магазин на Тверской',
+      address: 'Москва, ул. Тверская, 12',
+      phone: '+74951234567',
+    },
+    {
+      code: 'MSK2',
+      name: 'Магазин в ТЦ «Афимолл»',
+      address: 'Москва, Пресненская наб., 2',
+      phone: '+74952345678',
+    },
+    {
+      code: 'SPB1',
+      name: 'Магазин на Невском',
+      address: 'Санкт-Петербург, Невский пр., 88',
+      phone: '+78123456789',
+    },
   ];
 
   const result = [];
@@ -82,7 +97,11 @@ async function seedPerformers(workshopId: string) {
   const performers = [
     { fullName: 'Петров Пётр Петрович', specialization: 'пайка', grade: 'ювелир 5 разряда' },
     { fullName: 'Сидорова Анна Ивановна', specialization: 'закрепка', grade: 'ювелир 6 разряда' },
-    { fullName: 'Кузнецов Дмитрий Олегович', specialization: 'полировка', grade: 'ювелир 4 разряда' },
+    {
+      fullName: 'Кузнецов Дмитрий Олегович',
+      specialization: 'полировка',
+      grade: 'ювелир 4 разряда',
+    },
   ];
 
   for (const performer of performers) {
@@ -113,17 +132,74 @@ async function seedUsers(stores: { id: string; code: string }[]) {
     storeId?: string;
     scope: DataScope;
   }[] = [
-    { email: 'admin@remixgold.ru', fullName: 'Администратор Системы', phone: '+79000000001', role: RoleCode.ADMIN, scope: DataScope.ALL_STORES },
-    { email: 'manager@remixgold.ru', fullName: 'Руководитель Сети', phone: '+79000000002', role: RoleCode.MANAGER, scope: DataScope.ALL_STORES },
-    { email: 'receiver1@remixgold.ru', fullName: 'Иванова Мария Сергеевна', phone: '+79000000003', role: RoleCode.RECEIVER, storeId: msk1.id, scope: DataScope.STORE_PLUS_GLOBAL_SEARCH },
-    { email: 'receiver2@remixgold.ru', fullName: 'Смирнов Алексей Петрович', phone: '+79000000004', role: RoleCode.RECEIVER, storeId: msk2.id, scope: DataScope.STORE_PLUS_GLOBAL_SEARCH },
+    {
+      email: 'admin@remixgold.ru',
+      fullName: 'Администратор Системы',
+      phone: '+79000000001',
+      role: RoleCode.ADMIN,
+      scope: DataScope.ALL_STORES,
+    },
+    {
+      email: 'manager@remixgold.ru',
+      fullName: 'Руководитель Сети',
+      phone: '+79000000002',
+      role: RoleCode.MANAGER,
+      scope: DataScope.ALL_STORES,
+    },
+    {
+      email: 'receiver1@remixgold.ru',
+      fullName: 'Иванова Мария Сергеевна',
+      phone: '+79000000003',
+      role: RoleCode.RECEIVER,
+      storeId: msk1.id,
+      scope: DataScope.STORE_PLUS_GLOBAL_SEARCH,
+    },
+    {
+      email: 'receiver2@remixgold.ru',
+      fullName: 'Смирнов Алексей Петрович',
+      phone: '+79000000004',
+      role: RoleCode.RECEIVER,
+      storeId: msk2.id,
+      scope: DataScope.STORE_PLUS_GLOBAL_SEARCH,
+    },
     // Менеджер обработки поступающих ремонтов — ответственный за приёмку и эксплуатацию (ответ A2).
-    { email: 'production@remixgold.ru', fullName: 'Морозов Виктор Андреевич', phone: '+79000000005', role: RoleCode.PRODUCTION_MANAGER, scope: DataScope.PRODUCTION },
-    { email: 'logist@remixgold.ru', fullName: 'Волков Игорь Николаевич', phone: '+79000000006', role: RoleCode.LOGISTICIAN, scope: DataScope.PRODUCTION },
-    { email: 'cashier@remixgold.ru', fullName: 'Фёдорова Ольга Дмитриевна', phone: '+79000000007', role: RoleCode.CASHIER, storeId: msk1.id, scope: DataScope.STORE_PLUS_GLOBAL_SEARCH },
-    { email: 'auditor@remixgold.ru', fullName: 'Аудитор Внешний', phone: '+79000000008', role: RoleCode.AUDITOR, scope: DataScope.READ_ALL },
+    {
+      email: 'production@remixgold.ru',
+      fullName: 'Морозов Виктор Андреевич',
+      phone: '+79000000005',
+      role: RoleCode.PRODUCTION_MANAGER,
+      scope: DataScope.PRODUCTION,
+    },
+    {
+      email: 'logist@remixgold.ru',
+      fullName: 'Волков Игорь Николаевич',
+      phone: '+79000000006',
+      role: RoleCode.LOGISTICIAN,
+      scope: DataScope.PRODUCTION,
+    },
+    {
+      email: 'cashier@remixgold.ru',
+      fullName: 'Фёдорова Ольга Дмитриевна',
+      phone: '+79000000007',
+      role: RoleCode.CASHIER,
+      storeId: msk1.id,
+      scope: DataScope.STORE_PLUS_GLOBAL_SEARCH,
+    },
+    {
+      email: 'auditor@remixgold.ru',
+      fullName: 'Аудитор Внешний',
+      phone: '+79000000008',
+      role: RoleCode.AUDITOR,
+      scope: DataScope.READ_ALL,
+    },
     // Главный бухгалтер — соутверждает прейскурант (ответ A2).
-    { email: 'accountant@remixgold.ru', fullName: 'Главный Бухгалтер Предприятия', phone: '+79000000009', role: RoleCode.CHIEF_ACCOUNTANT, scope: DataScope.ALL_STORES },
+    {
+      email: 'accountant@remixgold.ru',
+      fullName: 'Главный Бухгалтер Предприятия',
+      phone: '+79000000009',
+      role: RoleCode.CHIEF_ACCOUNTANT,
+      scope: DataScope.ALL_STORES,
+    },
   ];
 
   for (const user of users) {
@@ -202,7 +278,9 @@ async function seedWorkingCalendar() {
   if (toCreate.length > 0) {
     await prisma.workingCalendar.createMany({ data: toCreate, skipDuplicates: true });
   }
-  console.log(`  Дней рабочего календаря добавлено: ${toCreate.length} (уже было: ${existingDates.size})`);
+  console.log(
+    `  Дней рабочего календаря добавлено: ${toCreate.length} (уже было: ${existingDates.size})`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -219,15 +297,69 @@ async function seedWorkingCalendar() {
 
 async function seedStageNorms() {
   const norms = [
-    { stage: 'APPROVAL', workType: 'ANY', value: 3, unit: 'WORKDAY', escalateToRole: RoleCode.RECEIVER },
-    { stage: 'PREPAYMENT', workType: 'ANY', value: 5, unit: 'WORKDAY', escalateToRole: RoleCode.RECEIVER },
-    { stage: 'DISPATCH', workType: 'ANY', value: 24, unit: 'WORKHOUR', escalateToRole: RoleCode.PRODUCTION_MANAGER },
-    { stage: 'DELIVERY_OUT', workType: 'ANY', value: 8, unit: 'WORKHOUR', escalateToRole: RoleCode.LOGISTICIAN },
-    { stage: 'PRODUCTION', workType: 'SIMPLE', value: 5, unit: 'WORKDAY', escalateToRole: RoleCode.PRODUCTION_MANAGER },
-    { stage: 'PRODUCTION', workType: 'COMPLEX', value: 15, unit: 'WORKDAY', escalateToRole: RoleCode.PRODUCTION_MANAGER },
-    { stage: 'DELIVERY_IN', workType: 'ANY', value: 8, unit: 'WORKHOUR', escalateToRole: RoleCode.LOGISTICIAN },
-    { stage: 'STORAGE', workType: 'ANY', value: 30, unit: 'CALENDAR_DAY', escalateToRole: RoleCode.RECEIVER },
-    { stage: 'CLAIM', workType: 'ANY', value: 10, unit: 'WORKDAY', escalateToRole: RoleCode.PRODUCTION_MANAGER },
+    {
+      stage: 'APPROVAL',
+      workType: 'ANY',
+      value: 3,
+      unit: 'WORKDAY',
+      escalateToRole: RoleCode.RECEIVER,
+    },
+    {
+      stage: 'PREPAYMENT',
+      workType: 'ANY',
+      value: 5,
+      unit: 'WORKDAY',
+      escalateToRole: RoleCode.RECEIVER,
+    },
+    {
+      stage: 'DISPATCH',
+      workType: 'ANY',
+      value: 24,
+      unit: 'WORKHOUR',
+      escalateToRole: RoleCode.PRODUCTION_MANAGER,
+    },
+    {
+      stage: 'DELIVERY_OUT',
+      workType: 'ANY',
+      value: 8,
+      unit: 'WORKHOUR',
+      escalateToRole: RoleCode.LOGISTICIAN,
+    },
+    {
+      stage: 'PRODUCTION',
+      workType: 'SIMPLE',
+      value: 5,
+      unit: 'WORKDAY',
+      escalateToRole: RoleCode.PRODUCTION_MANAGER,
+    },
+    {
+      stage: 'PRODUCTION',
+      workType: 'COMPLEX',
+      value: 15,
+      unit: 'WORKDAY',
+      escalateToRole: RoleCode.PRODUCTION_MANAGER,
+    },
+    {
+      stage: 'DELIVERY_IN',
+      workType: 'ANY',
+      value: 8,
+      unit: 'WORKHOUR',
+      escalateToRole: RoleCode.LOGISTICIAN,
+    },
+    {
+      stage: 'STORAGE',
+      workType: 'ANY',
+      value: 30,
+      unit: 'CALENDAR_DAY',
+      escalateToRole: RoleCode.RECEIVER,
+    },
+    {
+      stage: 'CLAIM',
+      workType: 'ANY',
+      value: 10,
+      unit: 'WORKDAY',
+      escalateToRole: RoleCode.PRODUCTION_MANAGER,
+    },
   ];
 
   const effectiveFrom = new Date();
@@ -337,7 +469,6 @@ async function seedPriceList() {
 
   console.log(`  Позиций прейскуранта: ${PRICE_LIST_POSITIONS.length} (золото/серебро)`);
 
-
   const stoneTypes = [
     { code: 'CUBIC', name: 'Фианит', priceMinor: 30000 },
     { code: 'ZIRCON', name: 'Циркон', priceMinor: 50000 },
@@ -365,15 +496,51 @@ async function seedPriceList() {
 
 async function seedNotificationTemplates() {
   const templates = [
-    { code: 'ORDER_ACCEPTED', subject: 'Заказ принят', body: 'Заказ {{orderNo}} принят в работу. Плановая готовность: {{dueDate}}.' },
-    { code: 'APPROVAL_REQUEST', subject: 'Требуется согласование', body: 'Согласуйте стоимость ремонта по заказу {{orderNo}}: {{amount}}.' },
-    { code: 'PREPAYMENT_RECEIVED', subject: 'Предоплата получена', body: 'Предоплата по заказу {{orderNo}} получена. Работы начаты.' },
-    { code: 'READY_FOR_PICKUP', subject: 'Заказ готов', body: 'Заказ {{orderNo}} готов к выдаче в {{storeName}}.' },
-    { code: 'UNCLAIMED_REMINDER', subject: 'Напоминание о заказе', body: 'Заказ {{orderNo}} ожидает вас более 30 дней.' },
-    { code: 'WARRANTY_ISSUED', subject: 'Гарантия оформлена', body: 'Гарантия по заказу {{orderNo}} действует до {{warrantyUntil}}.' },
-    { code: 'ORDER_OVERDUE', subject: 'Просрочка по заказу', body: 'Заказ {{orderNo}} просрочен на {{overdueDays}} дн. Этап: {{stage}}.' },
-    { code: 'ESCALATION_MANAGER', subject: 'Эскалация: просрочка более 1 дня', body: 'Заказ {{orderNo}} просрочен более чем на рабочий день. Ответственный: {{responsible}}.' },
-    { code: 'CLAIM_DEADLINE', subject: 'Срок рекламации', body: 'По рекламации {{claimNo}} истекает срок рассмотрения {{dueDate}}.' },
+    {
+      code: 'ORDER_ACCEPTED',
+      subject: 'Заказ принят',
+      body: 'Заказ {{orderNo}} принят в работу. Плановая готовность: {{dueDate}}.',
+    },
+    {
+      code: 'APPROVAL_REQUEST',
+      subject: 'Требуется согласование',
+      body: 'Согласуйте стоимость ремонта по заказу {{orderNo}}: {{amount}}.',
+    },
+    {
+      code: 'PREPAYMENT_RECEIVED',
+      subject: 'Предоплата получена',
+      body: 'Предоплата по заказу {{orderNo}} получена. Работы начаты.',
+    },
+    {
+      code: 'READY_FOR_PICKUP',
+      subject: 'Заказ готов',
+      body: 'Заказ {{orderNo}} готов к выдаче в {{storeName}}.',
+    },
+    {
+      code: 'UNCLAIMED_REMINDER',
+      subject: 'Напоминание о заказе',
+      body: 'Заказ {{orderNo}} ожидает вас более 30 дней.',
+    },
+    {
+      code: 'WARRANTY_ISSUED',
+      subject: 'Гарантия оформлена',
+      body: 'Гарантия по заказу {{orderNo}} действует до {{warrantyUntil}}.',
+    },
+    {
+      code: 'ORDER_OVERDUE',
+      subject: 'Просрочка по заказу',
+      body: 'Заказ {{orderNo}} просрочен на {{overdueDays}} дн. Этап: {{stage}}.',
+    },
+    {
+      code: 'ESCALATION_MANAGER',
+      subject: 'Эскалация: просрочка более 1 дня',
+      body: 'Заказ {{orderNo}} просрочен более чем на рабочий день. Ответственный: {{responsible}}.',
+    },
+    {
+      code: 'CLAIM_DEADLINE',
+      subject: 'Срок рекламации',
+      body: 'По рекламации {{claimNo}} истекает срок рассмотрения {{dueDate}}.',
+    },
   ];
 
   for (const template of templates) {
@@ -399,7 +566,9 @@ async function seedDemoOrder() {
 
   const store = await prisma.store.findFirstOrThrow({ where: { code: 'MSK1' } });
   const workshop = await prisma.workshop.findFirstOrThrow({ where: { code: 'CENTER' } });
-  const receiver = await prisma.user.findFirstOrThrow({ where: { email: 'receiver1@remixgold.ru' } });
+  const receiver = await prisma.user.findFirstOrThrow({
+    where: { email: 'receiver1@remixgold.ru' },
+  });
   const priceList = await prisma.priceListVersion.findFirstOrThrow({ where: { version: 1 } });
   /*
    * Демо-заказ: запайка одного места излома цепи, браслета (позиция 1

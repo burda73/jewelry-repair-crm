@@ -39,7 +39,10 @@ const plainCalendar: WorkingCalendar = { overrides: new Map(), defaultHours: 8 }
 
 /** Календарь с праздником 1 января 2025 (среда). */
 const holidayCalendar: WorkingCalendar = {
-  overrides: new Map([['2025-01-01', { isWorkday: false }], ['2025-01-04', { isWorkday: true }]]),
+  overrides: new Map([
+    ['2025-01-01', { isWorkday: false }],
+    ['2025-01-04', { isWorkday: true }],
+  ]),
   defaultHours: 8,
 };
 
@@ -91,7 +94,9 @@ describe('Деньги: бизнес-правила заказа', () => {
   });
 
   it('итог не может быть отрицательным', () => {
-    expect(calcOrderTotal({ worksTotalMinor: 1000, stonesTotalMinor: 0, discountMinor: 5000 })).toBe(0);
+    expect(
+      calcOrderTotal({ worksTotalMinor: 1000, stonesTotalMinor: 0, discountMinor: 5000 }),
+    ).toBe(0);
   });
 
   it('остаток к оплате не отрицателен при переплате', () => {
@@ -164,7 +169,11 @@ describe('Деньги: скидка и надбавка', () => {
       // calcOrderTotal не опускается ниже нуля, поэтому цель 0 и 1 дают 0.
       const expected = Math.max(0, target);
       expect(
-        calcOrderTotal({ worksTotalMinor: works, stonesTotalMinor: stones, discountMinor: discount }),
+        calcOrderTotal({
+          worksTotalMinor: works,
+          stonesTotalMinor: stones,
+          discountMinor: discount,
+        }),
       ).toBe(expected);
     }
   });

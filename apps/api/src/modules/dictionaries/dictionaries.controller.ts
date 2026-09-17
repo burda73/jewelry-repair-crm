@@ -135,7 +135,12 @@ export class DictionariesController {
   @ApiOperation({ summary: 'Позиции активного прейскуранта с фильтрами' })
   @ApiQuery({ name: 'categoryId', required: false, type: String })
   @ApiQuery({ name: 'storeId', required: false, type: String })
-  @ApiQuery({ name: 'q', required: false, type: String, description: 'Поиск по названию или артикулу' })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    type: String,
+    description: 'Поиск по названию или артикулу',
+  })
   findPriceListItems(
     @Query('categoryId') categoryId?: string,
     @Query('q') q?: string,

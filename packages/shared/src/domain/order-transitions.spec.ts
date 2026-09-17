@@ -5,7 +5,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ORDER_STATUS, type OrderStatus, isTerminalStatus, ALL_ORDER_STATUSES } from './order-status.js';
+import {
+  ORDER_STATUS,
+  type OrderStatus,
+  isTerminalStatus,
+  ALL_ORDER_STATUSES,
+} from './order-status.js';
 import {
   ORDER_TRANSITIONS,
   GUARD,
@@ -23,9 +28,7 @@ describe('Статусная модель: целостность', () => {
   it('идентификаторы переходов уникальны и идут по порядку 1..22', () => {
     const ids = ORDER_TRANSITIONS.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect([...ids].sort((a, b) => a - b)).toEqual(
-      Array.from({ length: 22 }, (_, i) => i + 1),
-    );
+    expect([...ids].sort((a, b) => a - b)).toEqual(Array.from({ length: 22 }, (_, i) => i + 1));
   });
 
   it('нет дублирующихся пар «из → в»', () => {
@@ -68,12 +71,20 @@ describe('Статусная модель: целостность', () => {
 
 describe('Проверка переходов', () => {
   it('создание заказа разрешено приёмщику', () => {
-    const result = checkTransition({ from: null, to: ORDER_STATUS.DRAFT, actorRole: ROLE.RECEIVER });
+    const result = checkTransition({
+      from: null,
+      to: ORDER_STATUS.DRAFT,
+      actorRole: ROLE.RECEIVER,
+    });
     expect(result.allowed).toBe(true);
   });
 
   it('создание заказа запрещено логисту', () => {
-    const result = checkTransition({ from: null, to: ORDER_STATUS.DRAFT, actorRole: ROLE.LOGISTICIAN });
+    const result = checkTransition({
+      from: null,
+      to: ORDER_STATUS.DRAFT,
+      actorRole: ROLE.LOGISTICIAN,
+    });
     expect(result.allowed).toBe(false);
     if (!result.allowed) expect(result.code).toBe('FORBIDDEN_ROLE');
   });

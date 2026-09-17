@@ -204,7 +204,10 @@ export class PaymentsService {
             message: 'Сумма возврата превышает внесённую по заказу',
           });
         }
-        if (!isRefund && data.amountMinor > remainingToPay(order.totalAmountMinor, order.paidAmountMinor)) {
+        if (
+          !isRefund &&
+          data.amountMinor > remainingToPay(order.totalAmountMinor, order.paidAmountMinor)
+        ) {
           throw new ConflictException({
             code: 'OVERPAYMENT',
             message: 'Сумма превышает остаток к оплате по заказу',
@@ -253,7 +256,9 @@ export class PaymentsService {
         return created.id;
       });
 
-      this.logger.log(`Платёж ${paymentId}: ${data.kind} ${data.amountMinor} коп. по заказу ${orderId}`);
+      this.logger.log(
+        `Платёж ${paymentId}: ${data.kind} ${data.amountMinor} коп. по заказу ${orderId}`,
+      );
       return this.buildResult(orderId, paymentId);
     } catch (error: unknown) {
       // Гонка двух одновременных запросов с одним ключом: второй ловит

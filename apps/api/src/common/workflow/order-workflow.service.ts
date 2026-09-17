@@ -109,7 +109,10 @@ export class OrderWorkflowService {
    * Не выполняет проверку guard-условий: UI показывает действие, а сервер
    * отклонит его с понятной причиной, если условие не выполнено.
    */
-  getAvailableTransitions(status: OrderStatus, actorRole: TransitionActor): readonly TransitionRule[] {
+  getAvailableTransitions(
+    status: OrderStatus,
+    actorRole: TransitionActor,
+  ): readonly TransitionRule[] {
     return availableTransitions(status, actorRole);
   }
 
@@ -179,7 +182,10 @@ export class OrderWorkflowService {
         approvals: { where: { result: 'APPROVED' }, select: { id: true } },
         refusalAct: { select: { id: true } },
         claims: { where: { status: { in: ['OPENED', 'IN_REVIEW'] } }, select: { id: true } },
-        assignments: { where: { status: { in: ['ASSIGNED', 'IN_PROGRESS', 'DONE'] } }, select: { id: true, status: true } },
+        assignments: {
+          where: { status: { in: ['ASSIGNED', 'IN_PROGRESS', 'DONE'] } },
+          select: { id: true, status: true },
+        },
         batchItems: {
           where: { removedAt: null },
           select: { batch: { select: { id: true, status: true, acts: { select: { id: true } } } } },
@@ -225,7 +231,8 @@ export class OrderWorkflowService {
       workFinished: order.assignments.some((a) => a.status === 'DONE'),
       readyAt: order.readyAt,
       workshopId: order.workshopId,
-      warrantyMonths: order.works.length > 0 ? Math.max(...order.works.map((w) => w.warrantyMonths)) : 6,
+      warrantyMonths:
+        order.works.length > 0 ? Math.max(...order.works.map((w) => w.warrantyMonths)) : 6,
       claimOpen: order.claims.length > 0,
       complexity: order.complexity,
     };

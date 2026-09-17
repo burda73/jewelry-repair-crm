@@ -2,7 +2,8 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { STATUS_COLORS, type OrderStatus } from '@app/shared';
 
-type Tone = 'gray' | 'amber' | 'blue' | 'violet' | 'cyan' | 'green' | 'orange' | 'emerald' | 'red' | 'slate';
+type Tone =
+  'gray' | 'amber' | 'blue' | 'violet' | 'cyan' | 'green' | 'orange' | 'emerald' | 'red' | 'slate';
 
 /**
  * Классы бейджа по тону.

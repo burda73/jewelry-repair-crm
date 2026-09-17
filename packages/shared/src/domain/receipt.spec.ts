@@ -99,7 +99,10 @@ describe('Квитанция: состав', () => {
   it('печатает предоплату только когда она требуется', () => {
     expect(row(sample(), 'Предоплата к внесению')).toBe('1 000,00 ₽');
     expect(
-      row(sample({ requiresPrepayment: false, prepaymentRequiredMinor: 0 }), 'Предоплата к внесению'),
+      row(
+        sample({ requiresPrepayment: false, prepaymentRequiredMinor: 0 }),
+        'Предоплата к внесению',
+      ),
     ).toBeUndefined();
   });
 
@@ -120,9 +123,7 @@ describe('Квитанция: состав', () => {
 
 describe('Квитанция: QR-код и штрих-код', () => {
   it('QR содержит URI со номером заказа', () => {
-    expect(buildReceiptQr({ orderNo: 'MSK1-2509-000142' })).toBe(
-      'repair://order/MSK1-2509-000142',
-    );
+    expect(buildReceiptQr({ orderNo: 'MSK1-2509-000142' })).toBe('repair://order/MSK1-2509-000142');
   });
 
   it('в QR-коде нет персональных данных', () => {
@@ -150,14 +151,10 @@ describe('Квитанция: дата и предупреждение', () => {
   });
 
   it('гарантийный ремонт печатается без оплаты', () => {
-    expect(receiptNotice({ isWarranty: true, requiresPrepayment: true })).toContain(
-      'без оплаты',
-    );
+    expect(receiptNotice({ isWarranty: true, requiresPrepayment: true })).toContain('без оплаты');
   });
 
   it('предупреждение говорит о предоплате, когда она нужна', () => {
-    expect(receiptNotice({ isWarranty: false, requiresPrepayment: true })).toContain(
-      'предоплаты',
-    );
+    expect(receiptNotice({ isWarranty: false, requiresPrepayment: true })).toContain('предоплаты');
   });
 });

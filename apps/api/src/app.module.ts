@@ -32,8 +32,8 @@ import { DictionariesModule } from './modules/dictionaries/dictionaries.module';
 function resolveEnvPaths(): string[] {
   const candidates = [
     join(__dirname, '..', '..', '..', '.env'), // apps/api/dist → корень (собранный вид)
-    join(__dirname, '..', '..', '.env'),       // apps/api/src → корень (ts-node/nest)
-    resolve(process.cwd(), '.env'),            // cwd пакета
+    join(__dirname, '..', '..', '.env'), // apps/api/src → корень (ts-node/nest)
+    resolve(process.cwd(), '.env'), // cwd пакета
     resolve(process.cwd(), '..', '..', '.env'), // страховка: cwd=apps/api
   ];
   // Возвращаем только существующие пути, чтобы @nestjs/config не спотыкался

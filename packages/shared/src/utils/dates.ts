@@ -38,7 +38,11 @@ export function toDateKey(date: Date, timeZone = 'Europe/Moscow'): string {
 }
 
 /** Является ли день рабочим: сначала override, затем день недели. */
-export function isWorkday(date: Date, calendar: WorkingCalendar, timeZone = 'Europe/Moscow'): boolean {
+export function isWorkday(
+  date: Date,
+  calendar: WorkingCalendar,
+  timeZone = 'Europe/Moscow',
+): boolean {
   const key = toDateKey(date, timeZone);
   const override = calendar.overrides.get(key);
   if (override !== undefined) return override.isWorkday;
@@ -92,7 +96,9 @@ export function addWorkingHours(
     if (isWorkday(result, calendar, timeZone)) {
       // Считаем рабочий день с 10:00 до 19:00 по локальному времени.
       const localHour = Number(
-        new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', hour12: false }).format(result),
+        new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', hour12: false }).format(
+          result,
+        ),
       );
       if (localHour >= 10 && localHour < 19) {
         remaining -= 1;

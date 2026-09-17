@@ -86,7 +86,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         // Всё, что в производстве, логистике или ожидает их.
         return {
           OR: [
-            { status: { in: ['QUEUED_FOR_DISPATCH', 'IN_TRANSIT_TO_PRODUCTION', 'IN_PRODUCTION', 'REWORK', 'IN_TRANSIT_TO_STORE'] } },
+            {
+              status: {
+                in: [
+                  'QUEUED_FOR_DISPATCH',
+                  'IN_TRANSIT_TO_PRODUCTION',
+                  'IN_PRODUCTION',
+                  'REWORK',
+                  'IN_TRANSIT_TO_STORE',
+                ],
+              },
+            },
             { productionManagerId: params.userId },
           ],
         };

@@ -222,9 +222,11 @@ const performerQuerySchema = z.object({
 });
 
 const priceListQuerySchema = z.object({
-  status: z.nativeEnum(PriceListStatus, {
-    errorMap: () => ({ message: 'Недопустимый статус прейскуранта' }),
-  }).optional(),
+  status: z
+    .nativeEnum(PriceListStatus, {
+      errorMap: () => ({ message: 'Недопустимый статус прейскуранта' }),
+    })
+    .optional(),
 });
 
 const activePriceListQuerySchema = z.object({

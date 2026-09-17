@@ -213,10 +213,7 @@ export default function NewOrderPage(): ReactNode {
   );
 
   const worksTotalMinor = useMemo(
-    () =>
-      sumMinor(
-        ...pricedWorks.map((work) => multiplyMinor(work.unitPriceMinor, work.quantity)),
-      ),
+    () => sumMinor(...pricedWorks.map((work) => multiplyMinor(work.unitPriceMinor, work.quantity))),
     [pricedWorks],
   );
   const totalMinor = useMemo(
@@ -490,7 +487,11 @@ export default function NewOrderPage(): ReactNode {
                       : 'bg-slate-100 text-slate-400',
                 ].join(' ')}
               >
-                {isDone ? <Check className="h-3 w-3" aria-hidden="true" /> : <span>{index + 1}</span>}
+                {isDone ? (
+                  <Check className="h-3 w-3" aria-hidden="true" />
+                ) : (
+                  <span>{index + 1}</span>
+                )}
                 {title}
               </button>
               {index < STEP_TITLES.length - 1 ? (
@@ -751,9 +752,7 @@ export default function NewOrderPage(): ReactNode {
           <div className="space-y-4">
             <div>
               <h2 className="text-base font-semibold text-slate-900">Изделие</h2>
-              <p className="mt-0.5 text-sm text-slate-500">
-                Принимается одно изделие на заказ
-              </p>
+              <p className="mt-0.5 text-sm text-slate-500">Принимается одно изделие на заказ</p>
             </div>
 
             <Field label="Наименование" htmlFor="item-name" required>
@@ -785,7 +784,8 @@ export default function NewOrderPage(): ReactNode {
                 */}
                 {detectedMetal !== null ? (
                   <p className="mt-1 text-xs text-slate-500">
-                    Цены по прейскуранту: <span className="font-medium">{METAL_LABELS[detectedMetal]}</span>
+                    Цены по прейскуранту:{' '}
+                    <span className="font-medium">{METAL_LABELS[detectedMetal]}</span>
                   </p>
                 ) : item.metal.trim() !== '' ? (
                   <p className="mt-1 text-xs text-amber-600">
@@ -855,7 +855,8 @@ export default function NewOrderPage(): ReactNode {
                   цены по золоту и серебру. Показываем, по какой колонке считаем. */}
               {detectedMetal !== null ? (
                 <p className="mt-1 text-xs text-slate-500">
-                  Цены прейскуранта: <span className="font-medium">{METAL_LABELS[detectedMetal]}</span>
+                  Цены прейскуранта:{' '}
+                  <span className="font-medium">{METAL_LABELS[detectedMetal]}</span>
                 </p>
               ) : null}
             </div>
@@ -908,7 +909,9 @@ export default function NewOrderPage(): ReactNode {
                         onChange={(event) => {
                           const quantity = Math.max(1, Number(event.target.value) || 1);
                           setWorks((previous) =>
-                            previous.map((entry, i) => (i === index ? { ...entry, quantity } : entry)),
+                            previous.map((entry, i) =>
+                              i === index ? { ...entry, quantity } : entry,
+                            ),
                           );
                         }}
                         className="w-16 text-center"
@@ -1074,7 +1077,9 @@ export default function NewOrderPage(): ReactNode {
           <div className="space-y-4">
             <div>
               <h2 className="text-base font-semibold text-slate-900">Итог и срок</h2>
-              <p className="mt-0.5 text-sm text-slate-500">Проверьте данные перед созданием заказа</p>
+              <p className="mt-0.5 text-sm text-slate-500">
+                Проверьте данные перед созданием заказа
+              </p>
             </div>
 
             <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
@@ -1087,9 +1092,7 @@ export default function NewOrderPage(): ReactNode {
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-slate-500">Телефон</dt>
-                  <dd className="text-slate-900">
-                    {selectedCustomer?.phone ?? newCustomer.phone}
-                  </dd>
+                  <dd className="text-slate-900">{selectedCustomer?.phone ?? newCustomer.phone}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-slate-500">Изделие</dt>
@@ -1098,8 +1101,7 @@ export default function NewOrderPage(): ReactNode {
                 <div className="flex justify-between">
                   <dt className="text-slate-500">Работ: {works.length}</dt>
                   <dd className="text-slate-900">
-                    {totalPositions}{' '}
-                    {plural(totalPositions, 'позиция', 'позиции', 'позиций')}
+                    {totalPositions} {plural(totalPositions, 'позиция', 'позиции', 'позиций')}
                   </dd>
                 </div>
                 <div className="flex justify-between border-t border-slate-200 pt-1.5">

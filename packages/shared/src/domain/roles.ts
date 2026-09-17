@@ -277,10 +277,7 @@ export function permissionsFor(roles: readonly RoleCode[]): Set<Permission> {
   return result;
 }
 
-export function hasPermission(
-  roles: readonly RoleCode[],
-  permission: Permission,
-): boolean {
+export function hasPermission(roles: readonly RoleCode[], permission: Permission): boolean {
   return permissionsFor(roles).has(permission);
 }
 

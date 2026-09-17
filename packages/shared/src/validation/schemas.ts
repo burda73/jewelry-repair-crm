@@ -225,10 +225,14 @@ export const approvalSchema = z
     promisedAt: z.coerce.date().optional(),
     comment: z.string().max(2000).optional(),
   })
-  .refine((data) => data.channel !== 'PHONE_VERBAL' || data.result !== 'APPROVED' || data.termDays !== undefined, {
-    message: 'Для устного согласия укажите согласованный срок',
-    path: ['termDays'],
-  });
+  .refine(
+    (data) =>
+      data.channel !== 'PHONE_VERBAL' || data.result !== 'APPROVED' || data.termDays !== undefined,
+    {
+      message: 'Для устного согласия укажите согласованный срок',
+      path: ['termDays'],
+    },
+  );
 
 // ---------------------------------------------------------------------------
 // Платежи (ТЗ п. 2.5, 2.8)
@@ -415,7 +419,10 @@ export const requestStatusCodeSchema = z.object({
 
 export const checkStatusSchema = z.object({
   orderNo: z.string().min(3).max(50),
-  code: z.string().length(4, 'Код состоит из 4 цифр').regex(/^\d{4}$/, 'Код состоит из 4 цифр'),
+  code: z
+    .string()
+    .length(4, 'Код состоит из 4 цифр')
+    .regex(/^\d{4}$/, 'Код состоит из 4 цифр'),
 });
 
 // ---------------------------------------------------------------------------

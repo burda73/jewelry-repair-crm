@@ -52,24 +52,22 @@ describe('Документация: статусная модель', () => {
   it('русские названия статусов совпадают с документом', () => {
     for (const status of ALL_ORDER_STATUSES) {
       const label = STATUS_LABELS[status];
-      expect(
-        workflow,
-        `название «${label}» для ${status} не найдено в документе`,
-      ).toContain(label);
+      expect(workflow, `название «${label}» для ${status} не найдено в документе`).toContain(label);
     }
   });
 
   it('документ не описывает больше переходов, чем реализовано', () => {
     // Ловим случай, когда переход удалили из кода, но оставили в документе.
-    const tableRows = workflow
-      .split('\n')
-      .filter((line) => /^\|\s*\d+\s*\|/.test(line.trim()));
+    const tableRows = workflow.split('\n').filter((line) => /^\|\s*\d+\s*\|/.test(line.trim()));
     const documentedIds = new Set(
       tableRows.map((line) => Number(line.trim().split('|')[1]?.trim())),
     );
     const codeIds = new Set(ORDER_TRANSITIONS.map((t) => t.id));
     const onlyInDocs = [...documentedIds].filter((id) => !codeIds.has(id));
-    expect(onlyInDocs, `переходы есть в документе, но отсутствуют в коде: ${onlyInDocs.join(', ')}`).toEqual([]);
+    expect(
+      onlyInDocs,
+      `переходы есть в документе, но отсутствуют в коде: ${onlyInDocs.join(', ')}`,
+    ).toEqual([]);
   });
 });
 
@@ -78,19 +76,15 @@ describe('Документация: роли', () => {
 
   it('каждая роль описана в документации', () => {
     for (const role of ALL_ROLES) {
-      expect(
-        rolesDoc,
-        `роль ${role} не упомянута в docs/02-domain-and-roles.md`,
-      ).toContain(role);
+      expect(rolesDoc, `роль ${role} не упомянута в docs/02-domain-and-roles.md`).toContain(role);
     }
   });
 
   it('русские названия ролей присутствуют в документе', () => {
     for (const role of ALL_ROLES) {
-      expect(
-        rolesDoc,
-        `название «${ROLE_LABELS[role]}» для роли ${role} не найдено`,
-      ).toContain(ROLE_LABELS[role]);
+      expect(rolesDoc, `название «${ROLE_LABELS[role]}» для роли ${role} не найдено`).toContain(
+        ROLE_LABELS[role],
+      );
     }
   });
 

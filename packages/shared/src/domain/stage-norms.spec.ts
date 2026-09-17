@@ -30,7 +30,9 @@ interface Norm {
  */
 function pickNorm(norms: readonly Norm[], stage: string, workType: string | null): Norm | null {
   const candidates = norms.filter(
-    (n) => n.stage === stage && (workType === null ? n.workType === 'ANY' : n.workType === workType || n.workType === 'ANY'),
+    (n) =>
+      n.stage === stage &&
+      (workType === null ? n.workType === 'ANY' : n.workType === workType || n.workType === 'ANY'),
   );
   if (candidates.length === 0) return null;
   return candidates.find((n) => n.workType === workType) ?? candidates[0] ?? null;

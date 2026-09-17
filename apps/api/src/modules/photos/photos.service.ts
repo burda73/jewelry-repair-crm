@@ -101,7 +101,8 @@ export class PhotosService {
         });
       } catch (error) {
         // Неизображение или слишком большой файл — понятная ошибка вместо 500.
-        const message = error instanceof RangeError ? error.message : 'Не удалось обработать изображение';
+        const message =
+          error instanceof RangeError ? error.message : 'Не удалось обработать изображение';
         throw new BadRequestException({
           code: 'INVALID_IMAGE',
           message: `${file.originalname}: ${message}`,
@@ -155,11 +156,7 @@ export class PhotosService {
   }
 
   /** Фотографии изделия. */
-  async listByItem(
-    orderId: string,
-    itemId: string,
-    user: AuthenticatedUser,
-  ): Promise<PhotoView[]> {
+  async listByItem(orderId: string, itemId: string, user: AuthenticatedUser): Promise<PhotoView[]> {
     await this.assertOrderVisible(orderId, user);
 
     const photos = await this.prisma.itemPhoto.findMany({

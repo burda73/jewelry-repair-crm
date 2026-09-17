@@ -83,7 +83,9 @@ describe('Прейскурант: сверка с утверждённым до�
       expect(gold, `нет цены по золоту, позиция ${doc.position}`).toBeDefined();
       expect(silver, `нет цены по серебру, позиция ${doc.position}`).toBeDefined();
       expect(gold?.priceMinor, `золото, позиция ${doc.position} (${doc.name})`).toBe(doc.goldMinor);
-      expect(silver?.priceMinor, `серебро, позиция ${doc.position} (${doc.name})`).toBe(doc.silverMinor);
+      expect(silver?.priceMinor, `серебро, позиция ${doc.position} (${doc.name})`).toBe(
+        doc.silverMinor,
+      );
     }
   });
 
@@ -100,8 +102,12 @@ describe('Прейскурант: сверка с утверждённым до�
       const gold = item?.rates.find((r) => r.metal === METAL_KIND.GOLD);
       const silver = item?.rates.find((r) => r.metal === METAL_KIND.SILVER);
 
-      expect(gold?.isFrom, `«от» по золоту, позиция ${doc.position} (${doc.name})`).toBe(doc.goldFrom);
-      expect(silver?.isFrom, `«от» по серебру, позиция ${doc.position} (${doc.name})`).toBe(doc.silverFrom);
+      expect(gold?.isFrom, `«от» по золоту, позиция ${doc.position} (${doc.name})`).toBe(
+        doc.goldFrom,
+      );
+      expect(silver?.isFrom, `«от» по серебру, позиция ${doc.position} (${doc.name})`).toBe(
+        doc.silverFrom,
+      );
     }
   });
 
@@ -116,9 +122,10 @@ describe('Прейскурант: сверка с утверждённым до�
   it('признак «стоимость металла отдельно» совпадает с документом', () => {
     for (const doc of baseline.positions) {
       const item = PRICE_LIST_POSITIONS.find((p) => p.position === doc.position);
-      expect(item?.metalCostSeparate, `металл отдельно, позиция ${doc.position} (${doc.name})`).toBe(
-        doc.metalCostSeparate,
-      );
+      expect(
+        item?.metalCostSeparate,
+        `металл отдельно, позиция ${doc.position} (${doc.name})`,
+      ).toBe(doc.metalCostSeparate);
     }
   });
 
@@ -187,7 +194,10 @@ describe('Прейскурант: сверка с утверждённым до�
       expect(declared.has(code), `позиция ссылается на неизвестную категорию ${code}`).toBe(true);
     }
     for (const category of PRICE_LIST_CATEGORIES) {
-      expect(used.has(category.code), `категория ${category.code} не содержит ни одной позиции`).toBe(true);
+      expect(
+        used.has(category.code),
+        `категория ${category.code} не содержит ни одной позиции`,
+      ).toBe(true);
     }
   });
 

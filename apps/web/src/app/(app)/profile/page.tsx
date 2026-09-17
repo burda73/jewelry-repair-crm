@@ -35,8 +35,8 @@ export default function ProfilePage(): ReactNode {
     'audit:read': 'Журнал действий',
   };
 
-  const knownPermissions = Object.values(PERMISSION).filter((permission) =>
-    permissionLabels[permission] !== undefined,
+  const knownPermissions = Object.values(PERMISSION).filter(
+    (permission) => permissionLabels[permission] !== undefined,
   );
 
   return (

@@ -31,7 +31,10 @@ export function isValidOrderNo(value: string): boolean {
 export function buildOrderNo(storeCode: string, date: Date, sequence: number): string {
   const year = String(date.getUTCFullYear()).slice(2);
   const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const normalizedCode = storeCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const normalizedCode = storeCode
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
   if (normalizedCode.length === 0) {
     throw new RangeError('Код магазина не может быть пустым');
   }

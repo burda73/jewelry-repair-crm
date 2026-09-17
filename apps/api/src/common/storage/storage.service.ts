@@ -44,7 +44,9 @@ export class StorageService implements OnModuleInit {
 
   constructor(private readonly config: ConfigService) {
     this.driver = this.config.get<'LOCAL' | 'S3'>('STORAGE_DRIVER') ?? 'LOCAL';
-    this.localDir = resolve(this.config.get<string>('STORAGE_LOCAL_DIR') ?? '/opt/repair/data/files');
+    this.localDir = resolve(
+      this.config.get<string>('STORAGE_LOCAL_DIR') ?? '/opt/repair/data/files',
+    );
     this.maxBytes = this.config.get<number>('UPLOAD_MAX_BYTES') ?? 10 * 1024 * 1024;
   }
 
@@ -222,7 +224,11 @@ export class StorageService implements OnModuleInit {
       throw new RangeError('Пустой ключ объекта');
     }
     const normalized = normalize(objectKey);
-    if (normalized.startsWith('..') || normalized.includes(`..${sep}`) || normalized.startsWith(sep)) {
+    if (
+      normalized.startsWith('..') ||
+      normalized.includes(`..${sep}`) ||
+      normalized.startsWith(sep)
+    ) {
       throw new RangeError(`Недопустимый ключ объекта: ${objectKey}`);
     }
   }

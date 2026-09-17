@@ -72,8 +72,7 @@ export function daysUntil(value: string | Date | null | undefined): number | nul
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
 
-  const startOfDay = (d: Date): number =>
-    Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const startOfDay = (d: Date): number => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
   const diffMs = startOfDay(date) - startOfDay(new Date());
   return Math.round(diffMs / 86_400_000);
 }

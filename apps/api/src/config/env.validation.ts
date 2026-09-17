@@ -76,7 +76,11 @@ const envSchema = z
     STORAGE_LOCAL_DIR: z.string().default('/opt/repair/data/files'),
 
     /** Максимальный размер загружаемого файла, байт. */
-    UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
+    UPLOAD_MAX_BYTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(10 * 1024 * 1024),
 
     /*
      * Настройки S3. Необязательны: при `STORAGE_DRIVER=LOCAL` не используются,
@@ -195,7 +199,11 @@ const envSchema = z
         }
       }
 
-      if (env.INTEGRATION_PBX_ENABLED && !env.INTEGRATION_PBX_BASE_URL && !env.INTEGRATION_PBX_CDR_PATH) {
+      if (
+        env.INTEGRATION_PBX_ENABLED &&
+        !env.INTEGRATION_PBX_BASE_URL &&
+        !env.INTEGRATION_PBX_CDR_PATH
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['INTEGRATION_PBX_BASE_URL'],

@@ -118,10 +118,7 @@ export class PhotosController {
   @RequirePermission(PERMISSION.ORDER_UPDATE)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Удалить фотографию' })
-  async remove(
-    @Param('id') id: string,
-    @CurrentUser() user: AuthenticatedUser,
-  ): Promise<void> {
+  async remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser): Promise<void> {
     await this.photosService.removePhoto(id, user);
   }
 }

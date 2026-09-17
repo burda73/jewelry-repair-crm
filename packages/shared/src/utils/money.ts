@@ -143,10 +143,7 @@ export function isPaidInFull(totalMinor: Minor, paidMinor: Minor): boolean {
 }
 
 /** Условие старта работ: предоплата внесена в достаточном объёме (ТЗ п. 2.5). */
-export function isPrepaymentSatisfied(
-  paidMinor: Minor,
-  requiredMinor: Minor,
-): boolean {
+export function isPrepaymentSatisfied(paidMinor: Minor, requiredMinor: Minor): boolean {
   if (requiredMinor <= 0) return true;
   return paidMinor >= requiredMinor;
 }

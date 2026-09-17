@@ -104,8 +104,7 @@ export function AdjustmentDialog({
     return row?.amountMinor ?? 0;
   }, [targetType, totalAmountMinor, rows, targetId]);
 
-  const belowPaid =
-    amountMinor !== null && targetType === 'TOTAL' && amountMinor < paidAmountMinor;
+  const belowPaid = amountMinor !== null && targetType === 'TOTAL' && amountMinor < paidAmountMinor;
 
   /** Новая сумма заказа с учётом правки — то, что в итоге заплатит клиент. */
   const newTotalMinor = useMemo(() => {
@@ -229,9 +228,7 @@ export function AdjustmentDialog({
           {newTotalMinor !== null ? (
             <p className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-700">
               Новый итог заказа: <span className="font-medium">{formatMinor(newTotalMinor)}</span>
-              {paidAmountMinor > 0 ? (
-                <> · уже внесено {formatMinor(paidAmountMinor)}</>
-              ) : null}
+              {paidAmountMinor > 0 ? <> · уже внесено {formatMinor(paidAmountMinor)}</> : null}
             </p>
           ) : null}
 

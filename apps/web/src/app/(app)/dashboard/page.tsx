@@ -75,7 +75,12 @@ export default function DashboardPage(): ReactNode {
       {summary.isError ? (
         <div className="card text-sm text-red-700">
           {t.errors.server}
-          <Button variant="secondary" size="sm" className="ml-3" onClick={() => void summary.refetch()}>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="ml-3"
+            onClick={() => void summary.refetch()}
+          >
             {t.common.retry}
           </Button>
         </div>
@@ -87,7 +92,10 @@ export default function DashboardPage(): ReactNode {
             {t.dashboard.overview}
           </h2>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard label={t.dashboard.totalOrders} value={isLoading ? '…' : (data?.total ?? 0)} />
+            <StatCard
+              label={t.dashboard.totalOrders}
+              value={isLoading ? '…' : (data?.total ?? 0)}
+            />
             <StatCard
               label={t.dashboard.inProduction}
               value={isLoading ? '…' : (data?.inProduction ?? 0)}
@@ -140,10 +148,7 @@ export default function DashboardPage(): ReactNode {
             </Link>
           ) : null}
           {can('order:read') ? (
-            <Link
-              href="/orders?overdue=true"
-              className="card transition-shadow hover:shadow-md"
-            >
+            <Link href="/orders?overdue=true" className="card transition-shadow hover:shadow-md">
               <p className="font-medium text-slate-900">{t.dashboard.overdue}</p>
               <p className="mt-1 text-sm text-slate-500">Требуют немедленного внимания</p>
             </Link>

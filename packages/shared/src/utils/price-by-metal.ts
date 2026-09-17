@@ -134,8 +134,6 @@ export function calcWorksTotalByMetal(
   works: readonly { item: PricedItemLike; metal?: string | null; quantity: number }[],
 ): Minor {
   return sumMinor(
-    ...works.map(
-      (work) => resolveItemPrice(work.item, work.metal).priceMinor * work.quantity,
-    ),
+    ...works.map((work) => resolveItemPrice(work.item, work.metal).priceMinor * work.quantity),
   );
 }

@@ -135,20 +135,14 @@ export class OrdersController {
   @Roles(ROLE.RECEIVER)
   @RequirePermission(PERMISSION.ORDER_CREATE)
   @ApiOperation({ summary: 'Создать заказ' })
-  create(
-    @Body() body: unknown,
-    @CurrentUser() user: AuthenticatedUser,
-  ): Promise<CreatedOrder> {
+  create(@Body() body: unknown, @CurrentUser() user: AuthenticatedUser): Promise<CreatedOrder> {
     return this.ordersService.create(body, user);
   }
 
   @Get(':id')
   @RequirePermission(PERMISSION.ORDER_READ)
   @ApiOperation({ summary: 'Карточка заказа' })
-  findOne(
-    @Param('id') id: string,
-    @CurrentUser() user: AuthenticatedUser,
-  ): Promise<OrderCard> {
+  findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser): Promise<OrderCard> {
     return this.ordersService.findOne(id, user);
   }
 
@@ -312,10 +306,7 @@ export class OrdersController {
     const pdf = await this.receiptService.buildReceiptPdf(data);
 
     res.setHeader('Content-Length', String(pdf.length));
-    res.setHeader(
-      'Content-Disposition',
-      `inline; filename="receipt-${data.orderNo}.pdf"`,
-    );
+    res.setHeader('Content-Disposition', `inline; filename="receipt-${data.orderNo}.pdf"`);
     res.end(pdf);
   }
 }

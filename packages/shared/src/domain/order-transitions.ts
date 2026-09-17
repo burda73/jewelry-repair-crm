@@ -167,11 +167,7 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     to: ORDER_STATUS.ACCEPTED,
     actors: ['SYSTEM', ROLE.CASHIER, ROLE.ADMIN],
     guards: [GUARD.PREPAYMENT_SATISFIED],
-    effects: [
-      EFFECT.SET_PREPAYMENT_CONFIRMED_AT,
-      EFFECT.SET_DUE_AT,
-      EFFECT.NOTIFY_NEXT_RESPIBLE,
-    ],
+    effects: [EFFECT.SET_PREPAYMENT_CONFIRMED_AT, EFFECT.SET_DUE_AT, EFFECT.NOTIFY_NEXT_RESPIBLE],
     requiresReason: false,
     label: 'Предоплата внесена, работы разблокированы',
   },
@@ -338,10 +334,7 @@ export type TransitionCheck =
   | { allowed: false; code: TransitionDenialCode; message: string };
 
 export type TransitionDenialCode =
-  | 'INVALID_TRANSITION'
-  | 'TERMINAL_STATE'
-  | 'FORBIDDEN_ROLE'
-  | 'REASON_REQUIRED';
+  'INVALID_TRANSITION' | 'TERMINAL_STATE' | 'FORBIDDEN_ROLE' | 'REASON_REQUIRED';
 
 /** Найти правило перехода. Возвращает undefined, если переход не разрешён. */
 export function findTransition(
