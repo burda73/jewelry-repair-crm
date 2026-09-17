@@ -74,6 +74,13 @@
 | 4 | Пароль задаёт администратор, смена обязательна | `docs/07` §13 | `mustChangePassword` в `AuthenticatedUser` и в токене | прогон API: вход → `true`, смена пароля → `false` |
 | 4 | Отключение учётной записи закрывает доступ | `docs/07` §13 | `revokeSessions` в `update()`, `revokeRole()`, `resetPassword()` | тесты на отзыв сессий; прогон API |
 | 4 | Учётная запись без ролей не может войти | `docs/02` §3 | `buildAuthenticatedUser()` → `NO_ROLES_ASSIGNED`; `LAST_ROLE` | 2 теста на запрет снятия последней роли |
+| 4 | **Администрирование справочников** (магазины, цеха, исполнители, категории работ, камни) | `docs/07` §10.1, ТЗ п. 4 | `dictionaries-admin.service.ts`, `dictionaries-admin.controller.ts` (10 маршрутов) | 24 теста `dictionaries-admin.service.spec.ts`; прогон API: создание, дубликат → `CODE_TAKEN` |
+| 4 | Справочники не удаляются, а отключаются (`isActive`) | `docs/03` §1, `docs/07` §10.1 | `DictionariesAdminService`, маршрута `DELETE` нет | 24 теста; проверка, что двойник Prisma без `delete` не вызывается |
+| 4 | Код магазина входит в номер заказа и неизменяем при наличии заказов | `docs/03` §1 | `updateStore()` → `STORE_CODE_IN_USE` | тест на запрет смены кода + прогон API на `MSK1` (1 заказ) |
+| 4 | Нельзя остановить приём: последний магазин не отключается | `docs/07` §10.1 | `assertStoreCanBeDeactivated()` → `LAST_ACTIVE_STORE` | тесты на `LAST_ACTIVE_STORE`, `STORE_HAS_ACTIVE_USERS` |
+| 4 | Цех не отключается с исполнителями или незавершёнными заказами | `docs/07` §10.1 | `updateWorkshop()` → `WORKSHOP_HAS_ACTIVE_PERFORMERS`, `WORKSHOP_HAS_OPEN_ORDERS` | тесты + проверка, что терминальные статусы не считаются препятствием |
+| 4 | Исполнитель ведётся менеджером производства, справочники — администратором | `docs/02` §4 | `@RequirePermission`: `PERFORMER_MANAGE` / `SETTINGS_MANAGE` | прогон API: приёмщик → `403` на всех маршрутах; менеджер → исполнители `201`, магазин `403` |
+| 4 | Изменения справочников попадают в журнал аудита | `docs/10` §4 | `DictionariesAdminService.audit()` внутри `$transaction` | тесты на `before`/`after`; прогон: `CREATE` → `before: null` |
 | 4 | Пароли не хранятся и не логируются в открытом виде | `docs/10` §3 | Argon2id; `passwordHash` не выбирается из БД | тест: пароля нет в ответе и в аудите |
 | 4 | Веб-интерфейс | `docs/01` §1 | Next.js PWA | — |
 | 4 | Мобильная адаптация | `docs/08` §5 | PWA, раскладки от 360 px | юзабилити-тест |

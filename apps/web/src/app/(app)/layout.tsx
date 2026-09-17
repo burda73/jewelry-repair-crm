@@ -13,17 +13,30 @@ import { GlobalSearch } from '@/components/app/global-search';
 interface NavItem {
   href: string;
   label: string;
-  /** Право, без которого пункт не показывается. */
-  permission?: string;
+  /**
+   * Права, при наличии ЛЮБОГО из которых пункт показывается.
+   *
+   * Массив, а не одно право, потому что разделы администрирования устроены
+   * по-разному: «Справочники» открыты администратору (`settings:manage`) и
+   * менеджеру производства (`performer:manage`) — по матрице прав
+   * (docs/02-domain-and-roles.md §4) исполнителей ведёт именно он. Одиночное
+   * право не позволило бы выразить это без второго пункта меню.
+   */
+  permissions?: string[];
 }
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', label: t.nav.dashboard },
-  { href: '/orders', label: t.nav.orders, permission: 'order:read' },
+  { href: '/orders', label: t.nav.orders, permissions: ['order:read'] },
   // Пункт виден только администратору: право `user:manage` есть только у ADMIN
   // (packages/shared/src/domain/roles.ts). Остальные роли не должны видеть
   // административный раздел даже как неактивную ссылку.
-  { href: '/users', label: t.nav.users, permission: 'user:manage' },
+  { href: '/users', label: t.nav.users, permissions: ['user:manage'] },
+  {
+    href: '/dictionaries',
+    label: t.nav.dictionaries,
+    permissions: ['settings:manage', 'performer:manage'],
+  },
 ];
 
 /**
@@ -59,7 +72,9 @@ export default function AppLayout({ children }: { children: ReactNode }): ReactN
   }
 
   const visibleItems = NAV_ITEMS.filter(
-    (item) => item.permission === undefined || user.permissions.includes(item.permission),
+    (item) =>
+      item.permissions === undefined ||
+      item.permissions.some((permission) => user.permissions.includes(permission)),
   );
 
   return (

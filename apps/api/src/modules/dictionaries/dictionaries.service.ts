@@ -15,7 +15,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
  * автоматически появляется в типе, а удалённое — исчезает. Рукописные
  * интерфейсы здесь разошлись бы с реальным ответом API при первом изменении.
  */
-const STORE_SELECT = Prisma.validator<Prisma.StoreSelect>()({
+export const STORE_SELECT = Prisma.validator<Prisma.StoreSelect>()({
   id: true,
   code: true,
   name: true,
@@ -25,7 +25,7 @@ const STORE_SELECT = Prisma.validator<Prisma.StoreSelect>()({
   isActive: true,
 });
 
-const WORKSHOP_SELECT = Prisma.validator<Prisma.WorkshopSelect>()({
+export const WORKSHOP_SELECT = Prisma.validator<Prisma.WorkshopSelect>()({
   id: true,
   code: true,
   name: true,
@@ -34,7 +34,7 @@ const WORKSHOP_SELECT = Prisma.validator<Prisma.WorkshopSelect>()({
 });
 
 /** Исполнитель вместе с цехом: в UI он выбирается как «ФИО — цех». */
-const PERFORMER_SELECT = Prisma.validator<Prisma.PerformerSelect>()({
+export const PERFORMER_SELECT = Prisma.validator<Prisma.PerformerSelect>()({
   id: true,
   fullName: true,
   specialization: true,
@@ -43,14 +43,15 @@ const PERFORMER_SELECT = Prisma.validator<Prisma.PerformerSelect>()({
   workshop: { select: { id: true, code: true, name: true } },
 });
 
-const WORK_CATEGORY_SELECT = Prisma.validator<Prisma.WorkCategorySelect>()({
+export const WORK_CATEGORY_SELECT = Prisma.validator<Prisma.WorkCategorySelect>()({
   id: true,
   code: true,
   name: true,
   sortOrder: true,
+  isActive: true,
 });
 
-const STONE_TYPE_SELECT = Prisma.validator<Prisma.StoneTypeSelect>()({
+export const STONE_TYPE_SELECT = Prisma.validator<Prisma.StoneTypeSelect>()({
   id: true,
   code: true,
   name: true,
@@ -282,11 +283,12 @@ function parseQueryOrThrow<Output, Input = unknown>(
 }
 
 /**
- * Справочные данные для мастера приёма заказа и администрирования.
+ * Чтение справочных данных для мастера приёма заказа и администрирования.
  *
- * Модуль только читает (GET): CRUD справочников — отдельная задача. Поэтому
- * здесь нет ни транзакций, ни записи в `AuditLog`: аудит ведётся для изменений
- * (ТЗ п. 4), а чтение справочника следа в журнале не оставляет.
+ * Класс только читает (GET). Запись живёт в `DictionariesAdminService`
+ * (задача 1.3.1), поэтому здесь нет ни транзакций, ни записи в `AuditLog`:
+ * аудит ведётся для изменений (ТЗ п. 4), а чтение справочника следа в журнале
+ * не оставляет.
  *
  * Область видимости (`DataScope`) к справочникам не применяется: она ограничивает
  * ЗАКАЗЫ, а магазины, цеха и прейскурант — общие данные сети. Заказ можно принять

@@ -494,3 +494,100 @@ export interface UserUpdateInput {
   isActive?: boolean;
   storeIds?: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Справочники: администрирование (задача 1.3.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Запись справочника, отдаваемая `GET`-маршрутами.
+ *
+ * Отдельные интерфейсы, хотя поля во многом совпадают с `*Option`: `Option`
+ * описывают то, что нужно для выбора в форме заказа (`id`, `code`, `name`,
+ * `isActive`), а здесь администратору нужны все поля карточки — адрес,
+ * телефон, часовой пояс, цена. Совместить их значило бы либо тащить лишние
+ * поля в каждую форму заказа, либо потерять их в админке.
+ */
+export interface StoreAdminItem {
+  id: string;
+  code: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  timezone: string;
+  isActive: boolean;
+}
+
+export interface WorkshopAdminItem {
+  id: string;
+  code: string;
+  name: string;
+  address: string | null;
+  isActive: boolean;
+}
+
+export interface PerformerAdminItem {
+  id: string;
+  fullName: string;
+  specialization: string | null;
+  grade: string | null;
+  isActive: boolean;
+  workshop: { id: string; code: string; name: string };
+}
+
+export interface WorkCategoryAdminItem {
+  id: string;
+  code: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface StoneTypeAdminItem {
+  id: string;
+  code: string;
+  name: string;
+  unit: string;
+  priceMinor: number;
+  isActive: boolean;
+}
+
+/** Тело создания/правки магазина (`POST`/`PATCH /stores`). */
+export interface StoreAdminInput {
+  code?: string;
+  name?: string;
+  address?: string | null;
+  phone?: string | null;
+  timezone?: string;
+  isActive?: boolean;
+}
+
+export interface WorkshopAdminInput {
+  code?: string;
+  name?: string;
+  address?: string | null;
+  isActive?: boolean;
+}
+
+export interface PerformerAdminInput {
+  workshopId?: string;
+  fullName?: string;
+  specialization?: string;
+  grade?: string;
+  isActive?: boolean;
+}
+
+export interface WorkCategoryAdminInput {
+  code?: string;
+  name?: string;
+  sortOrder?: number;
+  isActive?: boolean;
+}
+
+export interface StoneTypeAdminInput {
+  code?: string;
+  name?: string;
+  unit?: string;
+  priceMinor?: number;
+  isActive?: boolean;
+}

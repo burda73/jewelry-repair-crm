@@ -75,11 +75,17 @@ export const customerSchema = z.object({
 /**
  * Изменение данных клиента.
  *
- * Отдельная схема, а не `customerSchema.partial()`. Причина в дефолте
- * `consentMarketing: z.boolean().default(false)`: при `.partial()` он
- * подставился бы в любом PATCH без этого поля, то есть молча сбрасывал бы
- * юридически значимое согласие (ТЗ п. 2.4). Здесь каждое поле по-настоящему
- * необязательно, и «не передано» остаётся отличимым от «передано `false`».
+ * Отдельная схема, а не `customerSchema.partial()`, ради проверки «PATCH не
+ * пустой» в конце: у `.partial()` её нет, и запрос `{}` прошёл бы, записав в
+ * аудит «до» и «после» без изменений.
+ *
+ * Ранее здесь утверждалось, что `.partial()` подставил бы дефолт
+ * `consentMarketing: z.boolean().default(false)` и молча сбросил бы юридически
+ * значимое согласие (ТЗ п. 2.4). Это неверно: в Zod (проверено на 3.25)
+ * `.partial()` не применяет дефолты к отсутствующим ключам, и
+ * `customerSchema.partial().parse({ fullName, phone, consentCallRecording })`
+ * возвращает объект БЕЗ `consentMarketing`. Согласие защищено самим
+ * `.partial()`; отдельная схема нужна из-за пустого PATCH.
  *
  * Телефон меняется реже ФИО, но допускается: мастер мог ошибиться при вводе.
  * Нормализация и проверка на дубликат для него — те же, что при создании
@@ -428,6 +434,163 @@ export const resetUserPasswordSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Справочники (задача 1.3.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Код справочника (`MSK1`, `SOLDER`, `DIAMOND-S`).
+ *
+ * Только заглавные латинские буквы, цифры и дефис. Причина не в эстетике:
+ * код магазина попадает в человекочитаемый номер заказа
+ * (`MSK1-2609-000001`), а коды справочников — в прейскурант и в документы.
+ * Строчные буквы и кириллица сделали бы эти строки неоднородными, а пробелы
+ * и знаки пунктуации сломали бы поиск и сортировку.
+ *
+ * Дефис разрешён, но не в начале и не в конце: `-MSK` и `MSK-` читаются как
+ * обрывок и мешают сортировке.
+ */
+export const dictionaryCodeSchema = z
+  .string()
+  .min(2, 'Код слишком короткий')
+  .max(20, 'Код слишком длинный')
+  .regex(/^[A-Z0-9]+(?:-[A-Z0-9]+)*$/, 'Код: заглавные латинские буквы, цифры и дефис');
+
+/** Название записи справочника. */
+const dictionaryNameSchema = z.string().min(2, 'Укажите название').max(200);
+
+/** Часовой пояс магазина. */
+const timezoneSchema = z.string().min(3).max(64);
+
+export const createStoreSchema = z.object({
+  code: dictionaryCodeSchema,
+  name: dictionaryNameSchema,
+  address: z.string().max(300).optional(),
+  phone: phoneSchema.optional(),
+  timezone: timezoneSchema.default('Europe/Moscow'),
+});
+
+/**
+ * Изменение магазина.
+ *
+ * Отдельная схема, а не `createStoreSchema.partial()`, по двум причинам — обе
+ * про различия в правилах, а не про значения по умолчанию:
+ *
+ *  * `address` и `phone` можно ОЧИСТИТЬ (`null`). В `createStoreSchema` они
+ *    объявлены `.optional()`, то есть принимают отсутствие поля, но не `null`;
+ *    `.partial()` это не меняет, и стереть адрес было бы невозможно;
+ *  * `isActive` участвует только в изменении — при создании запись всегда
+ *    активна.
+ *
+ * О значениях по умолчанию: `.partial()` в Zod **не** подставляет их для
+ * отсутствующих ключей (проверено на zod 3.x), поэтому «правка названия не
+ * переписывает часовой пояс» обеспечивается самим `.partial()` и дополнительной
+ * схемы для этого не требует. Инвариант закреплён тестом
+ * (`schemas-dictionaries.spec.ts`), чтобы дефолт не появился здесь явно.
+ *
+ * `code` в схеме ЕСТЬ, но проверку «у магазина уже есть заказы» выполняет
+ * сервис: схеме неизвестно состояние базы, а код входит в номера заказов
+ * (`MSK1-2609-000001`), и его смена после первого заказа сделала бы выданные
+ * номера несоответствующими магазину.
+ */
+export const updateStoreSchema = z
+  .object({
+    code: dictionaryCodeSchema,
+    name: dictionaryNameSchema,
+    address: z.string().max(300).nullable(),
+    phone: phoneSchema.nullable(),
+    timezone: timezoneSchema,
+    isActive: z.boolean(),
+  })
+  .partial()
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'Укажите хотя бы одно поле для изменения',
+  });
+
+export const createWorkshopSchema = z.object({
+  code: dictionaryCodeSchema,
+  name: dictionaryNameSchema,
+  address: z.string().max(300).optional(),
+});
+
+export const updateWorkshopSchema = z
+  .object({
+    code: dictionaryCodeSchema,
+    name: dictionaryNameSchema,
+    address: z.string().max(300).nullable(),
+    isActive: z.boolean(),
+  })
+  .partial()
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'Укажите хотя бы одно поле для изменения',
+  });
+
+export const createPerformerSchema = performerSchema;
+
+/**
+ * Изменение исполнителя.
+ *
+ * `workshopId` включён: ювелира могут перевести в другой цех. Проверять, что
+ * новый цех существует, обязан сервис — схема не имеет доступа к базе.
+ */
+export const updatePerformerSchema = performerSchema
+  .extend({ isActive: z.boolean() })
+  .partial()
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'Укажите хотя бы одно поле для изменения',
+  });
+
+export const createWorkCategorySchema = z.object({
+  code: dictionaryCodeSchema,
+  name: dictionaryNameSchema,
+  /**
+   * Порядок вывода в интерфейсе. Ограничен разумным диапазоном: отрицательные
+   * значения и тысячи не имеют смысла, а опечатка вроде `sortOrder: 100000`
+   * отправила бы категорию в конец списка, и администратор не понял бы, почему
+   * её не видно на месте.
+   */
+  sortOrder: z.number().int().min(0).max(999).default(0),
+});
+
+export const updateWorkCategorySchema = z
+  .object({
+    code: dictionaryCodeSchema,
+    name: dictionaryNameSchema,
+    sortOrder: z.number().int().min(0).max(999),
+    isActive: z.boolean(),
+  })
+  .partial()
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'Укажите хотя бы одно поле для изменения',
+  });
+
+/**
+ * Тип камня.
+ *
+ * `priceMinor` — цена за единицу в копейках. Принимается целым неотрицательным
+ * числом: тип камня участвует в расчёте заказа, и дробная цена в минорных
+ * единицах означала бы, что где-то уже потеряна точность.
+ */
+export const createStoneTypeSchema = z.object({
+  code: dictionaryCodeSchema,
+  name: dictionaryNameSchema,
+  unit: z.string().min(1).max(20).default('шт'),
+  priceMinor: z.number().int().min(0),
+});
+
+export const updateStoneTypeSchema = z
+  .object({
+    code: dictionaryCodeSchema,
+    name: dictionaryNameSchema,
+    unit: z.string().min(1).max(20),
+    priceMinor: z.number().int().min(0),
+    isActive: z.boolean(),
+  })
+  .partial()
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'Укажите хотя бы одно поле для изменения',
+  });
+
+// ---------------------------------------------------------------------------
 // Отчёты
 // ---------------------------------------------------------------------------
 
@@ -485,3 +648,14 @@ export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 export type AssignRoleInput = z.infer<typeof assignRoleSchema>;
 export type ResetUserPasswordInput = z.infer<typeof resetUserPasswordSchema>;
 export type ReportQueryInput = z.infer<typeof reportQuerySchema>;
+
+export type CreateStoreInput = z.infer<typeof createStoreSchema>;
+export type UpdateStoreInput = z.infer<typeof updateStoreSchema>;
+export type CreateWorkshopInput = z.infer<typeof createWorkshopSchema>;
+export type UpdateWorkshopInput = z.infer<typeof updateWorkshopSchema>;
+export type CreatePerformerInput = z.infer<typeof createPerformerSchema>;
+export type UpdatePerformerInput = z.infer<typeof updatePerformerSchema>;
+export type CreateWorkCategoryInput = z.infer<typeof createWorkCategorySchema>;
+export type UpdateWorkCategoryInput = z.infer<typeof updateWorkCategorySchema>;
+export type CreateStoneTypeInput = z.infer<typeof createStoneTypeSchema>;
+export type UpdateStoneTypeInput = z.infer<typeof updateStoneTypeSchema>;

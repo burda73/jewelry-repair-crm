@@ -41,6 +41,16 @@ import type {
   UserFilters,
   UserListItem,
   UserUpdateInput,
+  StoreAdminItem,
+  StoreAdminInput,
+  WorkshopAdminItem,
+  WorkshopAdminInput,
+  PerformerAdminItem,
+  PerformerAdminInput,
+  WorkCategoryAdminItem,
+  WorkCategoryAdminInput,
+  StoneTypeAdminItem,
+  StoneTypeAdminInput,
 } from '@/lib/api-types';
 import type { CustomerInput, OrderStatus } from '@app/shared';
 
@@ -770,3 +780,130 @@ export function useResetUserPassword(): UseMutationResult<
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Справочники: администрирование (задача 1.3.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ключи кэша справочников.
+ *
+ * `all` намеренно совпадает с префиксом ключей для форм заказа
+ * (`['dictionaries', ...]`): после создания или правки записи инвалидируется
+ * весь раздел, и выпадающие списки в мастере приёма получают свежие данные
+ * без отдельной ручной синхронизации.
+ */
+export const dictionaryKeys = {
+  all: ['dictionaries'] as const,
+};
+
+/** Список записей справочника: меняется редко, но после правки — сразу. */
+const DICTIONARY_ADMIN_STALE_TIME = 5 * 60 * 1000;
+
+/** Создать хук списка: пять справочников отличаются только типом и путём. */
+function useDictionaryList<T>(key: string, path: string): UseQueryResult<T[], Error> {
+  return useQuery<T[], Error>({
+    queryKey: [...dictionaryKeys.all, key],
+    queryFn: () => api.get<T[]>(path),
+    staleTime: DICTIONARY_ADMIN_STALE_TIME,
+  });
+}
+
+/**
+ * Создать хук изменения: `POST` без идентификатора и `PATCH` с ним.
+ *
+ * Общая фабрика, а не десять почти одинаковых функций: различается только путь,
+ * а логика инвалидации обязана быть одинаковой. Иначе легко забыть сбросить
+ * кэш в одном из пяти справочников, и администратор видел бы старые данные
+ * до перезагрузки страницы.
+ */
+function useDictionaryMutation<T, I>(
+  method: 'create' | 'update',
+  path: string,
+): UseMutationResult<T, Error, { id?: string; input: I }> {
+  const queryClient = useQueryClient();
+  return useMutation<T, Error, { id?: string; input: I }>({
+    mutationFn: ({ id, input }) =>
+      method === 'create' ? api.post<T>(path, input) : api.patch<T>(`${path}/${String(id)}`, input),
+    onSuccess: () => {
+      // Инвалидируется весь раздел: справочники связаны между собой (например,
+      // исполнитель ссылается на цех), и точечная инвалидация оставила бы
+      // согласованность на усмотрение вызывающего кода.
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+    },
+  });
+}
+
+export const useAdminStores = (): UseQueryResult<StoreAdminItem[], Error> =>
+  useDictionaryList<StoreAdminItem>('stores', '/stores');
+export const useAdminWorkshops = (): UseQueryResult<WorkshopAdminItem[], Error> =>
+  useDictionaryList<WorkshopAdminItem>('workshops', '/workshops');
+export const useAdminPerformers = (): UseQueryResult<PerformerAdminItem[], Error> =>
+  useDictionaryList<PerformerAdminItem>('performers', '/performers');
+export const useAdminWorkCategories = (): UseQueryResult<WorkCategoryAdminItem[], Error> =>
+  useDictionaryList<WorkCategoryAdminItem>('work-categories', '/work-categories');
+export const useAdminStoneTypes = (): UseQueryResult<StoneTypeAdminItem[], Error> =>
+  useDictionaryList<StoneTypeAdminItem>('stone-types', '/stone-types');
+
+export const useCreateStore = (): UseMutationResult<
+  StoreAdminItem,
+  Error,
+  { id?: string; input: StoreAdminInput }
+> => useDictionaryMutation<StoreAdminItem, StoreAdminInput>('create', '/stores');
+export const useUpdateStore = (): UseMutationResult<
+  StoreAdminItem,
+  Error,
+  { id?: string; input: StoreAdminInput }
+> => useDictionaryMutation<StoreAdminItem, StoreAdminInput>('update', '/stores');
+
+export const useCreateWorkshop = (): UseMutationResult<
+  WorkshopAdminItem,
+  Error,
+  { id?: string; input: WorkshopAdminInput }
+> => useDictionaryMutation<WorkshopAdminItem, WorkshopAdminInput>('create', '/workshops');
+export const useUpdateWorkshop = (): UseMutationResult<
+  WorkshopAdminItem,
+  Error,
+  { id?: string; input: WorkshopAdminInput }
+> => useDictionaryMutation<WorkshopAdminItem, WorkshopAdminInput>('update', '/workshops');
+
+export const useCreatePerformer = (): UseMutationResult<
+  PerformerAdminItem,
+  Error,
+  { id?: string; input: PerformerAdminInput }
+> => useDictionaryMutation<PerformerAdminItem, PerformerAdminInput>('create', '/performers');
+export const useUpdatePerformer = (): UseMutationResult<
+  PerformerAdminItem,
+  Error,
+  { id?: string; input: PerformerAdminInput }
+> => useDictionaryMutation<PerformerAdminItem, PerformerAdminInput>('update', '/performers');
+
+export const useCreateWorkCategory = (): UseMutationResult<
+  WorkCategoryAdminItem,
+  Error,
+  { id?: string; input: WorkCategoryAdminInput }
+> =>
+  useDictionaryMutation<WorkCategoryAdminItem, WorkCategoryAdminInput>(
+    'create',
+    '/work-categories',
+  );
+export const useUpdateWorkCategory = (): UseMutationResult<
+  WorkCategoryAdminItem,
+  Error,
+  { id?: string; input: WorkCategoryAdminInput }
+> =>
+  useDictionaryMutation<WorkCategoryAdminItem, WorkCategoryAdminInput>(
+    'update',
+    '/work-categories',
+  );
+
+export const useCreateStoneType = (): UseMutationResult<
+  StoneTypeAdminItem,
+  Error,
+  { id?: string; input: StoneTypeAdminInput }
+> => useDictionaryMutation<StoneTypeAdminItem, StoneTypeAdminInput>('create', '/stone-types');
+export const useUpdateStoneType = (): UseMutationResult<
+  StoneTypeAdminItem,
+  Error,
+  { id?: string; input: StoneTypeAdminInput }
+> => useDictionaryMutation<StoneTypeAdminItem, StoneTypeAdminInput>('update', '/stone-types');
