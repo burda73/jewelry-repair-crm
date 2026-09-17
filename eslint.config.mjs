@@ -44,6 +44,19 @@ export default tseslint.config(
             'packages/db/*.config.ts',
             'scripts/*.mjs',
           ],
+          // Предел файлов, которые parserService разбирает вне tsconfig.
+          // По умолчанию он равен 8, и добавление обычного служебного скрипта
+          // упирается в него с ошибкой
+          // «Too many files (>8) have matched the default project» — то есть
+          // `npm run lint` падает не из-за кода, а из-за роста числа скриптов.
+          // Значение с запасом: файлов сейчас 9, лимит 16.
+          //
+          // Почему не отдельный tsconfig для `scripts/`: файлы там — простые
+          // `.mjs` без типов, и включение их в проект потребовало бы `allowJs`,
+          // после чего линт начал бы проверять их как типизированный код и
+          // потребовал бы аннотаций там, где они бессмысленны. Проверка этих
+          // файлов всё равно идёт без типов (`disableTypeChecked` ниже).
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 16,
         },
         tsconfigRootDir: import.meta.dirname,
       },
