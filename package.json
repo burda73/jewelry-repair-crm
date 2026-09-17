@@ -11,7 +11,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build:shared && npm run build:api && npm run build:web",
+    "build:shared": "npm run build --workspace @app/shared",
+    "build:api": "npm run build --workspace @app/api",
+    "build:web": "npm run build --workspace @app/web",
     "dev": "npm run dev --workspace @app/api & npm run dev --workspace @app/web",
     "dev:api": "npm run dev --workspace @app/api",
     "dev:web": "npm run dev --workspace @app/web",

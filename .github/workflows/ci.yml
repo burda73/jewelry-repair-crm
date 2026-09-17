@@ -34,6 +34,14 @@ jobs:
       - name: Генерация Prisma Client
         run: npm run db:generate
 
+      # @app/shared подключается по полю "types" из ./dist/index.d.ts, поэтому
+      # его нужно собрать ДО линта и проверки типов: иначе ESLint видит
+      # `Cannot find module '@app/shared'`, все типы становятся `error typed`,
+      # и `--max-warnings 0` валит job сотнями предупреждений
+      # no-unsafe-assignment / no-unsafe-member-access.
+      - name: Сборка доменного пакета
+        run: npm run build:shared
+
       - name: Проверка форматирования
         run: npx prettier --check "**/*.{ts,tsx,json,md}"
 
@@ -92,6 +100,12 @@ jobs:
       - name: Генерация Prisma Client
         run: npm run db:generate
 
+      # Тесты API импортируют @app/shared, который резолвится в ./dist.
+      # Без сборки пакета vitest падает с
+      # `Failed to resolve entry for package "@app/shared"`.
+      - name: Сборка доменного пакета
+        run: npm run build:shared
+
       - name: Применение миграций
         run: npm run db:deploy
 
@@ -135,10 +149,24 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: Проверка, что схема и миграции не расходятся
-        run: npx prisma migrate diff --from-migrations packages/db/prisma/migrations --to-schema-datamodel packages/db/prisma/schema.prisma --shadow-database-url "$DATABASE_URL" --exit-code
+      - run: npm run db:generate
+
+      # Порядок принципиален. Раньше первым шёл
+      #   prisma migrate diff --from-migrations ... --shadow-database-url "$DATABASE_URL"
+      # который наполнял ЭТУ ЖЕ базу всеми 41 таблицами как shadow-базу.
+      # Следующий `db:deploy` падал с
+      #   P3005 The database schema is not empty
+      # потому что `_prisma_migrations` в ней отсутствовала.
+      #
+      # Теперь сначала разворачиваем миграции с нуля в пустую базу (это и есть
+      # проверка «миграции применяются»), а затем сверяем получившуюся схему
+      # с datamodel. Shadow-база не нужна: --from-schema-datasource читает
+      # структуру только что развёрнутой базы.
       - name: Применение миграций с нуля
         run: npm run db:deploy
+
+      - name: Проверка, что схема и миграции не расходятся
+        run: npx prisma migrate diff --from-schema-datasource packages/db/prisma/schema.prisma --to-schema-datamodel packages/db/prisma/schema.prisma --exit-code
 
   # ---------------------------------------------------------------------------
   # Сборка
@@ -164,7 +192,13 @@ jobs:
     name: Аудит зависимостей
     runs-on: ubuntu-latest
     steps:
+      # gitleaks-action сканирует историю коммитов и падает с
+      # `ERROR: Unexpected exit code [1]` на shallow-клоне: actions/checkout@v4
+      # по умолчанию берёт только последний коммит (fetch-depth: 1), и агент
+      # не может построить диапазон для сканирования.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
