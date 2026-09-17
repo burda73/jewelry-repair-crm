@@ -35,6 +35,12 @@ import type {
   TimelineEntry,
   WorkCategoryOption,
   WorkshopOption,
+  RolesCatalog,
+  UserCreateInput,
+  UserDetail,
+  UserFilters,
+  UserListItem,
+  UserUpdateInput,
 } from '@/lib/api-types';
 import type { CustomerInput, OrderStatus } from '@app/shared';
 
@@ -609,6 +615,156 @@ export function useCreateOrder(): UseMutationResult<
       // Список заказов и счётчики дашборда изменились: новый заказ виден и там.
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
     },
+    onError: (error: Error) => {
+      void error;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Администрирование: учётные записи и роли (задача 1.2.4)
+// ---------------------------------------------------------------------------
+
+/** Ключи кэша учётных записей. */
+export const userKeys = {
+  all: ['users'] as const,
+  list: (filters: UserFilters) => ['users', 'list', filters] as const,
+  detail: (id: string) => ['users', 'detail', id] as const,
+  rolesCatalog: ['users', 'roles-catalog'] as const,
+};
+
+/** Список учётных записей с фильтрами (`GET /users`). */
+export function useUsers(filters: UserFilters): UseQueryResult<UserListItem[]> {
+  return useQuery<UserListItem[], Error>({
+    queryKey: userKeys.list(filters),
+    queryFn: () =>
+      api.get<UserListItem[]>(
+        `/users${buildQuery({ q: filters.q, isActive: filters.isActive, role: filters.role })}`,
+      ),
+  });
+}
+
+/** Карточка учётной записи (`GET /users/:id`). */
+export function useUser(id: string | null): UseQueryResult<UserDetail> {
+  return useQuery<UserDetail, Error>({
+    queryKey: userKeys.detail(id ?? ''),
+    // `enabled` — потому что хук вызывается до того, как выбрана запись:
+    // без него запрос уходил бы на `/users/` с пустым идентификатором.
+    enabled: id !== null && id !== '',
+    queryFn: () => api.get<UserDetail>(`/users/${id ?? ''}`),
+  });
+}
+
+/**
+ * Справочник ролей (`GET /users/roles-catalog`).
+ *
+ * `staleTime` бесконечный: матрица прав задана в коде доменного пакета и не
+ * меняется во время работы приложения, поэтому перезапрашивать её незачем.
+ */
+export function useRolesCatalog(): UseQueryResult<RolesCatalog> {
+  return useQuery<RolesCatalog, Error>({
+    queryKey: userKeys.rolesCatalog,
+    queryFn: () => api.get<RolesCatalog>('/users/roles-catalog'),
+    staleTime: Infinity,
+  });
+}
+
+/** Создать учётную запись. */
+export function useCreateUser(): UseMutationResult<UserDetail, Error, UserCreateInput> {
+  const queryClient = useQueryClient();
+  return useMutation<UserDetail, Error, UserCreateInput>({
+    mutationFn: (input: UserCreateInput) => api.post<UserDetail>('/users', input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: userKeys.all });
+    },
+    onError: (error: Error) => {
+      void error;
+    },
+  });
+}
+
+/** Изменить учётную запись. */
+export function useUpdateUser(): UseMutationResult<
+  UserDetail,
+  Error,
+  { id: string; input: UserUpdateInput }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<UserDetail, Error, { id: string; input: UserUpdateInput }>({
+    mutationFn: ({ id, input }) => api.patch<UserDetail>(`/users/${id}`, input),
+    onSuccess: (user) => {
+      void queryClient.invalidateQueries({ queryKey: userKeys.all });
+      // Карточка обновляется отдельно: список и карточка кэшируются разными
+      // ключами, и без этого изменения были бы видны только в списке.
+      void queryClient.invalidateQueries({ queryKey: userKeys.detail(user.id) });
+    },
+    onError: (error: Error) => {
+      void error;
+    },
+  });
+}
+
+/** Назначить роль. */
+export function useAssignRole(): UseMutationResult<
+  UserDetail,
+  Error,
+  { id: string; role: string; storeId?: string; scope?: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<
+    UserDetail,
+    Error,
+    { id: string; role: string; storeId?: string; scope?: string }
+  >({
+    mutationFn: ({ id, ...input }) => api.post<UserDetail>(`/users/${id}/roles`, input),
+    onSuccess: (user) => {
+      void queryClient.invalidateQueries({ queryKey: userKeys.all });
+      void queryClient.invalidateQueries({ queryKey: userKeys.detail(user.id) });
+    },
+    onError: (error: Error) => {
+      void error;
+    },
+  });
+}
+
+/**
+ * Снять роль.
+ *
+ * `roleId` — идентификатор назначения (`user_role.id`), а не код роли: одна
+ * роль может быть назначена в нескольких магазинах.
+ */
+export function useRevokeRole(): UseMutationResult<
+  UserDetail,
+  Error,
+  { id: string; roleId: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<UserDetail, Error, { id: string; roleId: string }>({
+    mutationFn: ({ id, roleId }) => api.delete<UserDetail>(`/users/${id}/roles/${roleId}`),
+    onSuccess: (user) => {
+      void queryClient.invalidateQueries({ queryKey: userKeys.all });
+      void queryClient.invalidateQueries({ queryKey: userKeys.detail(user.id) });
+    },
+    onError: (error: Error) => {
+      void error;
+    },
+  });
+}
+
+/**
+ * Сбросить пароль.
+ *
+ * Ответ 204 без тела, поэтому тип `void`. После сброса все сессии сотрудника
+ * завершаются, и он войдёт только с новым паролем.
+ */
+export function useResetUserPassword(): UseMutationResult<
+  void,
+  Error,
+  { id: string; newPassword: string }
+> {
+  return useMutation<void, Error, { id: string; newPassword: string }>({
+    mutationFn: ({ id, newPassword }) =>
+      api.post<void>(`/users/${id}/reset-password`, { newPassword, mustChangePassword: true }),
     onError: (error: Error) => {
       void error;
     },

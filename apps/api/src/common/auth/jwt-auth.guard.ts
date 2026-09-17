@@ -31,6 +31,15 @@ export interface AuthenticatedUser {
   storeIds: string[];
   /** Роли с привязкой к конкретному магазину. */
   storeRoles: { role: RoleCode; storeId: string | null; scope: DataScope }[];
+  /**
+   * Учётной записи нужно сменить пароль при входе.
+   *
+   * Пароль задаёт администратор (при создании учётной записи или при сбросе),
+   * поэтому система обязана потребовать заменить его на известный только
+   * владельцу. Флаг приходит из токена и из `GET /auth/me`; интерфейс по нему
+   * показывает форму смены пароля вместо рабочего экрана.
+   */
+  mustChangePassword: boolean;
 }
 
 export interface RequestWithUser extends Request {
@@ -79,6 +88,7 @@ export class JwtAuthGuard implements CanActivate {
         scope?: DataScope;
         storeIds?: string[];
         storeRoles?: { role: RoleCode; storeId: string | null; scope: DataScope }[];
+        mustChangePassword?: boolean;
       }>(token);
 
       const roles = payload.roles ?? [];
@@ -107,6 +117,7 @@ export class JwtAuthGuard implements CanActivate {
         scope: payload.scope ?? 'STORE',
         storeIds: payload.storeIds ?? [],
         storeRoles: payload.storeRoles ?? [],
+        mustChangePassword: payload.mustChangePassword ?? false,
       };
 
       return true;

@@ -395,6 +395,38 @@ export const assignRoleSchema = z.object({
   scope: z.enum(Object.values(DATA_SCOPE) as [string, ...string[]]).optional(),
 });
 
+/**
+ * Правка учётной записи администратором.
+ *
+ * Пароль здесь НЕ меняется: для этого есть отдельный сценарий сброса
+ * (`resetUserPasswordSchema`). Смешивать их нельзя — смена пароля завершает все
+ * сессии пользователя, и правка, например, ФИО не должна разлогинивать человека.
+ *
+ * `.partial()` сохраняет правила полей, но делает их необязательными: правка
+ * приходит только с теми полями, которые администратор действительно изменил.
+ */
+export const updateUserSchema = z
+  .object({
+    email: emailSchema,
+    fullName: z.string().min(2, 'Укажите ФИО').max(200),
+    phone: phoneSchema,
+    isActive: z.boolean(),
+    storeIds: z.array(z.string().cuid()),
+  })
+  .partial();
+
+/**
+ * Сброс пароля администратором.
+ *
+ * `mustChangePassword` по умолчанию `true`: пароль задаёт администратор, а не
+ * владелец учётной записи, поэтому при первом входе система обязана потребовать
+ * сменить его на известный только владельцу.
+ */
+export const resetUserPasswordSchema = z.object({
+  newPassword: passwordSchema,
+  mustChangePassword: z.boolean().default(true),
+});
+
 // ---------------------------------------------------------------------------
 // Отчёты
 // ---------------------------------------------------------------------------
@@ -449,4 +481,7 @@ export type AssignmentInput = z.infer<typeof assignmentSchema>;
 export type PriceListItemInput = z.infer<typeof priceListItemSchema>;
 export type WarrantyClaimInput = z.infer<typeof warrantyClaimSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+export type AssignRoleInput = z.infer<typeof assignRoleSchema>;
+export type ResetUserPasswordInput = z.infer<typeof resetUserPasswordSchema>;
 export type ReportQueryInput = z.infer<typeof reportQuerySchema>;

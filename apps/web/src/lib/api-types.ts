@@ -410,3 +410,87 @@ export interface CreatedOrderResponse {
   requiresPrepayment: boolean;
   dueAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// Администрирование: учётные записи и роли (задача 1.2.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Роль в том виде, в каком её отдаёт API.
+ *
+ * `role` и `scope` — коды из `@app/shared`; `roleLabel` и `scopeLabel` сервер
+ * отдаёт готовыми, чтобы интерфейс не дублировал словарь подписей и не
+ * расходился с ним.
+ */
+export interface UserRoleView {
+  id: string;
+  role: string;
+  roleLabel: string;
+  storeId: string | null;
+  storeName: string | null;
+  scope: string;
+  scopeLabel: string;
+}
+
+/** Учётная запись в списке (`GET /users`). */
+export interface UserListItem {
+  id: string;
+  email: string;
+  phone: string | null;
+  fullName: string;
+  isActive: boolean;
+  mustChangePassword: boolean;
+  lastLoginAt: string | null;
+  lockedUntil: string | null;
+  createdAt: string;
+  roles: UserRoleView[];
+  stores: { id: string; code: string; name: string; isDefault: boolean }[];
+  /** Число активных сессий: администратору видно, работает ли сотрудник сейчас. */
+  activeSessions: number;
+}
+
+/** Карточка учётной записи (`GET /users/:id`). */
+export interface UserDetail extends UserListItem {
+  /** Объединение прав всех ролей — то же, что отдаёт `GET /auth/me`. */
+  permissions: string[];
+}
+
+/** Роль в справочнике (`GET /users/roles-catalog`). */
+export interface RoleCatalogEntry {
+  code: string;
+  label: string;
+  permissions: string[];
+}
+
+/** Справочник ролей и областей видимости (`GET /users/roles-catalog`). */
+export interface RolesCatalog {
+  roles: RoleCatalogEntry[];
+  scopes: { code: string; label: string }[];
+}
+
+/** Фильтры списка учётных записей. */
+export interface UserFilters {
+  q?: string;
+  /** `true` | `false`; без значения возвращаются все. */
+  isActive?: string;
+  role?: string;
+}
+
+/** Новый сотрудник (`POST /users`). */
+export interface UserCreateInput {
+  email: string;
+  fullName: string;
+  phone?: string;
+  password: string;
+  roles: { role: string; storeId?: string; scope?: string }[];
+  storeIds: string[];
+}
+
+/** Правка учётной записи (`PATCH /users/:id`). */
+export interface UserUpdateInput {
+  email?: string;
+  fullName?: string;
+  phone?: string;
+  isActive?: boolean;
+  storeIds?: string[];
+}

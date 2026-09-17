@@ -168,6 +168,10 @@ export class AuthService {
         scope: user.scope,
         storeIds: user.storeIds,
         storeRoles: user.storeRoles,
+        // Флаг «сменить пароль при входе». В токене он безвреден: смена пароля
+        // завершает все сессии и гасит cookie, поэтому устаревшее значение
+        // живёт не дольше access-токена.
+        mustChangePassword: user.mustChangePassword,
       },
       { secret: process.env.JWT_ACCESS_SECRET, expiresIn: process.env.JWT_ACCESS_TTL ?? '15m' },
     );
@@ -310,6 +314,7 @@ export class AuthService {
     fullName: string;
     roles: { role: RoleCode; storeId: string | null; scope: DataScope }[];
     stores: { storeId: string }[];
+    mustChangePassword?: boolean;
   }): AuthenticatedUser {
     const roles = [...new Set(user.roles.map((r) => r.role))];
     const primaryRole = roles[0];
@@ -351,6 +356,9 @@ export class AuthService {
       scope,
       storeIds: user.stores.map((s) => s.storeId),
       storeRoles: user.roles.map((r) => ({ role: r.role, storeId: r.storeId, scope: r.scope })),
+      // Флаг обязательной смены пароля. По умолчанию `false`, чтобы вызовы,
+      // где поле не запрашивалось, не заставляли менять пароль на ровном месте.
+      mustChangePassword: user.mustChangePassword ?? false,
     };
   }
 

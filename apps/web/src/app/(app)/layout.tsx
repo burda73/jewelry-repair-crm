@@ -20,6 +20,10 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', label: t.nav.dashboard },
   { href: '/orders', label: t.nav.orders, permission: 'order:read' },
+  // Пункт виден только администратору: право `user:manage` есть только у ADMIN
+  // (packages/shared/src/domain/roles.ts). Остальные роли не должны видеть
+  // административный раздел даже как неактивную ссылку.
+  { href: '/users', label: t.nav.users, permission: 'user:manage' },
 ];
 
 /**
