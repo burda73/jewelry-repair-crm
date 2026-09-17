@@ -1,0 +1,11 @@
+node_modules
+dist
+build
+.next
+out
+coverage
+*.tsbuildinfo
+infra/docker/data
+infra/backup/out
+*.md
+package-lock.json

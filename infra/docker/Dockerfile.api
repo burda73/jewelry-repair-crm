@@ -1,0 +1,65 @@
+# Продакшн-сборка API. Multi-stage: минимальный итоговый образ.
+# Сборка: docker build -f infra/docker/Dockerfile.api -t repair-api .
+
+# --- Этап 1: сборка ----------------------------------------------------------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Сначала только манифесты — слой кэшируется, пока не менялись зависимости.
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/db/package.json ./packages/db/
+
+RUN npm ci --ignore-scripts
+
+# Prisma Client генерируется на этапе сборки: в рантайме движок уже в образе.
+COPY packages/db/prisma ./packages/db/prisma
+RUN npx prisma generate --schema packages/db/prisma/schema.prisma
+
+# Исходники
+COPY tsconfig.base.json ./
+COPY packages ./packages
+COPY apps/api ./apps/api
+
+RUN npm run build --workspace @app/shared \
+ && npx tsc -p apps/api/tsconfig.json
+
+# Убираем dev-зависимости из итогового node_modules.
+RUN npm prune --omit=dev
+
+# --- Этап 2: рантайм ---------------------------------------------------------
+FROM node:20-alpine AS runner
+
+# libc6-compat нужен для движка Prisma на Alpine.
+RUN apk add --no-cache libc6-compat openssl curl tini
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=4000
+
+# Непривилегированный пользователь: контейнер не работает от root.
+RUN addgroup --system --gid 1001 nodejs \
+ && adduser --system --uid 1001 --ingroup nodejs repair
+
+COPY --from=builder --chown=repair:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=repair:nodejs /app/packages ./packages
+COPY --from=builder --chown=repair:nodejs /app/apps/api/dist ./apps/api/dist
+COPY --from=builder --chown=repair:nodejs /app/apps/api/package.json ./apps/api/
+COPY --from=builder --chown=repair:nodejs /app/package.json ./
+
+USER repair
+
+EXPOSE 4000
+
+# tini корректно передаёт сигналы — graceful shutdown работает.
+ENTRYPOINT ["/sbin/tini", "--"]
+
+# Проверка живости: контейнер считается здоровым только когда API отвечает.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://localhost:4000/health/live || exit 1
+
+CMD ["node", "apps/api/dist/main.js"]

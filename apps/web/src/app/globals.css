@@ -1,0 +1,52 @@
+/** Общие стили приложения. Полные стили компонентов добавляются по мере разработки. */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    /* Базовая типографика 16 px — важно для читаемости на планшетах. */
+    font-size: 16px;
+  }
+
+  /* Фокус видим всегда — требование доступности (docs/08-ui-ux.md §7). */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-blue-600;
+  }
+}
+
+@layer components {
+  /* Кнопка главного действия: крупная, для работы «с клиентом в руках». */
+  .btn-primary {
+    @apply inline-flex min-h-[44px] items-center justify-center rounded-lg bg-blue-600 px-5 py-2.5
+           text-base font-medium text-white transition-colors hover:bg-blue-700
+           disabled:cursor-not-allowed disabled:bg-slate-300;
+  }
+
+  .btn-secondary {
+    @apply inline-flex min-h-[44px] items-center justify-center rounded-lg border border-slate-300
+           bg-white px-5 py-2.5 text-base font-medium text-slate-700 transition-colors
+           hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm;
+  }
+
+  /* Поля ввода: достаточный размер для пальца на планшете. */
+  .input {
+    @apply min-h-[44px] w-full rounded-lg border border-slate-300 px-3 py-2 text-base
+           focus:border-blue-500 focus:ring-1 focus:ring-blue-500;
+  }
+}

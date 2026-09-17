@@ -1,0 +1,168 @@
+# Продакшн-развёртывание on-premise (Proxmox, ответы A1).
+#
+# КЛЮЧЕВОЕ ОТЛИЧИЕ ОТ ТИПОВОЙ СХЕМЫ:
+#  1. PostgreSQL НЕ поднимается в Docker — используется СУЩЕСТВУЮЩИЙ сервер
+#     PostgreSQL 16 предприятия. Адрес задаётся в DATABASE_URL.
+#     Требования к БД, правам и расширениям — infra/db/README.md.
+#  2. TLS и маршрутизацию выполняет ВНЕШНИЙ nginx-proxy заказчика.
+#     Проект не содержит собственного прокси и не терминирует TLS.
+#
+# Использование (из корня репозитория):
+#   1. cp .env.example .env  и заполнить (обязательно сменить секреты!)
+#   2. Проверить готовность внешней БД: ./infra/db/preflight.sh
+#   3. docker compose --env-file .env -f infra/docker/docker-compose.prod.yml up -d
+#   4. Применить миграции ОТДЕЛЬНЫМ шагом (см. README, раздел «Миграции»)
+#
+# ВАЖНО: миграции выполняются до запуска новой версии API.
+
+name: repair-crm
+
+x-api-env: &api-env
+  NODE_ENV: production
+  # Внешний PostgreSQL 16 предприятия. Добавьте sslmode=require, если сервер
+  # требует TLS. Ограничение пула задаётся DATABASE_POOL_SIZE.
+  DATABASE_URL: ${DATABASE_URL:?задайте DATABASE_URL внешнего PostgreSQL}
+  DATABASE_REPLICA_URL: ${DATABASE_REPLICA_URL:-}
+  DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
+  REDIS_URL: redis://redis:6379
+  APP_URL: ${APP_URL}
+  JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+  CSRF_SECRET: ${CSRF_SECRET}
+  S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+  S3_SECRET_KEY: ${S3_SECRET_KEY}
+  SMTP_HOST: ${SMTP_HOST}
+  SMTP_PORT: ${SMTP_PORT}
+  SMTP_FROM: ${SMTP_FROM}
+  INTEGRATION_1C_ENABLED: ${INTEGRATION_1C_ENABLED:-false}
+  INTEGRATION_1C_BASE_URL: ${INTEGRATION_1C_BASE_URL:-}
+  INTEGRATION_PBX_ENABLED: ${INTEGRATION_PBX_ENABLED:-false}
+  # API стоит за внешним прокси: доверяем одному хопу, чтобы req.ip был
+  # реальным адресом клиента. Иначе rate limit на входе считал бы всех
+  # клиентов одним адресом и блокировал бы вход всей сети.
+  TRUST_PROXY: ${TRUST_PROXY:-1}
+  TZ: ${TZ:-Europe/Moscow}
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # noeviction: потеря задачи из очереди недопустима (важнее, чем кэш).
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
+    networks: [repair-net]
+
+  # Хранилище файлов. Если в инфраструктуре есть S3-совместимое хранилище,
+  # задайте S3_ENDPOINT на него и этот сервис можно удалить.
+  minio:
+    image: minio/minio:latest
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?задайте S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?задайте S3_SECRET_KEY}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: server /data --console-address ":9001"
+    networks: [repair-net]
+
+  # Создаёт бакеты при первом запуске (docs/05-integrations.md §4)
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 \"$${S3_ACCESS_KEY}\" \"$${S3_SECRET_KEY}\" &&
+      mc mb --ignore-existing local/repair-photos &&
+      mc mb --ignore-existing local/repair-calls &&
+      mc mb --ignore-existing local/repair-docs &&
+      mc mb --ignore-existing local/repair-backups &&
+      mc anonymous set none local/repair-photos &&
+      mc anonymous set none local/repair-calls &&
+      mc anonymous set none local/repair-docs &&
+      echo 'Бакеты созданы' &&
+      exit 0
+      "
+    networks: [repair-net]
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    restart: always
+    environment: *api-env
+    # Зависимостей от postgres нет — БД внешняя. Готовность БД проверяется
+    # через /health/ready, а также при старте приложения.
+    depends_on:
+      redis: { condition: service_healthy }
+    # Публикуется для внешнего nginx-proxy: он маршрутизирует /api/v1 напрямую,
+    # поэтому API видит реальный IP клиента (нужно для rate limit на входе).
+    ports:
+      - '${API_PORT:-4000}:4000'
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:4000/health/live']
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    networks: [repair-net]
+
+  # Воркеры: эскалации, синхронизация с 1С, импорт звонков, очистка записей.
+  # Отдельный контейнер — фоновые задачи не конкурируют с HTTP-запросами.
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    restart: always
+    environment: *api-env
+    command: ['node', 'apps/api/dist/worker.js']
+    depends_on:
+      redis: { condition: service_healthy }
+    networks: [repair-net]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+    restart: always
+    environment:
+      NODE_ENV: production
+      # Внутренний адрес API по имени сервиса — используется rewrite'ами Next.js.
+      API_URL: http://api:4000
+      NEXT_TELEMETRY_DISABLED: '1'
+    depends_on: [api]
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:3000/']
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    networks: [repair-net]
+
+volumes:
+  redis-data:
+  minio-data:
+
+networks:
+  # Обычная bridge-сеть: API должен иметь доступ к внешней БД, а также
+  # в локальную сеть для интеграций с 1С и IP-АТС.
+  repair-net:
+    driver: bridge

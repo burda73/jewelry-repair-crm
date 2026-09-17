@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Качество кода: линт, типы, форматирование
+  # ---------------------------------------------------------------------------
+  quality:
+    name: Линт и типы
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Установка зависимостей
+        run: npm ci
+
+      - name: Генерация Prisma Client
+        run: npm run db:generate
+
+      - name: Проверка форматирования
+        run: npx prettier --check "**/*.{ts,tsx,json,md}"
+
+      - name: Линт
+        run: npm run lint
+
+      - name: Проверка типов
+        run: npm run typecheck
+
+  # ---------------------------------------------------------------------------
+  # Тесты доменного ядра и API
+  # ---------------------------------------------------------------------------
+  test:
+    name: Тесты
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: repair
+          POSTGRES_PASSWORD: repair
+          POSTGRES_DB: repair_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://repair:repair@localhost:5432/repair_test?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: ci_access_secret_for_tests_only_32_chars
+      JWT_REFRESH_SECRET: ci_refresh_secret_for_tests_only_32_chars
+      CSRF_SECRET: ci_csrf_secret_for_tests
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Генерация Prisma Client
+        run: npm run db:generate
+
+      - name: Применение миграций
+        run: npm run db:deploy
+
+      - name: Тесты с покрытием
+        run: npm test -- --coverage
+
+      - name: Загрузка отчёта о покрытии
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: '**/coverage/'
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Проверка миграций на копии структуры
+  # docs/03-data-model.md §5: миграции проверяются до продакшна
+  # ---------------------------------------------------------------------------
+  migrations:
+    name: Проверка миграций
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: repair
+          POSTGRES_PASSWORD: repair
+          POSTGRES_DB: repair_migrate_check
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://repair:repair@localhost:5432/repair_migrate_check?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Проверка, что схема и миграции не расходятся
+        run: npx prisma migrate diff --from-migrations packages/db/prisma/migrations --to-schema-datamodel packages/db/prisma/schema.prisma --shadow-database-url "$DATABASE_URL" --exit-code
+      - name: Применение миграций с нуля
+        run: npm run db:deploy
+
+  # ---------------------------------------------------------------------------
+  # Сборка
+  # ---------------------------------------------------------------------------
+  build:
+    name: Сборка
+    runs-on: ubuntu-latest
+    needs: [quality]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Проверка безопасности зависимостей
+  # ---------------------------------------------------------------------------
+  security:
+    name: Аудит зависимостей
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Проверка уязвимостей
+        run: npm audit --audit-level=high
+        continue-on-error: true
+      - name: Проверка на секреты в коде
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Проверка, что документация не разошлась с кодом
+  # (docs/04-status-workflow.md §6 — таблица переходов должна совпадать)
+  # ---------------------------------------------------------------------------
+  docs-sync:
+    name: Синхронизация документации
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Проверка соответствия статусной модели документации
+        run: npm test --workspace @app/shared -- docs-sync

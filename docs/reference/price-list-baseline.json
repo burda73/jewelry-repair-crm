@@ -1,0 +1,222 @@
+{
+  "source": "Прейскурант Ремонт.docx",
+  "positionCount": 24,
+  "positions": [
+    {
+      "position": 1,
+      "name": "Запаять одно место излома цепи, браслета",
+      "goldMinor": 90000,
+      "silverMinor": 45000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 2,
+      "name": "Запаять одно место излома цепи, браслета (лазер)",
+      "goldMinor": 270000,
+      "silverMinor": 150000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 3,
+      "name": "Запаять одно место в кольце, броши, серьге",
+      "goldMinor": 112500,
+      "silverMinor": 75000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 4,
+      "name": "Пайка протеров в серьгах",
+      "goldMinor": 450000,
+      "silverMinor": 270000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 5,
+      "name": "Пайка протеров в кулоне",
+      "goldMinor": 270000,
+      "silverMinor": 135000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 6,
+      "name": "Уменьшение/увеличение классического кольца от 0,5 размера путем растяжения/сжатия",
+      "goldMinor": 142500,
+      "silverMinor": 82500,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 7,
+      "name": "Увеличение кольца со вставкой (с добавлением вставки из золота на один размер)",
+      "goldMinor": 360000,
+      "silverMinor": 165000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 8,
+      "name": "Уменьшение кольца путем вырезки",
+      "goldMinor": 210000,
+      "silverMinor": 105000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 9,
+      "name": "Изготовление крапана 1 шт.",
+      "goldMinor": 180000,
+      "silverMinor": 90000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 10,
+      "name": "Раскрепка камней без сохранения",
+      "goldMinor": 7500,
+      "silverMinor": 7500,
+      "goldFrom": true,
+      "silverFrom": true,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 11,
+      "name": "Закрепка фианитов круг до 3мм",
+      "goldMinor": 37500,
+      "silverMinor": 37500,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 12,
+      "name": "Закрепка бриллиантов до 1,5 мм (простая)",
+      "goldMinor": 52500,
+      "silverMinor": 52500,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 13,
+      "name": "Мойка изделия в ультразвуке 1 шт.",
+      "goldMinor": 30000,
+      "silverMinor": 30000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 14,
+      "name": "Ремонт замка, карабин",
+      "goldMinor": 180000,
+      "silverMinor": 90000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 15,
+      "name": "Изготовление и установка замка коробка (стоимость металла считается отдельно)",
+      "goldMinor": 450000,
+      "silverMinor": 300000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": true
+    },
+    {
+      "position": 16,
+      "name": "Изготовление замка, карабин (до 0,35 гр.)",
+      "goldMinor": 540000,
+      "silverMinor": 112500,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 17,
+      "name": "Замена изношенного штифта 1 шт. (стоимость разницы металла считается отдельно)",
+      "goldMinor": 360000,
+      "silverMinor": 165000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": true
+    },
+    {
+      "position": 18,
+      "name": "Правка кольца без обработки и полировки",
+      "goldMinor": 52500,
+      "silverMinor": 30000,
+      "goldFrom": true,
+      "silverFrom": true,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 19,
+      "name": "Полировка кольца, кулона, броши",
+      "goldMinor": 112500,
+      "silverMinor": 75000,
+      "goldFrom": true,
+      "silverFrom": true,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 20,
+      "name": "Полировка браслета",
+      "goldMinor": 180000,
+      "silverMinor": 75000,
+      "goldFrom": true,
+      "silverFrom": true,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 21,
+      "name": "Родирование путем погружения, за гр.",
+      "goldMinor": 50000,
+      "silverMinor": 50000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 22,
+      "name": "Родирование карандашом (отдельных деталей), за гр.",
+      "goldMinor": 50000,
+      "silverMinor": 50000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 23,
+      "name": "Золочение, за гр.",
+      "goldMinor": 35000,
+      "silverMinor": 35000,
+      "goldFrom": false,
+      "silverFrom": false,
+      "metalCostSeparate": false
+    },
+    {
+      "position": 24,
+      "name": "Переделка серьги в кольцо (стоимость металла считается отдельно)",
+      "goldMinor": 300000,
+      "silverMinor": 225000,
+      "goldFrom": true,
+      "silverFrom": true,
+      "metalCostSeparate": true
+    }
+  ]
+}

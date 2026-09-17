@@ -1,0 +1,33 @@
+# Параметры проксирования для внешнего nginx-proxy заказчика.
+#
+# Разместите этот файл рядом с конфигом вашего прокси и подключайте:
+#     include /etc/nginx/repair_proxy_params;
+#
+# Подробности — infra/proxy/README.md
+
+proxy_http_version 1.1;
+
+# Host нужен приложению для корректных абсолютных ссылок.
+proxy_set_header Host $host;
+
+# X-Forwarded-Proto: https обязателен. Без него приложение считает соединение
+# небезопасным, и cookies с флагом Secure (токены доступа) не сохраняются —
+# пользователь не сможет войти.
+proxy_set_header X-Forwarded-Proto $scheme;
+
+# Реальный IP клиента. В приложении должен быть задан TRUST_PROXY=1,
+# иначе ограничение частоты запросов будет считать всех клиентов одним адресом.
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+# request_id связывает запрос пользователя с записями в структурированных логах.
+proxy_set_header X-Request-Id $http_x_request_id;
+
+# Keepalive до upstream: меньше накладных расходов на TCP.
+proxy_set_header Connection "";
+
+proxy_buffering on;
+proxy_connect_timeout 5s;
+proxy_send_timeout 60s;
+# Выгрузка отчётов может занимать время — держим запас.
+proxy_read_timeout 60s;

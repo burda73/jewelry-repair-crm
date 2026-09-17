@@ -1,0 +1,62 @@
+# Зависимости
+node_modules/
+.pnp
+.pnp.js
+
+# Сборка
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Окружение — НИКОГДА не коммитим секреты
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Тесты и покрытие
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# Логи
+*.log
+npm-debug.log*
+yarn-error.log*
+logs/
+
+# Локальные данные (тома dev-инфраструктуры)
+infra/docker/data/
+infra/docker/minio-data/
+infra/backup/out/
+*.dump
+*.sql.gz
+
+# Файлы, загруженные локально
+uploads/
+tmp/
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+
+# Локальная БД для отладки (scripts/local-db.mjs) — данные не коммитим
+.local/
+
+# Временный кэш npm: использовался, когда системный кэш был недоступен.
+# В репозиторий попадать не должен — это десятки мегабайт мусора.
+.npm-tmp/
+
+# Черновые скрипты проверок (создаются и удаляются в ходе работы)
+.scratch-*.mjs
+
+# OS
+.DS_Store
+Thumbs.db
