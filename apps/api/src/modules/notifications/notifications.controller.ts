@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { NotificationsService } from './notifications.service';
@@ -57,6 +57,9 @@ export class NotificationsController {
   }
 
   @Post('read-all')
+  // `POST` по умолчанию отвечает 201 «создано», но здесь ничего не создаётся:
+  // отметка о прочтении — изменение состояния, и корректный ответ 200.
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Отметить прочитанными все уведомления' })
   async markAllRead(@CurrentUser() user: AuthenticatedUser): Promise<{ updated: number }> {
     return { updated: await this.notifications.markAllRead(user) };
