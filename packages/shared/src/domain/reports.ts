@@ -42,6 +42,42 @@ export type ReportName = (typeof REPORT_NAME)[keyof typeof REPORT_NAME];
 export const ALL_REPORT_NAMES: readonly ReportName[] = Object.values(REPORT_NAME);
 
 /**
+ * Право, необходимое для каждого отчёта.
+ *
+ * ЗАЧЕМ РАЗЛИЧАТЬ. `report:operational` и `report:revenue` — разные полномочия:
+ * производственные сроки и просрочки нужны руководителю производства, а выручка
+ * и предоплаты — кассиру и бухгалтеру. Одного общего права «читать отчёты» не
+ * хватает: кассир получает доступ к выручке, но не к загрузке цеха.
+ *
+ * Раньше маршрут требовал только `report:operational`, и кассир, у которого есть
+ * `report:revenue` и `report:export`, не мог открыть выручку вовсе — право было,
+ * а доступа не было. Дефект найден при сверке матрицы прав с docs/07 §12.
+ */
+export const REPORT_PERMISSION: Record<ReportName, string> = {
+  [REPORT_NAME.STAGE_DURATIONS]: 'report:operational',
+  [REPORT_NAME.WORKSHOP_LOAD]: 'report:operational',
+  [REPORT_NAME.OVERDUE]: 'report:operational',
+  [REPORT_NAME.REVENUE]: 'report:revenue',
+  [REPORT_NAME.PREPAYMENTS]: 'report:revenue',
+};
+
+/** Права, дающие доступ хотя бы к одному отчёту. */
+export const ANY_REPORT_PERMISSIONS: readonly string[] = [
+  ...new Set(Object.values(REPORT_PERMISSION)),
+];
+
+/**
+ * Право, нужное для конкретного отчёта.
+ *
+ * Незнакомое имя отчёта даёт право на выручку: отчёт всё равно не построится
+ * (имя проверяется по реестру), а право по умолчанию не должно быть самым
+ * широким — иначе новая опечатка в имени открыла бы операционный отчёт кассиру.
+ */
+export function permissionForReport(name: string): string {
+  return REPORT_PERMISSION[name as ReportName] ?? 'report:revenue';
+}
+
+/**
  * Тип колонки. Определяет форматирование на клиенте и в выгрузке.
  *
  *  * `string`   — текст;

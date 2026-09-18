@@ -168,6 +168,13 @@
 | 2.11 | Разрез по магазину внесения, а не заказа | `docs/06` §5 | `Payment.storeId` | `reports.service.spec.ts` |
 | 2.11 | Зачтённые и «в работе» разделены | `docs/06` §5 | `status === COMPLETED` | `reports.service.spec.ts` |
 | 2.11 | Зависшие: нет работ дольше 14 дней | `docs/06` §5 | `STUCK_PREPAYMENT_DAYS` | `reports.service.spec.ts` (2 теста) |
+| 2.11 | Экспорт XLSX/CSV для всех отчётов | `docs/06` §6.4, `docs/07` §12.3 | `ReportsExportService` | `reports-export.service.spec.ts` |
+| 2.11 | Деньги выгружаются в рублях, а не копейках | `docs/07` §12.3 | `cellValue()` | `reports-export.service.spec.ts` |
+| 2.11 | Числа остаются числами (Excel суммирует) | `docs/07` §12.3 | `cellValue()` | `reports-export.service.spec.ts` |
+| 2.11 | CSV: BOM, `;`, CRLF, экранирование | `docs/07` §12.3 | `toCsv()`, `csvEscape()` | `reports-export.service.spec.ts` (7 тестов) |
+| 2.11 | XLSX читается обратно как книга Excel | `docs/07` §12.3 | `toXlsx()` | `reports-export.service.spec.ts` |
+| 2.11 | Выгрузка уважает права (`report:export`) | `docs/06` §6.4 | `assertCanExport()` | `reports-export.service.spec.ts` |
+| 2.11 | Кассир видит выручку, но не загрузку цеха | `docs/07` §12.2.1 | `REPORT_PERMISSION` | `reports.spec.ts` (4 теста) |
 | 2.11 | Отчёт «Предоплаты» | `docs/06` §5 | `Payment.kind = PREPAYMENT` | этап 5 |
 | 3 | Интеграция с 1С | `docs/05` §1 | `AccountingPort`, outbox | этап 3 |
 | 3 | Интеграция с IP-АТС | `docs/05` §2 | `TelephonyPort` | этап 4 |

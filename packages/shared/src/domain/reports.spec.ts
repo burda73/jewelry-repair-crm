@@ -15,10 +15,14 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { ROLE, permissionsFor } from './roles.js';
 import {
   ALL_REPORT_NAMES,
+  ANY_REPORT_PERMISSIONS,
   REPORT_COLUMN_TYPE,
   REPORT_NAME,
+  REPORT_PERMISSION,
+  permissionForReport,
   average,
   inNormShare,
   minutesToHours,
@@ -223,5 +227,81 @@ describe('Реестр отчётов', () => {
     ]);
     expect(REPORT_NAME.STAGE_DURATIONS).toBe('deadlines');
     expect(REPORT_NAME.WORKSHOP_LOAD).toBe('production-load');
+  });
+});
+
+describe('Права на отчёты (задача 5.6)', () => {
+  it('каждый отчёт имеет право', () => {
+    // Отчёт без права был бы доступен всем, у кого есть хоть какое-то право на
+    // отчёты, — то есть выручка открылась бы руководителю производства.
+    for (const name of ALL_REPORT_NAMES) {
+      expect(typeof permissionForReport(name)).toBe('string');
+      expect(permissionForReport(name).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('операционные и денежные отчёты требуют разных прав', () => {
+    /*
+     * Разделение обязательно: сроки и просрочки нужны руководителю производства,
+     * выручка и предоплаты — кассиру и бухгалтеру. Одного общего права «читать
+     * отчёты» не хватает.
+     */
+    expect(permissionForReport(REPORT_NAME.OVERDUE)).toBe('report:operational');
+    expect(permissionForReport(REPORT_NAME.STAGE_DURATIONS)).toBe('report:operational');
+    expect(permissionForReport(REPORT_NAME.WORKSHOP_LOAD)).toBe('report:operational');
+    expect(permissionForReport(REPORT_NAME.REVENUE)).toBe('report:revenue');
+    expect(permissionForReport(REPORT_NAME.PREPAYMENTS)).toBe('report:revenue');
+  });
+
+  it('кассир получает выручку, но не загрузку цеха', () => {
+    /*
+     * Дефект, найденный при сверке матрицы прав с docs/07 §12: маршрут требовал
+     * только `report:operational`, и кассир, у которого есть `report:revenue` и
+     * `report:export`, не мог открыть выручку вовсе — право было, доступа не
+     * было.
+     */
+    const cashier = permissionsFor([ROLE.CASHIER]);
+    expect(cashier.has(permissionForReport(REPORT_NAME.REVENUE))).toBe(true);
+    expect(cashier.has(permissionForReport(REPORT_NAME.OVERDUE))).toBe(false);
+  });
+
+  it('руководитель производства видит операционные отчёты, но не выручку', () => {
+    // Обратная сторона того же разделения: цех не должен видеть деньги клиентов.
+    const manager = permissionsFor([ROLE.PRODUCTION_MANAGER]);
+    expect(manager.has(permissionForReport(REPORT_NAME.OVERDUE))).toBe(true);
+    expect(manager.has(permissionForReport(REPORT_NAME.REVENUE))).toBe(false);
+  });
+
+  it('руководитель и бухгалтер видят оба вида отчётов', () => {
+    for (const role of [ROLE.MANAGER, ROLE.CHIEF_ACCOUNTANT]) {
+      const permissions = permissionsFor([role]);
+      expect(permissions.has(permissionForReport(REPORT_NAME.OVERDUE))).toBe(true);
+      expect(permissions.has(permissionForReport(REPORT_NAME.REVENUE))).toBe(true);
+      expect(permissions.has(permissionForReport(REPORT_NAME.REVENUE))).toBe(true);
+    }
+  });
+
+  it('набор «любое право на отчёт» покрывает все отчёты', () => {
+    // Маршрут пускает по любому из этих прав, и право каждого отчёта обязано
+    // входить в набор — иначе отчёт недостижим ни для кого.
+    for (const name of ALL_REPORT_NAMES) {
+      expect(ANY_REPORT_PERMISSIONS).toContain(permissionForReport(name));
+    }
+    expect(new Set(ANY_REPORT_PERMISSIONS).size).toBe(ANY_REPORT_PERMISSIONS.length);
+  });
+
+  it('незнакомое имя отчёта не открывает операционный отчёт', () => {
+    /*
+     * Право по умолчанию не должно быть самым широким: иначе опечатка в имени
+     * открыла бы операционный отчёт тому, у кого есть только право на выручку.
+     */
+    expect(permissionForReport('нет-такого')).toBe('report:revenue');
+    expect(permissionForReport('нет-такого')).not.toBe('report:operational');
+  });
+
+  it('реестр прав покрывает все отчёты', () => {
+    // Пропущенный отчёт в реестре прав означал бы, что он проверяется правом по
+    // умолчанию, а не своим.
+    expect(Object.keys(REPORT_PERMISSION).sort()).toEqual([...ALL_REPORT_NAMES].sort());
   });
 });
