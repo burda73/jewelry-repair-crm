@@ -40,12 +40,12 @@
 | 2.7 | Каждый переход с `SET_DUE_AT` имеет норматив | `docs/04` §2 | инвариант «статус → этап → норматив» | `order-workflow.service.spec.ts`: 2 теста падают, если вернуть `SET_DUE_AT` переходу в `ACCEPTED` |
 | 2.7 | Документация эффектов не расходится с кодом | `docs/04` §2 | сверка `SET_DUE_AT` ↔ `dueAt` в таблице переходов | `docs-sync.spec.ts`: падает с перечнем расхождений |
 | 2.4 | Согласование суммы создаёт корректировку | `docs/03` §3.5 | `applyAdjustment()` из `createApproval()` | прогон API: 450→400, скидка 50 |
-| 2.4 | **Интеграция с IP-АТС** | `docs/05` §2 | `CallRecording`, `TelephonyPort`, скоринг сопоставления | этап 4 |
+| 2.4 | **Интеграция с IP-АТС** | `docs/05` §2 | `CallRecording`; контракт `TelephonyPort` — `docs/05` §6.2; требования к заказчику — `docs/05` §2.7 | этап 4 (отложен заказчиком); документация и контракт готовы |
 | 2.4 | Обязательный пункт о записи разговоров | `docs/02` §5.6 | guard `CONSENT_CALL_RECORDING`, `Customer.consentCallRecording` | `order-transitions.spec.ts` |
 | 2.4 | Срок хранения записей — 1 год | `docs/05` §2.5 | `CallRecording.retainUntil`, воркер retention | этап 4 |
 | 2.5 | Приём в любом магазине по номеру | `docs/03` §3.7 | `Payment.storeId`, глобальный поиск | `order-transitions.spec.ts` |
 | 2.5 | Привязка платежа независимо от места | `docs/03` §3.7 | `Payment.storeId` + `orderId` | — |
-| 2.5 | Синхронизация с 1С | `docs/05` §1 | `IntegrationOutbox`, воркер | этап 3 |
+| 2.5 | Синхронизация с 1С | `docs/05` §1 | `IntegrationOutbox`; контракт `AccountingPort` — `docs/05` §6.1; требования к подрядчику — `docs/05` §1.3.1 | этап 3 (отложен заказчиком); документация и контракт готовы |
 | 2.5 | **Блокировка старта работ** | `docs/02` §5.1 | guard `PREPAYMENT_SATISFIED`, `isPrepaymentSatisfied()` | `money-dates.spec.ts` |
 | 2.5 | Поиск заказа по отсканированному QR | `docs/08` §4.1 | `normalizeScanInput` в `@app/shared` | 5 тестов `order-number.spec.ts`, прогон API |
 | 2.8 | Сканирование при выдаче | `docs/08` §4.1 | тот же поиск по номеру | прогон API |
@@ -57,7 +57,7 @@
 | 2.7 | Автоуведомления при просрочке | `docs/04` §4 | воркер escalations, `Notification` | этап 2 |
 | 2.7 | Уведомление руководителю при >1 дня | `docs/04` §4 | `isOverdueForManager()` | `money-dates.spec.ts` |
 | 2.7 | Дашборд просроченных заказов | `docs/06` §3 | `GET /orders/overdue`, индекс `(status, dueAt)` | — |
-| 2.8 | Фиксация оплаты, синхронизация с 1С | `docs/05` §1 | `Payment`, `IntegrationOutbox` | этап 3 |
+| 2.8 | Фиксация оплаты, синхронизация с 1С | `docs/05` §1 | `Payment.idempotencyKey`/`externalId`/`syncStatus` (есть в схеме), `IntegrationOutbox` | этап 3 (отложен заказчиком) |
 | 2.8 | **Условие выдачи — полная оплата** | `docs/02` §5.2 | guard `PAID_IN_FULL`, `isPaidInFull()` | `money-dates.spec.ts` |
 | 2.8 | Акт отказа при отказе от оплаты | `docs/03` §2 | `RefusalAct`, guard `REFUSAL_ACT_EXISTS` | `order-transitions.spec.ts` |
 | 2.8 | Статус «невостребовано» через 30 дней | `docs/02` §5.3 | guard `UNCLAIMED_THRESHOLD`, `addCalendarDays()` | `money-dates.spec.ts` |
