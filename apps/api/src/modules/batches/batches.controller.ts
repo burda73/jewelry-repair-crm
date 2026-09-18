@@ -10,13 +10,20 @@ import {
   Post,
   Query,
   Res,
+  UploadedFiles,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { ApiConsumes } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiCookieAuth } from '@nestjs/swagger';
 import { PERMISSION } from '@app/shared';
 
 import { BatchesService } from './batches.service';
-import type { BatchActDto, BatchDetailDto, BatchDto } from './batches.service';
+import type { BatchActDto, BatchDetailDto, BatchDto, BatchPhotoDto } from './batches.service';
+
+/** Ограничение числа файлов задаётся в контроллере, не в сервисе. */
+const MAX_FILES_PER_REQUEST = 10;
 import { RequirePermission } from '../../common/auth/roles.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
@@ -152,6 +159,87 @@ export class BatchesController {
   @ApiOperation({ summary: 'Сохранить PDF акта в хранилище' })
   storeAct(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser): Promise<BatchActDto> {
     return this.batchesService.storeActPdf(id, user);
+  }
+
+  /**
+   * Загрузить фотофиксацию партии (задача 2.4).
+   *
+   * `FilesInterceptor` читает `multipart/form-data`. Файлы держатся в памяти, а
+   * не на диске: изображение ограничено по размеру, а промежуточные файлы
+   * пришлось бы убирать вручную — при падении они остались бы мусором.
+   */
+  @Post(':id/photos')
+  @RequirePermission(PERMISSION.LOGISTICS_MANAGE)
+  @UseInterceptors(FilesInterceptor('files', MAX_FILES_PER_REQUEST))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Загрузить фотофиксацию партии' })
+  uploadPhotos(
+    @Param('id') id: string,
+    @UploadedFiles() files: Express.Multer.File[] | undefined,
+    @Body() body: { caption?: string },
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<BatchPhotoDto[]> {
+    const caption = body.caption?.trim();
+    return this.batchesService.uploadPhotos(
+      id,
+      {
+        caption: caption === undefined || caption === '' ? null : caption,
+        files: (files ?? []).map((file) => ({
+          buffer: file.buffer,
+          originalname: file.originalname,
+        })),
+      },
+      user,
+    );
+  }
+
+  /** Фотографии партии. */
+  @Get(':id/photos')
+  @RequirePermission(PERMISSION.LOGISTICS_READ)
+  @ApiOperation({ summary: 'Фотографии партии' })
+  listPhotos(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<BatchPhotoDto[]> {
+    return this.batchesService.listPhotos(id, user);
+  }
+
+  /**
+   * Отдать файл фото партии.
+   *
+   * `private, no-store`: фотофиксация — свидетельство о передаче изделий
+   * клиентов, кэшировать её в браузере или на промежуточном прокси нельзя.
+   */
+  @Get('photos/:id')
+  @RequirePermission(PERMISSION.LOGISTICS_READ)
+  @ApiOperation({ summary: 'Файл фото партии (полный или уменьшенный)' })
+  async downloadPhoto(
+    @Param('id') id: string,
+    @Query('variant') variant: string | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const file = await this.batchesService.getPhotoFile(
+      id,
+      variant === 'thumb' ? 'thumb' : 'full',
+      user,
+    );
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Length', String(file.buffer.length));
+    res.end(file.buffer);
+  }
+
+  /** Удалить фото партии. */
+  @Delete('photos/:id')
+  @RequirePermission(PERMISSION.LOGISTICS_MANAGE)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Удалить фото партии' })
+  async removePhoto(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
+    await this.batchesService.removePhoto(id, user);
   }
 
   /**

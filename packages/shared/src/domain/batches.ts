@@ -260,6 +260,64 @@ export function batchCompositionLockReason(status: BatchStatus): string | null {
   return 'Партия отменена: состав изменить нельзя';
 }
 
+/**
+ * Фотофиксация партии (задача 2.4, ТЗ п. 2.6).
+ *
+ * ЗАЧЕМ ФОТО. Снимок — доказательство состояния тары и содержимого на момент
+ * передачи. При споре «изделие поцарапано» или «недостача» решает не подпись
+ * (её ставят, не разглядывая каждый пакет), а фотография с датой и автором.
+ *
+ * ПОЧЕМУ ЗАГРУЗКА И УДАЛЕНИЕ РАЗРЕШЕНЫ В РАЗНЫХ СТАТУСАХ. Снимок при приёмке
+ * так же ценен, как при отправке, поэтому загружать фото можно и в пути, и после
+ * приёмки. А удалять — только до отправки: после отъезда фото уже часть записи о
+ * передаче, и пропавшее задним числом доказательство хуже, чем его отсутствие.
+ */
+export const BATCH_PHOTO_UPLOAD_STATUSES: readonly BatchStatus[] = [
+  BATCH_STATUS.DRAFT,
+  BATCH_STATUS.ACT_FORMED,
+  BATCH_STATUS.IN_TRANSIT,
+  BATCH_STATUS.RECEIVED,
+];
+
+/** Удалять фото можно, пока партия не уехала. */
+export const BATCH_PHOTO_DELETABLE_STATUSES: readonly BatchStatus[] = [
+  BATCH_STATUS.DRAFT,
+  BATCH_STATUS.ACT_FORMED,
+];
+
+/** Можно ли добавить фото в этом статусе. */
+export function canUploadBatchPhoto(status: BatchStatus): boolean {
+  return BATCH_PHOTO_UPLOAD_STATUSES.includes(status);
+}
+
+/** Почему фото добавить нельзя. Текст показывается логисту. */
+export function batchPhotoUploadLockReason(status: BatchStatus): string | null {
+  if (canUploadBatchPhoto(status)) return null;
+  return 'Партия отменена: фотофиксация недоступна';
+}
+
+/** Можно ли удалить фото в этом статусе. */
+export function canDeleteBatchPhoto(status: BatchStatus): boolean {
+  return BATCH_PHOTO_DELETABLE_STATUSES.includes(status);
+}
+
+/**
+ * Почему фото удалить нельзя. Текст показывается логисту.
+ *
+ * Причина разная для «в пути» и «принята»: в первом случае фото ещё можно
+ * переснять и дополнить, во втором передача состоялась, и запись закрыта.
+ */
+export function batchPhotoDeleteLockReason(status: BatchStatus): string | null {
+  if (canDeleteBatchPhoto(status)) return null;
+  if (status === BATCH_STATUS.IN_TRANSIT) {
+    return 'Партия в пути: фото передачи удалить нельзя, добавьте новое';
+  }
+  if (status === BATCH_STATUS.RECEIVED) {
+    return 'Партия принята: фото передачи удалить нельзя';
+  }
+  return 'Партия отменена: фотофиксация недоступна';
+}
+
 /** Строка состава так, как её видит снимок акта. */
 export interface BatchActItem {
   orderId: string;

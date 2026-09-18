@@ -21,7 +21,7 @@
  * поведение Postgres.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { BatchesService } from './batches.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
@@ -143,6 +143,15 @@ function createPrismaMock() {
       create: vi.fn(async () => ({ id: 'act-1', actNo: 'АПП-25-000001' })),
       update: vi.fn(),
     },
+    batchPhoto: {
+      create: vi.fn(async () => ({
+        id: 'photo-1',
+        batchId: BATCH_ID,
+        caption: null,
+        createdAt: new Date(),
+      })),
+      delete: vi.fn(async () => ({ id: 'photo-1' })),
+    },
     counter: { upsert: vi.fn(async () => ({ value: 4 })) },
     setting: { findUnique: vi.fn(async () => null) },
     auditLog: { create: vi.fn() },
@@ -151,7 +160,10 @@ function createPrismaMock() {
     // ссылается на `Document`, и если подставить туда идентификатор файла,
     // тест обязан упасть.
     document: { create: vi.fn(async () => ({ id: 'doc-1' })) },
-    fileObject: { create: vi.fn(async () => ({ id: 'file-1' })) },
+    fileObject: {
+      create: vi.fn(async () => ({ id: 'file-1' })),
+      delete: vi.fn(async () => ({ id: 'file-1' })),
+    },
   };
 
   const prisma = {
@@ -161,6 +173,17 @@ function createPrismaMock() {
     },
     batchAct: { findFirst: vi.fn(async () => null) },
     batchItem: { findMany: vi.fn(async () => []) },
+    batchPhoto: {
+      findMany: vi.fn(async () => []),
+      findFirst: vi.fn(async () => null),
+      create: vi.fn(async () => ({
+        id: 'photo-1',
+        batchId: BATCH_ID,
+        caption: null,
+        createdAt: new Date(),
+      })),
+      delete: vi.fn(async () => ({ id: 'photo-1' })),
+    },
     order: { findMany: vi.fn(async () => []) },
     setting: { findUnique: vi.fn(async () => null) },
     runInTransaction: vi.fn(async (callback: (t: typeof tx) => Promise<unknown>) => callback(tx)),
@@ -182,6 +205,17 @@ const storageMock = {
     sizeBytes: 1234,
     checksum: 'abc',
   })),
+  savePhoto: vi.fn(async () => ({
+    objectKey: 'batches/b1/photo.jpg',
+    thumbnailKey: 'batches/b1/photo-thumb.jpg',
+    mimeType: 'image/jpeg',
+    sizeBytes: 4321,
+    checksum: 'def',
+    width: 1600,
+    height: 1200,
+  })),
+  read: vi.fn(async () => Buffer.from('image-bytes')),
+  remove: vi.fn(async () => undefined),
 };
 
 /** PDF-сервис подменяется: содержание документа проверяется отдельным тестом. */
@@ -1233,5 +1267,217 @@ describe('BatchesService: сохранение PDF акта (задача 2.3)',
     expect(call.data.type).toBe('BATCH_ACT');
     expect(call.data.number).toBe('АПП-25-000118');
     expect(call.data.batchId).toBe(BATCH_ID);
+  });
+});
+
+describe('BatchesService: фотофиксация партии (задача 2.4)', () => {
+  /*
+   * Счётчики вызовов общих двойников сбрасываются перед каждым тестом: иначе
+   * проверка «файл не сохранялся» срабатывает на вызове из предыдущего теста и
+   * падает по ложной причине.
+   */
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /*
+   * Фото — доказательство состояния изделий и тары на момент передачи. Правила
+   * доступа и статуса проверяются здесь, потому что ошибка в них означает либо
+   * утечку чужих снимков, либо потерю доказательства.
+   */
+
+  const FILE = { buffer: Buffer.from('img'), originalname: 'photo.jpg' };
+
+  it('загружает фото в черновик', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'DRAFT' }));
+    prisma.batchPhoto.findMany.mockResolvedValue([]);
+
+    const result = await makeService(prisma).uploadPhotos(
+      BATCH_ID,
+      { caption: null, files: [FILE] },
+      LOGIST,
+    );
+
+    expect(storageMock.savePhoto).toHaveBeenCalled();
+    expect(prisma._tx.batchPhoto.create).toHaveBeenCalled();
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it('отклоняет загрузку без файлов', async () => {
+    // Пустой запрос — ошибка клиента, а не «ничего не произошло»: иначе логист
+    // решит, что фотофиксация сделана.
+    const prisma = createPrismaMock();
+
+    await expect(
+      makeService(prisma).uploadPhotos(BATCH_ID, { caption: null, files: [] }, LOGIST),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(storageMock.savePhoto).not.toHaveBeenCalled();
+  });
+
+  it('отклоняет загрузку в отменённую партию', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'CANCELLED' }));
+
+    await expect(
+      makeService(prisma).uploadPhotos(BATCH_ID, { caption: null, files: [FILE] }, LOGIST),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(storageMock.savePhoto).not.toHaveBeenCalled();
+  });
+
+  it('разрешает загрузку при приёмке', async () => {
+    // Получатель фиксирует, в каком виде партия доехала: запрет лишил бы его
+    // возможности доказать расхождение.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'RECEIVED' }));
+    prisma.batchPhoto.findMany.mockResolvedValue([]);
+
+    await makeService(prisma).uploadPhotos(BATCH_ID, { caption: null, files: [FILE] }, LOGIST);
+
+    expect(storageMock.savePhoto).toHaveBeenCalled();
+  });
+
+  it('отклоняет загрузку в невидимую партию', async () => {
+    // Область видимости: приёмщик не должен прикреплять фото к чужому рейсу.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(null);
+
+    await expect(
+      makeService(prisma).uploadPhotos(BATCH_ID, { caption: null, files: [FILE] }, LOGIST),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('убирает файл с диска, если запись не создалась', async () => {
+    /*
+     * Иначе на диске остаётся «фото-призрак»: файл есть, ссылки на него нет.
+     * Такие файлы никто не найдёт и не удалит.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'DRAFT' }));
+    prisma._tx.batchPhoto.create.mockRejectedValue(new Error('БД недоступна'));
+
+    await expect(
+      makeService(prisma).uploadPhotos(BATCH_ID, { caption: null, files: [FILE] }, LOGIST),
+    ).rejects.toThrow('БД недоступна');
+
+    expect(storageMock.remove).toHaveBeenCalledWith('batches/b1/photo.jpg');
+  });
+
+  it('показывает фото без ключей хранилища', async () => {
+    // Ключ хранилища наружу не отдаётся: по нему файл достаётся в обход прав.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'DRAFT' }));
+    prisma.batchPhoto.findMany.mockResolvedValue([
+      {
+        id: 'photo-1',
+        batchId: BATCH_ID,
+        caption: 'тара',
+        createdAt: new Date('2025-09-16T10:00:00Z'),
+        file: { objectKey: 'batches/b1/secret.jpg', mimeType: 'image/jpeg', sizeBytes: 100 },
+      },
+    ]);
+
+    const photos = await makeService(prisma).listPhotos(BATCH_ID, LOGIST);
+
+    expect(photos[0]?.url).toBe('/api/v1/batches/photos/photo-1');
+    expect(JSON.stringify(photos)).not.toContain('secret.jpg');
+  });
+
+  it('отдаёт уменьшенную копию по ?variant=thumb', async () => {
+    const prisma = createPrismaMock();
+    prisma.batchPhoto.findFirst.mockResolvedValue({
+      id: 'photo-1',
+      batchId: BATCH_ID,
+      file: { objectKey: 'batches/b1/photo.jpg', mimeType: 'image/jpeg', sizeBytes: 100 },
+    });
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'DRAFT' }));
+
+    await makeService(prisma).getPhotoFile('photo-1', 'thumb', LOGIST);
+
+    expect(storageMock.read).toHaveBeenCalledWith('batches/b1/photo-thumb.jpg');
+  });
+
+  it('отдаёт оригинал, если уменьшенной копии нет', async () => {
+    // Сбой при сохранении превью не должен делать фото недоступным.
+    const prisma = createPrismaMock();
+    prisma.batchPhoto.findFirst.mockResolvedValue({
+      id: 'photo-1',
+      batchId: BATCH_ID,
+      file: { objectKey: 'batches/b1/photo.jpg', mimeType: 'image/jpeg', sizeBytes: 100 },
+    });
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'DRAFT' }));
+    storageMock.read.mockRejectedValueOnce(new Error('нет файла'));
+
+    const file = await makeService(prisma).getPhotoFile('photo-1', 'thumb', LOGIST);
+
+    expect(file.buffer.length).toBeGreaterThan(0);
+  });
+
+  it('отклоняет скачивание фото невидимой партии', async () => {
+    const prisma = createPrismaMock();
+    prisma.batchPhoto.findFirst.mockResolvedValue({
+      id: 'photo-1',
+      batchId: BATCH_ID,
+      file: { objectKey: 'a.jpg', mimeType: 'image/jpeg', sizeBytes: 1 },
+    });
+    prisma.batch.findFirst.mockResolvedValue(null);
+
+    await expect(
+      makeService(prisma).getPhotoFile('photo-1', 'full', LOGIST),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('удаляет фото в черновике', async () => {
+    const prisma = createPrismaMock();
+    prisma.batchPhoto.findFirst.mockResolvedValue({
+      id: 'photo-1',
+      batchId: BATCH_ID,
+      fileId: 'file-1',
+      file: { objectKey: 'batches/b1/photo.jpg' },
+      batch: { id: BATCH_ID, status: 'DRAFT' },
+    });
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'DRAFT' }));
+
+    await makeService(prisma).removePhoto('photo-1', LOGIST);
+
+    expect(prisma._tx.batchPhoto.delete).toHaveBeenCalled();
+    expect(storageMock.remove).toHaveBeenCalledWith('batches/b1/photo.jpg');
+  });
+
+  it('отклоняет удаление фото партии в пути', async () => {
+    /*
+     * После отъезда фото — часть записи о передаче. Пропавшее задним числом
+     * доказательство хуже, чем его отсутствие.
+     */
+    const prisma = createPrismaMock();
+    prisma.batchPhoto.findFirst.mockResolvedValue({
+      id: 'photo-1',
+      batchId: BATCH_ID,
+      fileId: 'file-1',
+      file: { objectKey: 'batches/b1/photo.jpg' },
+      batch: { id: BATCH_ID, status: 'IN_TRANSIT' },
+    });
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'IN_TRANSIT' }));
+
+    await expect(makeService(prisma).removePhoto('photo-1', LOGIST)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(prisma._tx.batchPhoto.delete).not.toHaveBeenCalled();
+  });
+
+  it('отклоняет удаление фото принятой партии', async () => {
+    const prisma = createPrismaMock();
+    prisma.batchPhoto.findFirst.mockResolvedValue({
+      id: 'photo-1',
+      batchId: BATCH_ID,
+      fileId: 'file-1',
+      file: { objectKey: 'batches/b1/photo.jpg' },
+      batch: { id: BATCH_ID, status: 'RECEIVED' },
+    });
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'RECEIVED' }));
+
+    await expect(makeService(prisma).removePhoto('photo-1', LOGIST)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
   });
 });

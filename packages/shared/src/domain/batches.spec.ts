@@ -15,7 +15,11 @@ import {
   BATCH_INELIGIBILITY,
   BATCH_STATUS,
   batchCompositionLockReason,
+  batchPhotoDeleteLockReason,
+  batchPhotoUploadLockReason,
   buildBatchActSnapshot,
+  canDeleteBatchPhoto,
+  canUploadBatchPhoto,
   isBatchCompositionEditable,
   checkBatchEligibility,
   exceedsBatchLimit,
@@ -385,5 +389,73 @@ describe('Снимок состава для акта (задача 2.2)', () =>
 
     expect(snapshot.itemsCount).toBe(2);
     expect(snapshot.totalAmountMinor).toBe(15000);
+  });
+});
+
+describe('Фотофиксация партии (задача 2.4)', () => {
+  /*
+   * Снимок — доказательство состояния изделий и тары на момент передачи. При
+   * споре решает не подпись (её ставят, не разглядывая каждый пакет), а
+   * фотография с датой и автором. Поэтому важны обе границы: до отправки фото
+   * можно и добавить, и убрать; после отправки — только добавить.
+   */
+
+  it('фото можно добавить в черновик и после акта', () => {
+    // Основной случай: логист фотографирует партию перед отправкой.
+    expect(canUploadBatchPhoto(BATCH_STATUS.DRAFT)).toBe(true);
+    expect(canUploadBatchPhoto(BATCH_STATUS.ACT_FORMED)).toBe(true);
+  });
+
+  it('фото можно добавить в пути и при приёмке', () => {
+    /*
+     * Снимок при приёмке так же ценен, как при отправке: он фиксирует, в каком
+     * виде партия доехала, и разбирает спор «повредили в дороге или сдали
+     * такими». Запрет на загрузку лишил бы получателя возможности зафиксировать
+     * расхождение.
+     */
+    expect(canUploadBatchPhoto(BATCH_STATUS.IN_TRANSIT)).toBe(true);
+    expect(canUploadBatchPhoto(BATCH_STATUS.RECEIVED)).toBe(true);
+  });
+
+  it('в отменённой партии фото не добавляются', () => {
+    // Перевозки не было — фиксировать нечего.
+    expect(canUploadBatchPhoto(BATCH_STATUS.CANCELLED)).toBe(false);
+    expect(batchPhotoUploadLockReason(BATCH_STATUS.CANCELLED)).toContain('отменена');
+  });
+
+  it('удалять фото можно только до отправки', () => {
+    /*
+     * После отъезда фото — часть записи о передаче. Пропавшее задним числом
+     * доказательство хуже, чем его отсутствие: невозможно понять, было ли фото
+     * вообще.
+     */
+    expect(canDeleteBatchPhoto(BATCH_STATUS.DRAFT)).toBe(true);
+    expect(canDeleteBatchPhoto(BATCH_STATUS.ACT_FORMED)).toBe(true);
+    expect(canDeleteBatchPhoto(BATCH_STATUS.IN_TRANSIT)).toBe(false);
+    expect(canDeleteBatchPhoto(BATCH_STATUS.RECEIVED)).toBe(false);
+  });
+
+  it('причина запрета удаления различает «в пути» и «принята»', () => {
+    // В пути фото ещё можно переснять и дополнить, после приёмки запись
+    // закрыта. Одинаковый текст сбивал бы логиста с толку.
+    expect(batchPhotoDeleteLockReason(BATCH_STATUS.IN_TRANSIT)).toContain('добавьте новое');
+    expect(batchPhotoDeleteLockReason(BATCH_STATUS.RECEIVED)).toContain('принята');
+  });
+
+  it('разрешающие статусы не возвращают причину отказа', () => {
+    // Иначе интерфейс показывал бы запрет там, где действие разрешено.
+    for (const status of [BATCH_STATUS.DRAFT, BATCH_STATUS.ACT_FORMED]) {
+      expect(batchPhotoUploadLockReason(status)).toBeNull();
+      expect(batchPhotoDeleteLockReason(status)).toBeNull();
+    }
+    for (const status of [BATCH_STATUS.IN_TRANSIT, BATCH_STATUS.RECEIVED]) {
+      expect(batchPhotoUploadLockReason(status)).toBeNull();
+    }
+  });
+
+  it('удаление запрещено там, где загрузка запрещена', () => {
+    // Отменённая партия: добавлять нельзя, значит и удалять нечего.
+    expect(canDeleteBatchPhoto(BATCH_STATUS.CANCELLED)).toBe(false);
+    expect(batchPhotoDeleteLockReason(BATCH_STATUS.CANCELLED)).toContain('отменена');
   });
 });

@@ -58,9 +58,9 @@
 | 2.5 | **Блокировка старта работ** | `docs/02` §5.1 | guard `PREPAYMENT_SATISFIED`, `isPrepaymentSatisfied()` | `money-dates.spec.ts` |
 | 2.5 | Поиск заказа по отсканированному QR | `docs/08` §4.1 | `normalizeScanInput` в `@app/shared` | 5 тестов `order-number.spec.ts`, прогон API |
 | 2.8 | Сканирование при выдаче | `docs/08` §4.1 | тот же поиск по номеру | прогон API |
-| 2.6 | Формирование партий по графику | `docs/07` §8.4, `docs/03` §2 | `batches.service.ts` → `create()`, `Counter` `BATCH:ГГГГММДД` | `batches.service.spec.ts` (номер = плановая дата) |
+| 2.6 | Формирование партий по графику | `docs/07` §8.5, `docs/03` §2 | `batches.service.ts` → `create()`, `Counter` `BATCH:ГГГГММДД` | `batches.service.spec.ts` (номер = плановая дата) |
 | 2.6 | Состав партии: правила включения | `docs/07` §8.1 | `@app/shared` → `checkBatchEligibility()` | `batches.spec.ts` (17 тестов), `batches.service.spec.ts` |
-| 2.6 | Лимит состава партии | `docs/07` §8.4 | `Setting.logistics.batchMaxItems`, `exceedsBatchLimit()` | `batches.service.spec.ts` (лимит выключен по умолчанию) |
+| 2.6 | Лимит состава партии | `docs/07` §8.5 | `Setting.logistics.batchMaxItems`, `exceedsBatchLimit()` | `batches.service.spec.ts` (лимит выключен по умолчанию) |
 | 2.6 | Заказ не может ехать в двух партиях | `docs/07` §8.1 | `batches.service.ts` → `ordersInActiveBatches()` | `batches.service.spec.ts` (проверка до записи) |
 | 2.6 | Акт приёма-передачи (электронный) | `docs/07` §8.2, `docs/03` §2 | `batches.service.ts` → `formAct()` | `batches.service.spec.ts` (8 тестов), `batches.spec.ts` |
 | 2.6 | Снимок состава фиксируется при формировании акта | `docs/07` §8.2 | `buildBatchActSnapshot()` | `batches.spec.ts` (6 тестов: сортировка, сумма, копия) |
@@ -69,8 +69,12 @@
 | 2.6 | Кириллица в PDF (встроенный шрифт) | `docs/07` §8.3 | `dejavu-fonts-ttf` в `require.resolve` | `batch-act-pdf.service.spec.ts` (падает при системном шрифте) |
 | 2.6 | Подпись обеих сторон | `docs/07` §8.3 | `batches.service.ts` → `signAct()` | `batches.service.spec.ts` (9 тестов подписи) |
 | 2.6 | Сохранённая копия акта | `docs/07` §8.3 | `batches.service.ts` → `storeActPdf()`, `Document` | `batches.service.spec.ts` (2 теста) |
+| 2.6 | Фотофиксация партии | `docs/07` §8.4 | `batches.service.ts` → `uploadPhotos()` | `batches.service.spec.ts` (14 тестов) |
+| 2.6 | Загружать фото можно и при приёмке | `docs/07` §8.4 | `canUploadBatchPhoto()` | `batches.spec.ts` (падает при сужении списка) |
+| 2.6 | Удалять фото только до отправки | `docs/07` §8.4 | `canDeleteBatchPhoto()` | `batches.spec.ts`, `batches.service.spec.ts` (409) |
+| 2.6 | Ключ хранилища не отдаётся наружу | `docs/07` §8.4 | `listPhotos()` → только `url` | `batches.service.spec.ts` (подмена на objectKey роняет тест) |
+| 2.6 | Файл-призрак не остаётся на диске | `docs/07` §8.4 | `uploadPhotos()` → `storage.remove` | `batches.service.spec.ts` (снятие уборки роняет тест) |
 | 2.6 | Партия переходит в `ACT_FORMED` вместе с актом | `docs/04` §1 | `batches.service.ts` → `formAct()` (одна транзакция) | `batches.service.spec.ts` |
-| 2.6 | Фотофиксация партии | `docs/03` §2 | `BatchPhoto`, `FileObject` | этап 2 |
 | 2.6 | Отслеживание статуса «в пути» | `docs/04` §1 | `IN_TRANSIT_TO_PRODUCTION`, `IN_TRANSIT_TO_STORE` | `order-transitions.spec.ts` |
 | 2.7 | Нормативы по каждому этапу | `docs/04` §3 | `StageNorm` (версионируемый справочник) | — |
 | 2.7 | Автоуведомления при просрочке | `docs/04` §4 | воркер escalations, `Notification` | этап 2 |

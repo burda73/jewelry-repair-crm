@@ -18,12 +18,17 @@ import {
   exceedsBatchLimit,
   partitionBatchCandidates,
   batchListQuerySchema,
+  batchPhotoDeleteLockReason,
+  batchPhotoUploadLockReason,
+  canDeleteBatchPhoto,
+  canUploadBatchPhoto,
   createBatchSchema,
   batchOrdersSchema,
   removeBatchOrderSchema,
   signBatchActSchema,
   type BatchActSnapshot,
   type BatchDirection,
+  type BatchStatus,
 } from '@app/shared';
 
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -56,6 +61,19 @@ export interface BatchDto {
   itemsCount: number;
   comment: string | null;
   createdAt: string;
+}
+
+/** Фотофиксация партии (задача 2.4). */
+export interface BatchPhotoDto {
+  id: string;
+  batchId: string;
+  caption: string | null;
+  createdAt: string;
+  mimeType: string;
+  sizeBytes: number;
+  /** Адрес для показа. Ключ хранилища наружу не отдаётся. */
+  url: string;
+  thumbnailUrl: string;
 }
 
 /** Заказ в составе партии. */
@@ -803,6 +821,226 @@ export class BatchesService {
     });
 
     return this.findAct(batchId, actor);
+  }
+
+  /**
+   * Загрузить фотофиксацию партии (задача 2.4, ТЗ п. 2.6).
+   *
+   * ПОРЯДОК ДЕЙСТВИЙ ВАЖЕН: сначала проверяются права и статус, потом файлы
+   * пишутся на диск, и только затем появляются записи в базе. Если файл не
+   * сохранился, в базе не остаётся «фото-призрак», которое нельзя открыть; если
+   * запись не создалась, файл убирается с диска.
+   */
+  async uploadPhotos(
+    batchId: string,
+    params: { caption: string | null; files: { buffer: Buffer; originalname: string }[] },
+    actor: AuthenticatedUser,
+  ): Promise<BatchPhotoDto[]> {
+    if (params.files.length === 0) {
+      throw new BadRequestException({
+        code: 'NO_FILES',
+        message: 'Не выбран ни один файл',
+      });
+    }
+
+    const scopeFilter = this.buildScopeFilter(actor);
+    const batch = await this.prisma.batch.findFirst({
+      where: { AND: [{ id: batchId }, scopeFilter] },
+      select: { id: true, status: true },
+    });
+    if (batch === null) throw new NotFoundException('Партия не найдена');
+
+    // Статус проверяется по доменному правилу, а не по списку в сервисе: то же
+    // правило использует интерфейс, и две реализации неизбежно разошлись бы.
+    const status: BatchStatus = batch.status;
+    if (!canUploadBatchPhoto(status)) {
+      throw new ConflictException(batchPhotoUploadLockReason(status));
+    }
+
+    const saved: string[] = [];
+    for (const file of params.files) {
+      let stored;
+      try {
+        stored = await this.storage.savePhoto({
+          buffer: file.buffer,
+          folder: `batches/${batchId}`,
+        });
+      } catch (error) {
+        // Неизображение или слишком большой файл — понятная ошибка вместо 500.
+        const message =
+          error instanceof RangeError ? error.message : 'Не удалось обработать изображение';
+        throw new BadRequestException({
+          code: 'INVALID_IMAGE',
+          message: `${file.originalname}: ${message}`,
+        });
+      }
+
+      try {
+        await this.prisma.runInTransaction(async (tx) => {
+          const fileObject = await tx.fileObject.create({
+            data: {
+              bucket: 'local',
+              objectKey: stored.objectKey,
+              mimeType: stored.mimeType,
+              sizeBytes: stored.sizeBytes,
+              checksum: stored.checksum,
+              uploadedById: actor.id,
+            },
+          });
+          const photo = await tx.batchPhoto.create({
+            data: { batchId, fileId: fileObject.id, caption: params.caption },
+          });
+          await tx.auditLog.create({
+            data: {
+              actorId: actor.id,
+              actorRole: actor.primaryRole,
+              action: 'PHOTO_UPLOAD',
+              entity: 'BatchPhoto',
+              entityId: photo.id,
+              after: { batchId, batchNo: batchId, sizeBytes: stored.sizeBytes },
+            },
+          });
+        });
+        saved.push(stored.objectKey);
+      } catch (error) {
+        /*
+         * Запись не создалась — убираем записанные файлы, чтобы на диске не
+         * осталось мусора, на который никто не ссылается. Уже сохранённые в
+         * этой попытке файлы тоже убираются: партия фото должна быть целой, а не
+         * наполовину применённой.
+         */
+        await this.storage.remove(stored.objectKey);
+        await this.storage.remove(stored.thumbnailKey);
+        for (const key of saved) {
+          await this.storage.remove(key);
+          await this.storage.remove(key.replace(/\.jpg$/, '-thumb.jpg'));
+        }
+        throw error;
+      }
+    }
+
+    return this.listPhotos(batchId, actor);
+  }
+
+  /** Фотографии партии. */
+  async listPhotos(batchId: string, actor: AuthenticatedUser): Promise<BatchPhotoDto[]> {
+    const scopeFilter = this.buildScopeFilter(actor);
+    const batch = await this.prisma.batch.findFirst({
+      where: { AND: [{ id: batchId }, scopeFilter] },
+      select: { id: true },
+    });
+    if (batch === null) throw new NotFoundException('Партия не найдена');
+
+    const photos = await this.prisma.batchPhoto.findMany({
+      where: { batchId },
+      include: { file: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return photos.map((photo) => ({
+      id: photo.id,
+      batchId: photo.batchId,
+      caption: photo.caption,
+      createdAt: photo.createdAt.toISOString(),
+      mimeType: photo.file.mimeType,
+      sizeBytes: photo.file.sizeBytes,
+      // Ключ хранилища наружу не отдаётся: по нему файл достаётся в обход прав.
+      url: `/api/v1/batches/photos/${photo.id}`,
+      thumbnailUrl: `/api/v1/batches/photos/${photo.id}?variant=thumb`,
+    }));
+  }
+
+  /**
+   * Данные файла фото партии для отдачи по HTTP.
+   *
+   * Отдаётся через API, а не статикой: фото партии — свидетельство о передаче
+   * изделий клиентов, доступ к нему должен проверяться правами и областью
+   * видимости. Прямая раздача каталога отдала бы любой файл по угадываемому
+   * адресу.
+   */
+  async getPhotoFile(
+    photoId: string,
+    variant: 'full' | 'thumb',
+    actor: AuthenticatedUser,
+  ): Promise<{ buffer: Buffer; mimeType: string; fileName: string }> {
+    const photo = await this.prisma.batchPhoto.findFirst({
+      where: { id: photoId },
+      include: { file: true, batch: { select: { id: true, fromStoreId: true, toStoreId: true } } },
+    });
+    if (photo === null) throw new NotFoundException('Фотография не найдена');
+
+    // Доступ проверяется ПО ПАРТИИ: фотография наследует её видимость.
+    const scopeFilter = this.buildScopeFilter(actor);
+    const visible = await this.prisma.batch.findFirst({
+      where: { AND: [{ id: photo.batchId }, scopeFilter] },
+      select: { id: true },
+    });
+    if (visible === null) throw new NotFoundException('Фотография не найдена');
+
+    /*
+     * Уменьшенная копия отличается суффиксом `-thumb`. Если её нет (старые
+     * записи или сбой при сохранении), отдаём оригинал: показать фото целиком
+     * лучше, чем не показать ничего.
+     */
+    const key =
+      variant === 'thumb'
+        ? photo.file.objectKey.replace(/\.jpg$/, '-thumb.jpg')
+        : photo.file.objectKey;
+
+    let buffer: Buffer;
+    try {
+      buffer = await this.storage.read(key);
+    } catch {
+      buffer = await this.storage.read(photo.file.objectKey);
+    }
+
+    return { buffer, mimeType: photo.file.mimeType, fileName: `batch-photo-${photo.id}.jpg` };
+  }
+
+  /**
+   * Удалить фото партии.
+   *
+   * После отправки удаление запрещено: фото становится частью записи о передаче,
+   * и пропавшее задним числом доказательство хуже, чем его отсутствие.
+   */
+  async removePhoto(photoId: string, actor: AuthenticatedUser): Promise<void> {
+    const photo = await this.prisma.batchPhoto.findFirst({
+      where: { id: photoId },
+      include: { file: true, batch: { select: { id: true, status: true } } },
+    });
+    if (photo === null) throw new NotFoundException('Фотография не найдена');
+
+    const scopeFilter = this.buildScopeFilter(actor);
+    const visible = await this.prisma.batch.findFirst({
+      where: { AND: [{ id: photo.batchId }, scopeFilter] },
+      select: { id: true },
+    });
+    if (visible === null) throw new NotFoundException('Фотография не найдена');
+
+    const status: BatchStatus = photo.batch.status;
+    if (!canDeleteBatchPhoto(status)) {
+      throw new ConflictException(batchPhotoDeleteLockReason(status));
+    }
+
+    await this.prisma.runInTransaction(async (tx) => {
+      await tx.batchPhoto.delete({ where: { id: photoId } });
+      await tx.fileObject.delete({ where: { id: photo.fileId } });
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          actorRole: actor.primaryRole,
+          action: 'PHOTO_DELETE',
+          entity: 'BatchPhoto',
+          entityId: photoId,
+          before: { batchId: photo.batchId },
+        },
+      });
+    });
+
+    // Файлы удаляются после успешной транзакции: если база откатится, записи
+    // останутся, и файл должен остаться вместе с ними.
+    await this.storage.remove(photo.file.objectKey);
+    await this.storage.remove(photo.file.objectKey.replace(/\.jpg$/, '-thumb.jpg'));
   }
 
   private toActDto(
