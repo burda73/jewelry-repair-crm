@@ -67,6 +67,7 @@ function makeService(overrides: Record<string, unknown> = {}) {
     order: { findMany: vi.fn(async () => []), count: vi.fn(async () => 0) },
     performer: { findMany: vi.fn(async () => []) },
     orderAssignment: { findMany: vi.fn(async () => []) },
+    payment: { findMany: vi.fn(async () => [] as unknown[]) },
     stageNorm: { findMany: vi.fn(async () => []) },
     store: { findMany: vi.fn(async () => [] as { id: string; name: string }[]) },
     workingCalendar: { findMany: vi.fn(async () => []) },
@@ -759,6 +760,404 @@ describe('Отчёт «Просрочки» (задача 5.3)', () => {
 
     expect(result.rows[0]?.group).toBe('Большая');
     expect(result.rows[1]?.group).toBe('Малая');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Отчёт «Выручка»
+// ---------------------------------------------------------------------------
+
+describe('Отчёт «Выручка» (задача 5.4)', () => {
+  const paidAt = new Date('2025-09-15T12:00:00+03:00');
+
+  const payment = (overrides: Record<string, unknown> = {}) => ({
+    kind: 'FINAL',
+    method: 'CASH',
+    amountMinor: 100000,
+    paidAt,
+    orderId: 'o-1',
+    storeId: STORE_A,
+    store: { name: 'Тверская' },
+    order: { isWarranty: false, createdStoreId: STORE_A },
+    ...overrides,
+  });
+
+  it('выручка считается по дате ПЛАТЕЖА, а не по дате заказа', async () => {
+    /*
+     * Главное правило отчёта. Заказ, оформленный в августе и оплаченный в
+     * сентябре, — сентябрьская выручка. Иначе отчёт не сойдётся с 1С, где доход
+     * признаётся по документу оплаты, и расхождение будут искать в интеграции, а
+     * не в отчёте.
+     */
+    const findMany = vi.fn(async () => []);
+    const { service } = makeService({ payment: { findMany } });
+    await service.build(REPORT_NAME.REVENUE, query(), actor('ALL_STORES'));
+
+    const where = findMany.mock.calls[0]?.[0]?.where;
+    expect(where.paidAt.gte).toBeDefined();
+    expect(where.paidAt.lte).toBeDefined();
+    // По заказу периода НЕ фильтруем — иначе отчёт считался бы по дате заказа.
+    expect(where.order).toBeUndefined();
+  });
+
+  it('учитываются только подтверждённые платежи', async () => {
+    /*
+     * `PENDING` — это намерение, а не деньги; `FAILED` — деньги, которых не
+     * будет. Включить их значило бы показать выручку, которой нет.
+     */
+    const findMany = vi.fn(async () => []);
+    const { service } = makeService({ payment: { findMany } });
+    await service.build(REPORT_NAME.REVENUE, query(), actor('ALL_STORES'));
+
+    expect(findMany.mock.calls[0]?.[0]?.where.status).toBe('CONFIRMED');
+  });
+
+  it('возвраты и сторно вычитаются из чистой выручки', async () => {
+    const { service } = makeService({
+      payment: {
+        findMany: vi.fn(async () => [
+          payment({ amountMinor: 100000 }),
+          payment({ kind: 'REFUND', amountMinor: 30000, orderId: 'o-1' }),
+          payment({ kind: 'REVERSAL', amountMinor: 20000, orderId: 'o-1' }),
+        ]),
+      },
+    });
+    const result = await service.build(REPORT_NAME.REVENUE, query(), actor('ALL_STORES'));
+
+    expect(result.totals.revenueMinor).toBe(100000);
+    expect(result.totals.refundsMinor).toBe(50000);
+    // Чистая выручка — заработок, а не оборот.
+    expect(result.totals.netRevenueMinor).toBe(50000);
+  });
+
+  it('средний чек делится на ЧИСЛО ЗАКАЗОВ, а не платежей', async () => {
+    /*
+     * Заказ может быть оплачен двумя платежами: предоплата и доплата. Деление на
+     * число платежей занизило бы чек вдвое, и «средний чек» перестал бы
+     * отвечать на вопрос «сколько в среднем приносит заказ».
+     */
+    const { service } = makeService({
+      payment: {
+        findMany: vi.fn(async () => [
+          payment({ kind: 'PREPAYMENT', amountMinor: 50000, orderId: 'o-1' }),
+          payment({ kind: 'FINAL', amountMinor: 50000, orderId: 'o-1' }),
+        ]),
+      },
+    });
+    const result = await service.build(REPORT_NAME.REVENUE, query(), actor('ALL_STORES'));
+
+    expect(result.totals.ordersCount).toBe(1);
+    expect(result.totals.paymentsCount).toBe(2);
+    expect(result.totals.avgCheckMinor).toBe(100000);
+  });
+
+  it('разрез по дню группирует платежи по дате', async () => {
+    const { service } = makeService({
+      payment: {
+        findMany: vi.fn(async () => [
+          payment({ paidAt: new Date('2025-09-15T10:00:00+03:00'), amountMinor: 100 }),
+          payment({ paidAt: new Date('2025-09-15T18:00:00+03:00'), amountMinor: 200 }),
+          payment({ paidAt: new Date('2025-09-16T10:00:00+03:00'), amountMinor: 400 }),
+        ]),
+      },
+    });
+    const result = await service.build(
+      REPORT_NAME.REVENUE,
+      query({ groupBy: 'day' }),
+      actor('ALL_STORES'),
+    );
+
+    expect(result.rows.map((row) => row.group)).toEqual(['2025-09-15', '2025-09-16']);
+    expect(result.rows[0]?.revenueMinor).toBe(300);
+    expect(result.rows[1]?.revenueMinor).toBe(400);
+  });
+
+  it('разрез по месяцу сворачивает дни в месяц', async () => {
+    const { service } = makeService({
+      payment: {
+        findMany: vi.fn(async () => [
+          payment({ paidAt: new Date('2025-09-15T10:00:00+03:00') }),
+          payment({ paidAt: new Date('2025-10-01T10:00:00+03:00') }),
+        ]),
+      },
+    });
+    const result = await service.build(
+      REPORT_NAME.REVENUE,
+      query({ groupBy: 'month' }),
+      actor('ALL_STORES'),
+    );
+
+    expect(result.rows.map((row) => row.group)).toEqual(['2025-09', '2025-10']);
+  });
+
+  it('неделя начинается с понедельника', async () => {
+    /*
+     * Отчёт читают по рабочим неделям. Если начинать с воскресенья, границы
+     * сдвинутся относительно привычных, и «выручка за неделю» разойдётся с той,
+     * что считают вручную.
+     */
+    const { service } = makeService({
+      payment: {
+        findMany: vi.fn(async () => [
+          // Воскресенье 14 сентября 2025 и понедельник 15 сентября.
+          payment({ paidAt: new Date('2025-09-14T12:00:00+03:00') }),
+          payment({ paidAt: new Date('2025-09-15T12:00:00+03:00') }),
+        ]),
+      },
+    });
+    const result = await service.build(
+      REPORT_NAME.REVENUE,
+      query({ groupBy: 'week' }),
+      actor('ALL_STORES'),
+    );
+
+    // Воскресенье относится к неделе, начавшейся 8 сентября; понедельник — к 15-му.
+    expect(result.rows.map((row) => row.group)).toEqual(['2025-09-08', '2025-09-15']);
+  });
+
+  it('структура оплат показывается по всем способам, включая нулевые', async () => {
+    /*
+     * Отсутствующий ключ интерфейс показал бы прочерком, и «нет данных»
+     * смешалось бы с «ноль наличных» — а это разные утверждения.
+     */
+    const { service } = makeService({
+      payment: { findMany: vi.fn(async () => [payment({ method: 'CARD', amountMinor: 500 })]) },
+    });
+    const result = await service.build(REPORT_NAME.REVENUE, query(), actor('ALL_STORES'));
+
+    expect(result.totals.methodCardMinor).toBe(500);
+    expect(result.totals.methodCashMinor).toBe(0);
+    expect(result.totals.methodBankTransferMinor).toBe(0);
+    expect(result.totals.methodOnlineMinor).toBe(0);
+  });
+
+  it('пустой период: выручка ноль, средний чек null', async () => {
+    const { service } = makeService();
+    const result = await service.build(REPORT_NAME.REVENUE, query(), actor('ALL_STORES'));
+
+    expect(result.totals.revenueMinor).toBe(0);
+    // Средний чек по нулю заказов — не число: деление дало бы NaN или 0.
+    expect(result.totals.avgCheckMinor).toBeNull();
+  });
+
+  it('область видимости применяется по магазину ВНЕСЕНИЯ платежа', async () => {
+    /*
+     * У платежа свой магазин: клиент часто платит не там, где оформил заказ.
+     * Фильтр по магазину заказа показал бы приёмщику деньги чужой кассы и скрыл
+     * бы свои.
+     */
+    const findMany = vi.fn(async () => []);
+    const { service } = makeService({ payment: { findMany } });
+    await service.build(REPORT_NAME.REVENUE, query(), actor('STORE', [STORE_A]));
+
+    const where = findMany.mock.calls[0]?.[0]?.where;
+    expect(where.store).toEqual({ id: { in: [STORE_A] } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Отчёт «Предоплаты»
+// ---------------------------------------------------------------------------
+
+describe('Отчёт «Предоплаты» (задача 5.5)', () => {
+  const paidAt = new Date('2025-09-15T12:00:00+03:00');
+  const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
+
+  const prepayment = (overrides: Record<string, unknown> = {}) => ({
+    amountMinor: 50000,
+    paidAt,
+    orderId: 'o-1',
+    storeId: STORE_A,
+    store: { name: 'Тверская' },
+    order: {
+      orderNo: 'MSK1-1',
+      status: 'IN_PRODUCTION',
+      productionStartedAt: new Date('2025-09-16T10:00:00+03:00'),
+      totalAmountMinor: 100000,
+    },
+    ...overrides,
+  });
+
+  it('берутся только предоплаты и только подтверждённые', async () => {
+    const findMany = vi.fn(async () => []);
+    const { service } = makeService({ payment: { findMany } });
+    await service.build(REPORT_NAME.PREPAYMENTS, query(), actor('ALL_STORES'));
+
+    const where = findMany.mock.calls[0]?.[0]?.where;
+    expect(where.kind).toBe('PREPAYMENT');
+    expect(where.status).toBe('CONFIRMED');
+  });
+
+  it('разрез по магазину ВНЕСЕНИЯ, а не по магазину заказа', async () => {
+    /*
+     * Клиент платит не там, где заказал. Отчёт по магазину заказа показал бы
+     * деньги не той точке, у которой они в кассе, — и кассир не сошёлся бы с
+     * наличностью.
+     */
+    const findMany = vi.fn(async () => []);
+    const { service } = makeService({ payment: { findMany } });
+    await service.build(REPORT_NAME.PREPAYMENTS, query(), actor('ALL_STORES'));
+
+    expect(findMany.mock.calls[0]?.[0]?.where.store).toBeUndefined();
+    expect(findMany.mock.calls[0]?.[0]?.select.storeId).toBe(true);
+  });
+
+  it('зачтённые и находящиеся в работе разделены', async () => {
+    const { service } = makeService({
+      payment: {
+        findMany: vi.fn(async () => [
+          prepayment({
+            amountMinor: 30000,
+            order: {
+              orderNo: 'A',
+              status: 'COMPLETED',
+              productionStartedAt: paidAt,
+              totalAmountMinor: 1,
+            },
+          }),
+          prepayment({
+            amountMinor: 20000,
+            order: {
+              orderNo: 'B',
+              status: 'IN_PRODUCTION',
+              productionStartedAt: paidAt,
+              totalAmountMinor: 1,
+            },
+          }),
+        ]),
+      },
+    });
+    const result = await service.build(REPORT_NAME.PREPAYMENTS, query(), actor('ALL_STORES'));
+
+    // Зачтено — деньги отработаны, заказ завершён.
+    expect(result.totals.creditedMinor).toBe(30000);
+    expect(result.totals.inWorkMinor).toBe(20000);
+  });
+
+  it('зависшей считается предоплата без начатых работ дольше 14 дней', async () => {
+    /*
+     * Особый контроль docs/06 §5: деньги клиента у нас, а работы не начаты.
+     * Это потенциальная потеря клиента, и её нужно видеть отдельно от общей
+     * суммы предоплат.
+     */
+    const { service } = makeService({
+      payment: {
+        findMany: vi.fn(async () => [
+          prepayment({
+            amountMinor: 10000,
+            paidAt: daysAgo(20),
+            order: {
+              orderNo: 'ЗАВИС',
+              status: 'ACCEPTED',
+              productionStartedAt: null,
+              totalAmountMinor: 1,
+            },
+          }),
+          prepayment({
+            amountMinor: 20000,
+            paidAt: daysAgo(20),
+            order: {
+              orderNo: 'НАЧАТ',
+              status: 'IN_PRODUCTION',
+              productionStartedAt: daysAgo(19),
+              totalAmountMinor: 1,
+            },
+          }),
+          prepayment({
+            amountMinor: 30000,
+            paidAt: daysAgo(3),
+            order: {
+              orderNo: 'СВЕЖИЙ',
+              status: 'ACCEPTED',
+              productionStartedAt: null,
+              totalAmountMinor: 1,
+            },
+          }),
+        ]),
+      },
+    });
+    const result = await service.build(REPORT_NAME.PREPAYMENTS, query(), actor('ALL_STORES'));
+
+    // Только первый: работы не начаты и прошло больше 14 дней.
+    expect(result.totals.stuckCount).toBe(1);
+    expect(result.totals.stuckMinor).toBe(10000);
+    expect(String(result.totals.stuckOrders)).toContain('ЗАВИС');
+    expect(String(result.totals.stuckOrders)).not.toContain('НАЧАТ');
+  });
+
+  it('заказ в производстве не считается зависшим, даже если платёж старый', async () => {
+    // Работы начаты — деньги в деле, и звонить клиенту не о чем.
+    const { service } = makeService({
+      payment: {
+        findMany: vi.fn(async () => [
+          prepayment({
+            paidAt: daysAgo(100),
+            order: {
+              orderNo: 'В РАБОТЕ',
+              status: 'IN_PRODUCTION',
+              productionStartedAt: daysAgo(99),
+              totalAmountMinor: 1,
+            },
+          }),
+        ]),
+      },
+    });
+    const result = await service.build(REPORT_NAME.PREPAYMENTS, query(), actor('ALL_STORES'));
+
+    expect(result.totals.stuckCount).toBe(0);
+  });
+
+  it('средняя предоплата считается по числу платежей', async () => {
+    const { service } = makeService({
+      payment: {
+        findMany: vi.fn(async () => [
+          prepayment({ amountMinor: 10000 }),
+          prepayment({ amountMinor: 30000, orderId: 'o-2' }),
+        ]),
+      },
+    });
+    const result = await service.build(REPORT_NAME.PREPAYMENTS, query(), actor('ALL_STORES'));
+
+    expect(result.totals.avgPrepaymentMinor).toBe(20000);
+  });
+
+  it('возвраты показываются отдельным числом', async () => {
+    const findMany = vi.fn(async (args: { where: { kind?: unknown } }) =>
+      args.where.kind === 'PREPAYMENT'
+        ? [prepayment({ amountMinor: 50000 })]
+        : [{ amountMinor: 20000, orderId: 'o-1' }],
+    );
+    const { service } = makeService({ payment: { findMany } });
+    const result = await service.build(REPORT_NAME.PREPAYMENTS, query(), actor('ALL_STORES'));
+
+    expect(result.totals.refundedMinor).toBe(20000);
+  });
+
+  it('пустой период: средняя предоплата null, а не ноль', async () => {
+    const { service } = makeService();
+    const result = await service.build(REPORT_NAME.PREPAYMENTS, query(), actor('ALL_STORES'));
+
+    expect(result.totals.prepaidMinor).toBe(0);
+    expect(result.totals.avgPrepaymentMinor).toBeNull();
+  });
+
+  it('строки разреза отсортированы по сумме внесённого', async () => {
+    // Первой идёт точка, где денег больше: руководитель читает сверху вниз.
+    const { service } = makeService({
+      payment: {
+        findMany: vi.fn(async (args: { where: { kind?: unknown } }) =>
+          args.where.kind === 'PREPAYMENT'
+            ? [
+                prepayment({ amountMinor: 1000, storeId: STORE_A, store: { name: 'Малая' } }),
+                prepayment({ amountMinor: 9000, storeId: STORE_B, store: { name: 'Большая' } }),
+              ]
+            : [],
+        ),
+      },
+    });
+    const result = await service.build(REPORT_NAME.PREPAYMENTS, query(), actor('ALL_STORES'));
+
+    expect(result.rows[0]?.store).toBe('Большая');
   });
 });
 

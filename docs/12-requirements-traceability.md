@@ -156,7 +156,18 @@
 | 2.11 | Предел периода 800 дней | `docs/07` §12.2 | `MAX_PERIOD_DAYS` | `reports.service.spec.ts` |
 | 2.11 | Отчёт «Загрузка производства» | `docs/06` §2 | `OrderAssignment`, `durationHours` | этап 5 |
 | 2.11 | Отчёт «Просрочки» | `docs/06` §3 | `dueAt`, `escalatedAt` | этап 5 |
-| 2.11 | Отчёт «Выручка» | `docs/06` §4 | `Payment` по `paidAt` | этап 5 |
+| 2.11 | Отчёт «Выручка» | `docs/06` §4, `docs/07` §12.4 | `Payment` по `paidAt` | `reports.service.spec.ts` |
+| 2.11 | Выручка по дате ПЛАТЕЖА, а не заказа | `docs/06` §4 | фильтр `paidAt` | `reports.service.spec.ts` |
+| 2.11 | Только подтверждённые платежи | `docs/06` §4 | `status: CONFIRMED` | `reports.service.spec.ts` |
+| 2.11 | Возвраты вычитаются из чистой выручки | `docs/06` §4 | `netRevenueMinor` | `reports.service.spec.ts` |
+| 2.11 | Средний чек на число заказов, не платежей | `docs/07` §12.4 | `gross / orderCount` | `reports.service.spec.ts` |
+| 2.11 | Неделя начинается с понедельника | `docs/07` §12.4 | `periodKey()` | `reports.service.spec.ts` |
+| 2.11 | Нулевые способы оплаты присутствуют в итогах | `docs/07` §12.4 | `methodTotals()` | `reports.service.spec.ts` |
+| 2.11 | Область видимости по магазину ВНЕСЕНИЯ платежа | `docs/06` §5 | `storeScopeFilter()` | `reports.service.spec.ts` |
+| 2.11 | Отчёт «Предоплаты» | `docs/06` §5 | `Payment.kind = PREPAYMENT` | `reports.service.spec.ts` |
+| 2.11 | Разрез по магазину внесения, а не заказа | `docs/06` §5 | `Payment.storeId` | `reports.service.spec.ts` |
+| 2.11 | Зачтённые и «в работе» разделены | `docs/06` §5 | `status === COMPLETED` | `reports.service.spec.ts` |
+| 2.11 | Зависшие: нет работ дольше 14 дней | `docs/06` §5 | `STUCK_PREPAYMENT_DAYS` | `reports.service.spec.ts` (2 теста) |
 | 2.11 | Отчёт «Предоплаты» | `docs/06` §5 | `Payment.kind = PREPAYMENT` | этап 5 |
 | 3 | Интеграция с 1С | `docs/05` §1 | `AccountingPort`, outbox | этап 3 |
 | 3 | Интеграция с IP-АТС | `docs/05` §2 | `TelephonyPort` | этап 4 |

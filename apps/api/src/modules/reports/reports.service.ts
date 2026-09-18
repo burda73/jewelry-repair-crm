@@ -169,6 +169,10 @@ export class ReportsService {
         return this.workshopLoad(query);
       case REPORT_NAME.OVERDUE:
         return this.overdue(query);
+      case REPORT_NAME.REVENUE:
+        return this.revenue(query);
+      case REPORT_NAME.PREPAYMENTS:
+        return this.prepayments(query);
       default:
         throw new BadRequestException({
           code: 'VALIDATION_ERROR',
@@ -545,6 +549,307 @@ export class ReportsService {
   }
 
   // -------------------------------------------------------------------------
+  // 5.4. Выручка (docs/06 §4)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Выручка: сколько заработали и на чём.
+   *
+   * ГЛАВНОЕ ПРАВИЛО — ВЫРУЧКА СЧИТАЕТСЯ ПО ДАТЕ ПЛАТЕЖА (`paidAt`), А НЕ ПО ДАТЕ
+   * ЗАКАЗА. Заказ, оформленный в августе и оплаченный в сентябре, — это
+   * сентябрьская выручка. Иначе отчёт не сойдётся с 1С, где доход признаётся по
+   * документу оплаты, и расхождение будут искать в интеграции, а не в отчёте.
+   *
+   * Возвраты и сторно вычитаются: «выручка» без них была бы оборотом, а не
+   * заработком. Показываются отдельными числами, потому что рост возвратов —
+   * самостоятельный сигнал, который в свёрнутом виде не виден.
+   */
+  private async revenue(query: ReportQuery): Promise<ComputedReport> {
+    const payments = await this.prisma.payment.findMany({
+      where: {
+        paidAt: { gte: query.from, lte: endOfPeriod(query.to) },
+        /*
+         * Только подтверждённые платежи. `PENDING` — это намерение, а не деньги:
+         * включать его значило бы показать выручку, которой ещё нет, а `FAILED`
+         * — выручку, которой не будет.
+         */
+        status: 'CONFIRMED',
+        store: this.storeScopeFilter(query),
+      },
+      select: {
+        kind: true,
+        method: true,
+        amountMinor: true,
+        paidAt: true,
+        orderId: true,
+        storeId: true,
+        store: { select: { name: true } },
+        order: { select: { isWarranty: true, createdStoreId: true } },
+      },
+      take: 20_000,
+    });
+
+    const revenuePayments = payments.filter(
+      (payment) => payment.kind !== 'REFUND' && payment.kind !== 'REVERSAL',
+    );
+    const refunds = payments.filter(
+      (payment) => payment.kind === 'REFUND' || payment.kind === 'REVERSAL',
+    );
+
+    const gross = sum(revenuePayments.map((payment) => payment.amountMinor));
+    const refunded = sum(refunds.map((payment) => payment.amountMinor));
+
+    /*
+     * Группировка выбирается разрезом. `day`/`week`/`month`/`year` — это
+     * временные срезы, остальные — аналитические. Ключ группы хранит и метку, и
+     * порядок сортировки: для периодов это дата, для магазинов — название.
+     */
+    const groups = new Map<string, { label: string; sort: string; payments: typeof payments }>();
+    for (const payment of revenuePayments) {
+      const { key, label, sort } = this.revenueGroup(payment, query);
+      const group = groups.get(key) ?? { label, sort, payments: [] };
+      group.payments.push(payment);
+      groups.set(key, group);
+    }
+
+    const rows: ReportRow[] = [...groups.entries()]
+      .sort((a, b) => a[1].sort.localeCompare(b[1].sort))
+      .map(([, group]) => {
+        const amount = sum(group.payments.map((payment) => payment.amountMinor));
+        const orders = new Set(group.payments.map((payment) => payment.orderId)).size;
+        return {
+          group: group.label,
+          revenueMinor: amount,
+          paymentsCount: group.payments.length,
+          ordersCount: orders,
+          // Средний чек: выручка на ЧИСЛО ЗАКАЗОВ, а не на число платежей.
+          // Заказ может быть оплачен двумя платежами (предоплата + доплата), и
+          // деление на платежи занизило бы чек вдвое.
+          avgCheckMinor: orders === 0 ? null : Math.round(amount / orders),
+        } satisfies ReportRow;
+      });
+
+    const orderCount = new Set(revenuePayments.map((payment) => payment.orderId)).size;
+    const byMethod = groupByMethod(revenuePayments);
+
+    return {
+      columns: [
+        {
+          key: 'group',
+          title: revenueGroupTitle(query),
+          type: REPORT_COLUMN_TYPE.STRING,
+        },
+        { key: 'revenueMinor', title: 'Выручка', type: REPORT_COLUMN_TYPE.MONEY },
+        { key: 'paymentsCount', title: 'Платежей', type: REPORT_COLUMN_TYPE.NUMBER },
+        { key: 'ordersCount', title: 'Заказов', type: REPORT_COLUMN_TYPE.NUMBER },
+        { key: 'avgCheckMinor', title: 'Средний чек', type: REPORT_COLUMN_TYPE.MONEY },
+      ],
+      rows: rows.slice(0, query.limit),
+      totals: {
+        revenueMinor: gross,
+        refundsMinor: refunded,
+        // Чистая выручка: заработок, а не оборот.
+        netRevenueMinor: gross - refunded,
+        ordersCount: orderCount,
+        paymentsCount: revenuePayments.length,
+        avgCheckMinor: orderCount === 0 ? null : Math.round(gross / orderCount),
+        /*
+         * Структура оплат — плоскими ключами (`methodCashMinor` и т.д.), а не
+         * вложенным объектом: итоги имеют тип «имя показателя → число или
+         * текст», и вложенность сломала бы и интерфейс, и выгрузку, которые
+         * обходят итоги одним циклом.
+         */
+        ...methodTotals(byMethod),
+      },
+    };
+  }
+
+  /** Разрез строки отчёта о выручке. */
+  private revenueGroup(
+    payment: {
+      paidAt?: Date;
+      method: string;
+      storeId: string;
+      store: { name: string } | null;
+      order: { isWarranty: boolean } | null;
+    },
+    query: ReportQuery,
+  ): { key: string; label: string; sort: string } {
+    switch (query.groupBy) {
+      case REPORT_GROUP_BY.DAY:
+      case REPORT_GROUP_BY.WEEK:
+      case REPORT_GROUP_BY.MONTH:
+      case REPORT_GROUP_BY.YEAR: {
+        const key = periodKey(payment.paidAt ?? new Date(), query.groupBy);
+        return { key, label: key, sort: key };
+      }
+      case REPORT_GROUP_BY.PAYMENT_METHOD:
+        return { key: payment.method, label: methodLabel(payment.method), sort: payment.method };
+      case REPORT_GROUP_BY.STORE:
+        return {
+          key: payment.storeId,
+          label: payment.store?.name ?? payment.storeId,
+          sort: payment.store?.name ?? payment.storeId,
+        };
+      default:
+        return { key: '__all__', label: 'Всего', sort: '0' };
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 5.5. Предоплаты (docs/06 §5)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Предоплаты: сколько денег клиентов «в работе» и нет ли зависших заказов.
+   *
+   * Два самостоятельных вопроса, и оба в одном отчёте, потому что ответ на
+   * второй без первого не читается:
+   *
+   *  1. СКОЛЬКО ВНЕСЕНО И ГДЕ. Разрез по МАГАЗИНУ ВНЕСЕНИЯ (`Payment.storeId`),
+   *     а не по магазину заказа: клиент часто платит не там, где оформил заказ, и
+   *     отчёт по магазину заказа показал бы деньги не той точке, у которой они в
+   *     кассе.
+   *  2. ЧТО ЗАВИСЛО. Предоплата внесена, а работы не начаты дольше норматива —
+   *     потенциальная потеря клиента. Это отдельный список заказов, а не число:
+   *     по числу нельзя позвонить клиенту.
+   */
+  private async prepayments(query: ReportQuery): Promise<ComputedReport> {
+    const payments = await this.prisma.payment.findMany({
+      where: {
+        paidAt: { gte: query.from, lte: endOfPeriod(query.to) },
+        status: 'CONFIRMED',
+        kind: 'PREPAYMENT',
+        store: this.storeScopeFilter(query),
+      },
+      select: {
+        amountMinor: true,
+        paidAt: true,
+        orderId: true,
+        storeId: true,
+        store: { select: { name: true } },
+        order: {
+          select: {
+            orderNo: true,
+            status: true,
+            productionStartedAt: true,
+            totalAmountMinor: true,
+          },
+        },
+      },
+      take: 20_000,
+    });
+
+    const refunds = await this.prisma.payment.findMany({
+      where: {
+        paidAt: { gte: query.from, lte: endOfPeriod(query.to) },
+        status: 'CONFIRMED',
+        kind: { in: ['REFUND', 'REVERSAL'] },
+        store: this.storeScopeFilter(query),
+      },
+      select: { amountMinor: true, orderId: true },
+      take: 20_000,
+    });
+
+    const refundedByOrder = new Map<string, number>();
+    for (const refund of refunds) {
+      refundedByOrder.set(
+        refund.orderId,
+        (refundedByOrder.get(refund.orderId) ?? 0) + refund.amountMinor,
+      );
+    }
+
+    const byStore = new Map<string, { label: string; amount: number; count: number }>();
+    for (const payment of payments) {
+      const entry = byStore.get(payment.storeId) ?? {
+        label: payment.store?.name ?? payment.storeId,
+        amount: 0,
+        count: 0,
+      };
+      entry.amount += payment.amountMinor;
+      entry.count += 1;
+      byStore.set(payment.storeId, entry);
+    }
+
+    /*
+     * «Зачтено» — предоплаты по заказам, дошедшим до `COMPLETED`: деньги
+     * отработаны. «В работе» — всё остальное: изделие ещё в производстве или
+     * ждёт клиента.
+     */
+    const credited = payments.filter((payment) => payment.order?.status === 'COMPLETED');
+    const inWork = payments.filter((payment) => payment.order?.status !== 'COMPLETED');
+
+    const now = Date.now();
+    /*
+     * Зависшие: предоплата внесена, работы не начаты дольше норматива. Считается
+     * от момента ПЛАТЕЖА, а не от создания заказа: клиент мог внести предоплату
+     * через неделю после оформления, и отсчёт «зависло» начинается с его денег.
+     */
+    const stuck = inWork
+      .map((payment) => ({
+        orderNo: payment.order?.orderNo ?? payment.orderId,
+        status: payment.order?.status ?? 'UNKNOWN',
+        amountMinor: payment.amountMinor,
+        paidAt: payment.paidAt,
+        stuckDays: Math.floor((now - payment.paidAt.getTime()) / 86_400_000),
+        productionStartedAt: payment.order?.productionStartedAt ?? null,
+      }))
+      .filter(
+        (entry) => entry.productionStartedAt === null && entry.stuckDays >= STUCK_PREPAYMENT_DAYS,
+      )
+      .sort((a, b) => b.stuckDays - a.stuckDays);
+
+    const totalPrepaid = sum(payments.map((payment) => payment.amountMinor));
+    const rows: ReportRow[] = [...byStore.entries()]
+      .sort((a, b) => b[1].amount - a[1].amount)
+      .map(([, entry]) => ({
+        store: entry.label,
+        prepaidMinor: entry.amount,
+        paymentsCount: entry.count,
+        avgPrepaymentMinor: entry.count === 0 ? null : Math.round(entry.amount / entry.count),
+      }));
+
+    return {
+      columns: [
+        { key: 'store', title: 'Магазин внесения', type: REPORT_COLUMN_TYPE.STRING },
+        { key: 'prepaidMinor', title: 'Внесено предоплат', type: REPORT_COLUMN_TYPE.MONEY },
+        { key: 'paymentsCount', title: 'Платежей', type: REPORT_COLUMN_TYPE.NUMBER },
+        { key: 'avgPrepaymentMinor', title: 'Средняя предоплата', type: REPORT_COLUMN_TYPE.MONEY },
+      ],
+      rows: rows.slice(0, query.limit),
+      totals: {
+        prepaidMinor: totalPrepaid,
+        paymentsCount: payments.length,
+        avgPrepaymentMinor:
+          payments.length === 0 ? null : Math.round(totalPrepaid / payments.length),
+        creditedMinor: sum(credited.map((payment) => payment.amountMinor)),
+        inWorkMinor: sum(inWork.map((payment) => payment.amountMinor)),
+        refundedMinor: sum(refunds.map((refund) => refund.amountMinor)),
+        // Зависшие показываются числом и суммой; список заказов — отдельным
+        // запросом (docs/07 §12.4), потому что по числу нельзя позвонить клиенту.
+        stuckCount: stuck.length,
+        stuckMinor: sum(stuck.map((entry) => entry.amountMinor)),
+        stuckOrders: stuck
+          .slice(0, 20)
+          .map((entry) => entry.orderNo)
+          .join(', '),
+      },
+    };
+  }
+
+  /**
+   * Область видимости по магазину ВНЕСЕНИЯ платежа.
+   *
+   * Отдельно от `orderScope`: у платежа свой магазин (`Payment.storeId`), и
+   * фильтровать его по магазину заказа значило бы показать приёмщику деньги,
+   * принятые в другой кассе, и скрыть свои.
+   */
+  private storeScopeFilter(query: ReportQuery): Prisma.StoreWhereInput | undefined {
+    if (query.storeIds.length === 0) return undefined;
+    return { id: { in: query.storeIds } };
+  }
+
+  // -------------------------------------------------------------------------
   // Общее
   // -------------------------------------------------------------------------
 
@@ -779,6 +1084,115 @@ export function moscowDayStart(dateKey: string): Date {
     });
   }
   return parsed;
+}
+
+/** Сумма чисел; пустой список — ноль. */
+function sum(values: readonly number[]): number {
+  return values.reduce((total, value) => total + value, 0);
+}
+
+/** Срок, после которого не начатая работа считается зависшей (docs/06 §5). */
+export const STUCK_PREPAYMENT_DAYS = 14;
+
+/** Названия способов оплаты. */
+const METHOD_LABELS: Record<string, string> = {
+  CASH: 'Наличные',
+  CARD: 'Карта',
+  BANK_TRANSFER: 'Перевод',
+  ONLINE: 'Онлайн',
+};
+
+function methodLabel(method: string): string {
+  return METHOD_LABELS[method] ?? method;
+}
+
+/**
+ * Структура оплат: доля каждого способа.
+ *
+ * Показывается в итогах, а не строкой отчёта: вопрос «сколько наличных» задают
+ * вместе с общей выручкой, и отдельный отчёт ради четырёх чисел не нужен.
+ */
+function groupByMethod(
+  payments: readonly { method: string; amountMinor: number }[],
+): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const payment of payments) {
+    result[payment.method] = (result[payment.method] ?? 0) + payment.amountMinor;
+  }
+  return result;
+}
+
+/**
+ * Структура оплат плоскими ключами итогов.
+ *
+ * Ключи строятся по ВСЕМ способам оплаты, а не только по встретившимся: если
+ * наличных в периоде не было, показатель должен быть нулём, а не отсутствовать.
+ * Отсутствующий ключ интерфейс показал бы прочерком, и «нет данных» смешалось бы
+ * с «ноль наличных».
+ */
+function methodTotals(byMethod: Record<string, number>): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const method of ['CASH', 'CARD', 'BANK_TRANSFER', 'ONLINE']) {
+    // Ключ в camelCase (`methodBankTransferMinor`), а не `methodBANK_TRANSFERMinor`:
+    // ключ итогов читает интерфейс, и имя из перечисления в нём выглядело бы
+    // случайным набором заглавных.
+    result[`method${camel(method)}Minor`] = byMethod[method] ?? 0;
+  }
+  return result;
+}
+
+/** `BANK_TRANSFER` → `BankTransfer`. */
+function camel(value: string): string {
+  return value
+    .toLowerCase()
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join('');
+}
+
+/**
+ * Ключ периода для временного разреза выручки.
+ *
+ * Неделя начинается с понедельника: отчёт читают по рабочим неделям, и
+ * воскресенье в начале недели сдвинуло бы границы относительно привычных.
+ */
+export function periodKey(date: Date, groupBy: string): string {
+  const key = toDateKey(date);
+  switch (groupBy) {
+    case REPORT_GROUP_BY.YEAR:
+      return key.slice(0, 4);
+    case REPORT_GROUP_BY.MONTH:
+      return key.slice(0, 7);
+    case REPORT_GROUP_BY.WEEK: {
+      const day = new Date(`${key}T00:00:00Z`);
+      // getUTCDay: 0 — воскресенье. Приводим к понедельнику.
+      const weekday = (day.getUTCDay() + 6) % 7;
+      day.setUTCDate(day.getUTCDate() - weekday);
+      return day.toISOString().slice(0, 10);
+    }
+    default:
+      return key;
+  }
+}
+
+/** Заголовок первой колонки отчёта о выручке. */
+function revenueGroupTitle(query: ReportQuery): string {
+  switch (query.groupBy) {
+    case REPORT_GROUP_BY.DAY:
+      return 'День';
+    case REPORT_GROUP_BY.WEEK:
+      return 'Неделя с';
+    case REPORT_GROUP_BY.MONTH:
+      return 'Месяц';
+    case REPORT_GROUP_BY.YEAR:
+      return 'Год';
+    case REPORT_GROUP_BY.PAYMENT_METHOD:
+      return 'Способ оплаты';
+    case REPORT_GROUP_BY.STORE:
+      return 'Магазин';
+    default:
+      return 'Показатель';
+  }
 }
 
 /** Дата в формате `ГГГГ-ММ-ДД` по Москве. */
