@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { clearAreaForUser, userStorageKey } from './user-storage';
 
 /**
  * Автосохранение черновика формы (задача 1.7.3).
@@ -56,7 +57,7 @@ export interface RestorableDraft<T> {
 }
 
 function storageKey(scope: string, userId: string): string {
-  return `repair:draft:${scope}:${userId}`;
+  return userStorageKey('draft', scope, userId);
 }
 
 /**
@@ -95,27 +96,14 @@ export function clearDraft(scope: string, userId: string): void {
 }
 
 /**
- * Удалить ВСЕ черновики сотрудника, независимо от области (`scope`).
+ * Удалить ВСЕ черновики сотрудника, независимо от формы.
  *
  * Нужно при выходе из системы: иначе на общем компьютере следующий сотрудник
  * получил бы предложение восстановить чужой черновик с персональными данными
- * клиента. Перечислять области по именам нельзя — новая форма была бы
- * пропущена, поэтому ключи перебираются по префиксу сотрудника.
+ * клиента. Перебор ключей по префиксу — в `user-storage.ts`.
  */
 export function clearAllDraftsForUser(userId: string): void {
-  try {
-    const suffix = `:${userId}`;
-    const keys: string[] = [];
-    for (let i = 0; i < window.localStorage.length; i += 1) {
-      const key = window.localStorage.key(i);
-      if (key !== null && key.startsWith('repair:draft:') && key.endsWith(suffix)) {
-        keys.push(key);
-      }
-    }
-    for (const key of keys) window.localStorage.removeItem(key);
-  } catch {
-    // Хранилище недоступно — чистить нечего.
-  }
+  clearAreaForUser('draft', userId);
 }
 
 /**

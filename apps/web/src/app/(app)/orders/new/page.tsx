@@ -33,6 +33,7 @@ import { formatDateTime, formatMinor, formatMinorExact, plural } from '@/lib/for
 import { describeApiError } from '@/lib/api-client';
 import { t } from '@/lib/i18n';
 import { useDraftAutosave, type RestorableDraft } from '@/lib/draft-autosave';
+import { orderDraftHasContent } from '@/lib/order-draft';
 import {
   parseMoneyInput,
   multiplyMinor,
@@ -91,6 +92,9 @@ interface DraftWork {
   metalCostSeparate?: boolean;
 }
 
+/**
+ * Поля изделия, вводимые приёмщиком на шаге 3.
+ */
 interface DraftItem {
   name: string;
   metal: string;
@@ -105,14 +109,12 @@ interface DraftItem {
  * Черновик мастера (задача 1.7.3).
  *
  * Сохраняется всё, что приёмщик ввёл руками. Справочные данные (цены работ)
- * НЕ сохраняются: они выводятся из металла и прейскуранта, а сохранённая копия
- * цены могла бы «застрять» после изменения прейскуранта — ровно тот дефект,
- * ради которого цены сделаны производными.
+ * не сохраняются: они выводятся из металла и прейскуранта, а сохранённая копия
+ * цены могла бы «застрять» после изменения прейскуранта.
  */
 interface OrderDraft {
   step: number;
   term: string;
-  /** Выбранный клиент целиком: восстановление не должно терять поля карточки. */
   selectedCustomer: CustomerSearchItem | null;
   isNewCustomer: boolean;
   newCustomer: { fullName: string; phone: string; email: string; notes: string };
@@ -203,7 +205,6 @@ export default function NewOrderPage(): ReactNode {
    * предложение с временем сохранения. Молчаливая подстановка означала бы, что
    * приёмщик, начавший новый заказ, видит в полях данные прошлого клиента.
    */
-  const [draftRestored, setDraftRestored] = useState(false);
   const draftSnapshot: OrderDraft = useMemo(
     () => ({
       step,
@@ -242,12 +243,19 @@ export default function NewOrderPage(): ReactNode {
       prepayment,
     ],
   );
+  /*
+   * Сохраняем, только пока в форме есть введённые данные и заказ ещё не создан.
+   *
+   * Пустую форму сохранять нельзя: приёмщик, открывший и закрывший мастер,
+   * оставил бы черновик, и при следующем входе система предлагала бы
+   * восстановить пустоту. Признак «есть данные» проверяется по полям, которые
+   * заполняет человек, — см. `orderDraftHasContent`.
+   */
   const draft = useDraftAutosave<OrderDraft>({
     scope: 'order-new',
     userId: user?.id ?? null,
     snapshot: draftSnapshot,
-    // После создания заказа сохранять нечего: черновик уже стал заказом.
-    enabled: !draftRestored && createOrder.isSuccess === false,
+    enabled: orderDraftHasContent(draftSnapshot) && createOrder.isSuccess === false,
   });
 
   /**
@@ -289,7 +297,6 @@ export default function NewOrderPage(): ReactNode {
      */
     setSelectedCustomer(data.selectedCustomer);
     draft.dismiss();
-    setDraftRestored(true);
     toast.showSuccess('Черновик восстановлен');
   }
 

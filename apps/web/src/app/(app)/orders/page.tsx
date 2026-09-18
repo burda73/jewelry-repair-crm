@@ -1,15 +1,25 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { Plus, SlidersHorizontal, X } from 'lucide-react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Bookmark, Plus, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { ALL_ORDER_STATUSES, STATUS_LABELS, type OrderStatus } from '@app/shared';
 import { useAuth } from '@/lib/auth-context';
 import { useOrders } from '@/lib/queries';
+import {
+  filtersEqual,
+  filtersToQuery,
+  hasAnyCondition,
+  queryToFilters,
+  useSavedViews,
+  MAX_VIEW_NAME_LENGTH,
+  type SavedView,
+} from '@/lib/saved-views';
 import { formatDate, formatMinor, formatPhoneValue, daysUntil, plural } from '@/lib/format';
 import type { OrderFilters, OrderListItem } from '@/lib/api-types';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/toast';
 import { Select } from '@/components/ui/input';
 import { StatusBadge, Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/card';
@@ -45,15 +55,25 @@ function DueCell({ order }: { order: OrderListItem }): ReactNode {
 }
 
 export default function OrdersPage(): ReactNode {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const toast = useToast();
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
 
-  // Фильтр «просроченные» может прийти ссылкой с дашборда.
-  const [filters, setFilters] = useState<OrderFilters>(() => ({
-    overdue: searchParams.get('overdue') === 'true' ? true : undefined,
-  }));
-  const [search, setSearch] = useState('');
+  /*
+   * Начальный срез читается из адреса: ссылку на подборку заказов передают
+   * коллеге, а с дашборда приходит `?overdue=true`. Разбор идёт через ту же
+   * нормализацию, что и сохранённые представления, — адрес правит пользователь,
+   * и лишний параметр не должен уходить в запрос к API.
+   */
+  const initialSlice = useMemo(() => queryToFilters(searchParams), [searchParams]);
+  const [filters, setFilters] = useState<OrderFilters>(initialSlice.filters);
+  const [search, setSearch] = useState(initialSlice.search);
   const [showFilters, setShowFilters] = useState(false);
+  const [showViews, setShowViews] = useState(false);
+  const [viewName, setViewName] = useState('');
+  const savedViews = useSavedViews(user?.id ?? null);
   // Накопленные страницы: «показать ещё» добавляет результат к уже видимому.
   const [pages, setPages] = useState<OrderListItem[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -68,6 +88,39 @@ export default function OrdersPage(): ReactNode {
     const seen = new Set(pages.map((order) => order.id));
     return [...pages, ...currentPage.filter((order) => !seen.has(order.id))];
   }, [pages, currentPage, cursor]);
+
+  /*
+   * Срез отражается в адресе страницы.
+   *
+   * Без этого ссылку на подборку нельзя передать коллеге, и сохранённые
+   * представления остаются личными. `replace`, а не `push`: смена фильтра —
+   * не переход на другую страницу, иначе кнопка «назад» возвращала бы по
+   * одному фильтру за раз. Параметры сбрасываются в `pathname`, чтобы в
+   * адресе не осталось лишнего от предыдущего среза.
+   */
+  useEffect(() => {
+    const query = filtersToQuery(filters, search);
+    router.replace(query === '' ? pathname : `${pathname}?${query}`, { scroll: false });
+  }, [filters, search, pathname, router]);
+
+  /** Применить сохранённое представление. */
+  function applyView(view: SavedView): void {
+    setFilters(view.filters);
+    setSearch(view.search);
+    setPages([]);
+    setCursor(null);
+    setShowViews(false);
+  }
+
+  /** Сохранить текущий срез под именем. */
+  function saveCurrentView(): void {
+    const created = savedViews.save(viewName, filters, search);
+    if (created !== null) {
+      setViewName('');
+      setShowViews(false);
+      toast.showSuccess(`Представление «${created.name}» сохранено`);
+    }
+  }
 
   function updateFilter(patch: Partial<OrderFilters>): void {
     setFilters((current) => ({ ...current, ...patch }));
@@ -104,6 +157,24 @@ export default function OrdersPage(): ReactNode {
             {activeFilterCount > 0 ? (
               <span className="ml-1 rounded-full bg-blue-600 px-1.5 text-xs text-white">
                 {activeFilterCount}
+              </span>
+            ) : null}
+          </Button>
+          {/*
+            Сохранённые представления: срезы, к которым возвращаются каждый
+            день («просроченные», «в работе»). Панель показывает и список
+            сохранённых, и сохранение текущего среза.
+          */}
+          <Button
+            variant="secondary"
+            onClick={() => setShowViews((value) => !value)}
+            aria-expanded={showViews}
+          >
+            <Bookmark className="h-4 w-4" aria-hidden="true" />
+            Представления
+            {savedViews.views.length > 0 ? (
+              <span className="ml-1 rounded-full bg-slate-200 px-1.5 text-xs text-slate-700">
+                {savedViews.views.length}
               </span>
             ) : null}
           </Button>
@@ -204,6 +275,83 @@ export default function OrdersPage(): ReactNode {
               {t.orders.resetFilters}
             </Button>
           ) : null}
+        </div>
+      ) : null}
+
+      {showViews ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-900">Сохранённые представления</h2>
+          <p className="mt-0.5 text-sm text-slate-500">
+            Срез можно передать коллеге ссылкой — фильтры сохраняются в адресе страницы.
+          </p>
+
+          {savedViews.views.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500">
+              Пока ничего не сохранено. Выставьте фильтры и сохраните срез под именем.
+            </p>
+          ) : (
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {savedViews.views.map((view) => {
+                // Отмечаем представление, совпадающее с текущим срезом: иначе
+                // непонятно, какой из сохранённых срезов сейчас на экране.
+                const isActive = filtersEqual(view.filters, filters, view.search, search);
+                return (
+                  <li key={view.id} className="flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => applyView(view)}
+                      className={cn(
+                        'rounded-l-lg border px-3 py-1.5 text-sm transition-colors',
+                        isActive
+                          ? 'border-blue-500 bg-blue-50 font-medium text-blue-700'
+                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
+                      )}
+                      aria-current={isActive ? 'true' : undefined}
+                    >
+                      {view.name}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => savedViews.remove(view.id)}
+                      aria-label={`Удалить представление «${view.name}»`}
+                      className="rounded-r-lg border border-l-0 border-slate-300 bg-white px-2 py-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {/*
+            Сохранение текущего среза. Пустой срез сохранить нельзя — это и
+            есть исходный экран, а место в списке он бы занимал.
+          */}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={viewName}
+              onChange={(event) => setViewName(event.target.value)}
+              maxLength={MAX_VIEW_NAME_LENGTH}
+              placeholder="Название представления"
+              aria-label="Название представления"
+              disabled={!hasAnyCondition(filters, search)}
+              className="h-11 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
+            />
+            <Button
+              size="sm"
+              disabled={viewName.trim() === '' || !hasAnyCondition(filters, search)}
+              onClick={saveCurrentView}
+            >
+              Сохранить текущий срез
+            </Button>
+            {!hasAnyCondition(filters, search) ? (
+              <span className="text-sm text-slate-500">
+                Сначала выставьте хотя бы один фильтр или задайте поиск
+              </span>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
