@@ -20,7 +20,6 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { WorkingCalendarService, isRedundantDay } from './working-calendar.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 import { DATA_SCOPE, ROLE } from '@app/shared';
@@ -225,7 +224,8 @@ describe('WorkingCalendarService: создание', () => {
       entity: 'WorkingCalendar',
       entityId: DAY_ID,
     });
-    expect(audit.before).toBe(Prisma.JsonNull);
+    // У создания нет «до»: поле отсутствует, а не равно `Prisma.JsonNull`.
+    expect(audit.before).toBeUndefined();
   });
 
   it('ЗАПРЕЩАЕТ создавать зеркальную запись', async () => {
@@ -415,9 +415,10 @@ describe('WorkingCalendarService: снятие отметки', () => {
     const audit = prisma._tx.auditLog.create.mock.calls[0][0].data;
     expect(audit).toMatchObject({ action: 'DELETE', entity: 'WorkingCalendar', entityId: DAY_ID });
     // Прежнее значение обязательно: без него нельзя понять, что именно сняли.
-    expect(audit.before).not.toBe(Prisma.JsonNull);
-    // Нового значения нет: запись удалена.
-    expect(audit.after).toBe(Prisma.JsonNull);
+    expect(audit.before).toBeDefined();
+    expect(audit.before).not.toBeNull();
+    // Нового значения нет: поле отсутствует (см. пояснение выше про JsonNull).
+    expect(audit.after).toBeUndefined();
   });
 
   it('снятие несуществующей записи даёт ошибку', async () => {

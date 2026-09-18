@@ -299,6 +299,13 @@ export class WorkingCalendarService {
     before: unknown,
     after: unknown,
   ): Promise<void> {
+    // Отсутствующее значение ОПУСКАЕТСЯ, а не записывается как `Prisma.JsonNull`.
+    //
+    // Разница не косметическая и проверена на живой базе: пропущенное поле
+    // сохраняется как SQL `NULL`, а `Prisma.JsonNull` — как jsonb-значение
+    // `'null'`. Через Prisma оба читаются как `null`, но в самой колонке это
+    // разные вещи, и `IS NULL` по журналу перестал бы находить записи создания.
+    // Так же поступают остальные сервисы (users, orders, справочники).
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
@@ -306,11 +313,8 @@ export class WorkingCalendarService {
         action,
         entity: 'WorkingCalendar',
         entityId,
-        // `Prisma.JsonNull` вместо `null`: в `Json?`-поле `null` означает
-        // «значение JSON null», а не «поля не было». Для CREATE и DELETE
-        // отсутствие прежнего/нового значения выражается именно JsonNull.
-        before: action === 'CREATE' ? Prisma.JsonNull : (before as Prisma.InputJsonValue),
-        after: after === null ? Prisma.JsonNull : (after as Prisma.InputJsonValue),
+        ...(action === 'CREATE' ? {} : { before: before as Prisma.InputJsonValue }),
+        ...(after === null ? {} : { after }),
       },
     });
   }
