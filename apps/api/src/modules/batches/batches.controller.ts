@@ -13,7 +13,7 @@ import { ApiTags, ApiOperation, ApiCookieAuth } from '@nestjs/swagger';
 import { PERMISSION } from '@app/shared';
 
 import { BatchesService } from './batches.service';
-import type { BatchDetailDto, BatchDto } from './batches.service';
+import type { BatchActDto, BatchDetailDto, BatchDto } from './batches.service';
 import { RequirePermission } from '../../common/auth/roles.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
@@ -85,6 +85,20 @@ export class BatchesController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<BatchDetailDto> {
     return this.batchesService.addOrders(id, body, user);
+  }
+
+  @Post(':id/act')
+  @RequirePermission(PERMISSION.LOGISTICS_MANAGE)
+  @ApiOperation({ summary: 'Сформировать электронный акт приёма-передачи' })
+  formAct(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser): Promise<BatchActDto> {
+    return this.batchesService.formAct(id, user);
+  }
+
+  @Get(':id/act')
+  @RequirePermission(PERMISSION.LOGISTICS_READ)
+  @ApiOperation({ summary: 'Акт приёма-передачи по партии' })
+  findAct(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser): Promise<BatchActDto> {
+    return this.batchesService.findAct(id, user);
   }
 
   /**

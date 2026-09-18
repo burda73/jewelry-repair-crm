@@ -13,6 +13,10 @@ import { describe, expect, it } from 'vitest';
 import {
   BATCH_DIRECTION,
   BATCH_INELIGIBILITY,
+  BATCH_STATUS,
+  batchCompositionLockReason,
+  buildBatchActSnapshot,
+  isBatchCompositionEditable,
   checkBatchEligibility,
   exceedsBatchLimit,
   isReadyForDispatch,
@@ -248,5 +252,138 @@ describe('Лимит партии', () => {
     expect(exceedsBatchLimit(51, 50)).toBe(true);
     expect(exceedsBatchLimit(50, 50)).toBe(false);
     expect(exceedsBatchLimit(49, 50)).toBe(false);
+  });
+});
+
+describe('Замыкание состава партии (задача 2.2)', () => {
+  it('состав правится только в черновике', () => {
+    // После акта состав заморожен: акт — документ о передаче конкретных
+    // изделий, и правка состава после подписания сделала бы его недостоверным.
+    expect(isBatchCompositionEditable(BATCH_STATUS.DRAFT)).toBe(true);
+    expect(isBatchCompositionEditable(BATCH_STATUS.ACT_FORMED)).toBe(false);
+    expect(isBatchCompositionEditable(BATCH_STATUS.IN_TRANSIT)).toBe(false);
+    expect(isBatchCompositionEditable(BATCH_STATUS.RECEIVED)).toBe(false);
+    expect(isBatchCompositionEditable(BATCH_STATUS.CANCELLED)).toBe(false);
+  });
+
+  it('каждому закрытому статусу соответствует понятная причина', () => {
+    // Текст показывается логисту: «нельзя» без объяснения заставляет искать
+    // причину в другом месте.
+    for (const status of [
+      BATCH_STATUS.ACT_FORMED,
+      BATCH_STATUS.IN_TRANSIT,
+      BATCH_STATUS.RECEIVED,
+      BATCH_STATUS.CANCELLED,
+    ] as const) {
+      const reason = batchCompositionLockReason(status);
+      expect(reason, status).toBeTruthy();
+      expect(reason, status).not.toBe('');
+    }
+  });
+
+  it('для черновика причины отказа нет', () => {
+    expect(batchCompositionLockReason(BATCH_STATUS.DRAFT)).toBeNull();
+  });
+});
+
+describe('Снимок состава для акта (задача 2.2)', () => {
+  const items = [
+    {
+      orderId: 'o2',
+      orderNo: 'MSK1-2609-000002',
+      customerName: 'Петров П.П.',
+      totalAmountMinor: 5000,
+    },
+    {
+      orderId: 'o1',
+      orderNo: 'MSK1-2609-000001',
+      customerName: 'Иванов И.И.',
+      totalAmountMinor: 10000,
+    },
+  ];
+
+  it('сортирует заказы по номеру', () => {
+    // Порядок в акте должен быть предсказуем и одинаков при каждой печати:
+    // иначе два экземпляра одного документа выглядели бы по-разному.
+    const snapshot = buildBatchActSnapshot({
+      batchNo: 'П-250916-004',
+      direction: BATCH_DIRECTION.TO_PRODUCTION,
+      fromLabel: 'Магазин на Тверской',
+      toLabel: 'Центральный цех',
+      formedAt: new Date('2025-09-16T07:00:00Z'),
+      items,
+    });
+
+    expect(snapshot.items.map((i) => i.orderNo)).toEqual(['MSK1-2609-000001', 'MSK1-2609-000002']);
+  });
+
+  it('считает число заказов и общую сумму', () => {
+    const snapshot = buildBatchActSnapshot({
+      batchNo: 'П-250916-004',
+      direction: BATCH_DIRECTION.TO_PRODUCTION,
+      fromLabel: 'Магазин',
+      toLabel: 'Цех',
+      formedAt: new Date('2025-09-16T07:00:00Z'),
+      items,
+    });
+
+    expect(snapshot.itemsCount).toBe(2);
+    // Сумма в копейках: 10000 + 5000.
+    expect(snapshot.totalAmountMinor).toBe(15000);
+  });
+
+  it('фиксирует момент формирования строкой ISO', () => {
+    // Снимок уходит в `Json`-поле, поэтому дата хранится строкой: объект Date
+    // сериализовался бы по-разному в зависимости от драйвера.
+    const snapshot = buildBatchActSnapshot({
+      batchNo: 'П-250916-004',
+      direction: BATCH_DIRECTION.TO_STORE,
+      fromLabel: 'Цех',
+      toLabel: 'Магазин',
+      formedAt: new Date('2025-09-16T07:00:00Z'),
+      items,
+    });
+
+    expect(snapshot.formedAt).toBe('2025-09-16T07:00:00.000Z');
+    expect(snapshot.direction).toBe(BATCH_DIRECTION.TO_STORE);
+  });
+
+  it('пустой состав даёт нулевую сумму, а не NaN', () => {
+    // Пустой состав до акта не доходит (сервис запрещает), но функция не должна
+    // возвращать NaN: это значение ушло бы в документ.
+    const snapshot = buildBatchActSnapshot({
+      batchNo: 'П-250916-004',
+      direction: BATCH_DIRECTION.TO_PRODUCTION,
+      fromLabel: 'Магазин',
+      toLabel: 'Цех',
+      formedAt: new Date('2025-09-16T07:00:00Z'),
+      items: [],
+    });
+
+    expect(snapshot.itemsCount).toBe(0);
+    expect(snapshot.totalAmountMinor).toBe(0);
+  });
+
+  it('копирует строки, а не хранит ссылку на исходный массив', () => {
+    // Снимок не должен меняться вслед за источником: иначе смысл снимка теряется.
+    const source = [...items];
+    const snapshot = buildBatchActSnapshot({
+      batchNo: 'П-250916-004',
+      direction: BATCH_DIRECTION.TO_PRODUCTION,
+      fromLabel: 'Магазин',
+      toLabel: 'Цех',
+      formedAt: new Date('2025-09-16T07:00:00Z'),
+      items: source,
+    });
+
+    source.push({
+      orderId: 'o3',
+      orderNo: 'MSK1-2609-000003',
+      customerName: 'Сидоров',
+      totalAmountMinor: 1,
+    });
+
+    expect(snapshot.itemsCount).toBe(2);
+    expect(snapshot.totalAmountMinor).toBe(15000);
   });
 });

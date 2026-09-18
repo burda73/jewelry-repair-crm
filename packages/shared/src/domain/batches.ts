@@ -227,3 +227,91 @@ export const DEFAULT_BATCH_MAX_ITEMS: number | null = null;
 export function exceedsBatchLimit(count: number, maxItems: number | null): boolean {
   return maxItems !== null && count > maxItems;
 }
+
+/**
+ * Статусы, при которых состав партии можно менять.
+ *
+ * После формирования акта состав ЗАМОРОЖЕН. Это не формальность: акт — документ
+ * о передаче конкретных изделий, и если после подписания из партии убрать заказ,
+ * подписанный акт перестанет соответствовать действительности, а изделие
+ * окажется «переданным» без записи о том, что с ним стало. Разбираться в такой
+ * ситуации пришлось бы вручную, поэтому изменение состава запрещено, а не
+ * «не рекомендовано».
+ */
+export const BATCH_EDITABLE_STATUSES: readonly BatchStatus[] = [BATCH_STATUS.DRAFT];
+
+/** Можно ли менять состав партии в этом статусе. */
+export function isBatchCompositionEditable(status: BatchStatus): boolean {
+  return BATCH_EDITABLE_STATUSES.includes(status);
+}
+
+/** Почему состав партии менять нельзя. Текст показывается логисту. */
+export function batchCompositionLockReason(status: BatchStatus): string | null {
+  if (isBatchCompositionEditable(status)) return null;
+  if (status === BATCH_STATUS.ACT_FORMED) {
+    return 'Акт уже сформирован: состав партии заморожен';
+  }
+  if (status === BATCH_STATUS.IN_TRANSIT) {
+    return 'Партия в пути: состав заморожен';
+  }
+  if (status === BATCH_STATUS.RECEIVED) {
+    return 'Партия уже принята: состав заморожен';
+  }
+  return 'Партия отменена: состав изменить нельзя';
+}
+
+/** Строка состава так, как её видит снимок акта. */
+export interface BatchActItem {
+  orderId: string;
+  orderNo: string;
+  customerName: string;
+  totalAmountMinor: number;
+}
+
+/**
+ * Снимок состава партии для акта.
+ *
+ * Фиксируется в `BatchAct.itemsSnapshot` и больше не пересчитывается: акт должен
+ * оставаться тем же документом, даже если заказ позже переименовали, а клиент
+ * сменил ФИО. Именно поэтому снимок делается один раз в момент формирования, а
+ * не собирается при каждой печати.
+ */
+export interface BatchActSnapshot {
+  batchNo: string;
+  direction: BatchDirection;
+  fromLabel: string;
+  toLabel: string;
+  /** Число заказов — дублируется в снимке, чтобы акт читался без партии. */
+  itemsCount: number;
+  items: BatchActItem[];
+  /** Общая сумма по составу, в минорных единицах (копейках). */
+  totalAmountMinor: number;
+  formedAt: string;
+}
+
+/**
+ * Собрать снимок состава для акта.
+ *
+ * Чистая функция: сервис передаёт уже прочитанные строки, а не сам ходит в базу.
+ * Так снимок можно проверить тестом отдельно от транзакции.
+ */
+export function buildBatchActSnapshot(params: {
+  batchNo: string;
+  direction: BatchDirection;
+  fromLabel: string;
+  toLabel: string;
+  formedAt: Date;
+  items: readonly BatchActItem[];
+}): BatchActSnapshot {
+  const items = [...params.items].sort((a, b) => a.orderNo.localeCompare(b.orderNo));
+  return {
+    batchNo: params.batchNo,
+    direction: params.direction,
+    fromLabel: params.fromLabel,
+    toLabel: params.toLabel,
+    itemsCount: items.length,
+    items,
+    totalAmountMinor: items.reduce((sum, item) => sum + item.totalAmountMinor, 0),
+    formedAt: params.formedAt.toISOString(),
+  };
+}

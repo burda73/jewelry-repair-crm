@@ -138,6 +138,10 @@ function createPrismaMock() {
       update: vi.fn(),
     },
     order: { findMany: vi.fn(async () => [orderRow()]) },
+    batchAct: {
+      findFirst: vi.fn(async () => null),
+      create: vi.fn(async () => ({ id: 'act-1', actNo: 'АПП-25-000001' })),
+    },
     counter: { upsert: vi.fn(async () => ({ value: 4 })) },
     setting: { findUnique: vi.fn(async () => null) },
     auditLog: { create: vi.fn() },
@@ -148,6 +152,7 @@ function createPrismaMock() {
       findFirst: vi.fn(async () => batchRow()),
       findMany: vi.fn(async () => []),
     },
+    batchAct: { findFirst: vi.fn(async () => null) },
     batchItem: { findMany: vi.fn(async () => []) },
     order: { findMany: vi.fn(async () => []) },
     setting: { findUnique: vi.fn(async () => null) },
@@ -729,5 +734,255 @@ describe('BatchesService: кандидаты в состав', () => {
     expect(result.rejected).toHaveLength(1);
     expect(result.rejected[0]?.reason).toBe('WRONG_WORKSHOP');
     expect(result.rejected[0]?.message).toBeTruthy();
+  });
+});
+
+describe('BatchesService: акт приёма-передачи (задача 2.2)', () => {
+  /** Партия с одним заказом в составе — минимальный случай для акта. */
+  const batchWithItems = (overrides: Record<string, unknown> = {}) =>
+    batchRow({
+      status: 'DRAFT',
+      items: [
+        {
+          orderId: ORDER_1,
+          addedAt: new Date('2025-09-16T07:00:00Z'),
+          addedById: LOGIST_ID,
+          order: {
+            orderNo: 'MSK1-2609-000001',
+            status: 'QUEUED_FOR_DISPATCH',
+            totalAmountMinor: 15000,
+            customer: { fullName: 'Иванов Иван Иванович' },
+          },
+        },
+      ],
+      ...overrides,
+    });
+
+  it('формирует акт с годовым номером и снимком состава', async () => {
+    /*
+     * Номер акта годовой (`АПП-25-000118`), в отличие от дневного номера
+     * партии: так задан формат в docs/03 §2.
+     */
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchWithItems());
+    prisma._tx.counter.upsert.mockResolvedValue({ value: 118 });
+    prisma._tx.batchAct.create.mockResolvedValue({ id: 'act-1', actNo: 'АПП-25-000118' });
+    prisma.batchAct.findFirst.mockResolvedValue({
+      id: 'act-1',
+      actNo: 'АПП-25-000118',
+      batchId: BATCH_ID,
+      itemsSnapshot: {
+        batchNo: 'П-250916-004',
+        direction: 'TO_PRODUCTION',
+        fromLabel: 'Магазин на Тверской',
+        toLabel: 'Центральный цех',
+        itemsCount: 1,
+        items: [],
+        totalAmountMinor: 15000,
+        formedAt: '2025-09-16T07:00:00.000Z',
+      },
+      signedByFromId: null,
+      signedByToId: null,
+      signedFromAt: null,
+      signedToAt: null,
+      pdfFileId: null,
+    });
+
+    const act = await makeService(prisma).formAct(BATCH_ID, LOGIST);
+
+    const counterCall = prisma._tx.counter.upsert.mock.calls[0]?.[0] as {
+      where: { scope: string };
+    };
+    expect(counterCall.where.scope).toBe(`ACT:${new Date().getFullYear()}`);
+    expect(act.actNo).toBe('АПП-25-000118');
+    expect(act.itemsCount).toBe(1);
+    expect(act.totalAmountMinor).toBe(15000);
+  });
+
+  it('переводит партию в ACT_FORMED в той же транзакции', async () => {
+    /*
+     * Если бы акт создался, а статус не сменился, партия осталась бы `DRAFT` и
+     * допускала правку состава под уже существующим актом.
+     */
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchWithItems());
+    prisma.batchAct.findFirst.mockResolvedValue({
+      id: 'act-1',
+      actNo: 'АПП-25-000001',
+      batchId: BATCH_ID,
+      itemsSnapshot: {
+        itemsCount: 1,
+        totalAmountMinor: 0,
+        formedAt: '2025-09-16T07:00:00.000Z',
+        items: [],
+        batchNo: 'П-1',
+        direction: 'TO_PRODUCTION',
+        fromLabel: 'a',
+        toLabel: 'b',
+      },
+      signedByFromId: null,
+      signedByToId: null,
+      signedFromAt: null,
+      signedToAt: null,
+      pdfFileId: null,
+    });
+
+    await makeService(prisma).formAct(BATCH_ID, LOGIST);
+
+    const updateCall = prisma._tx.batch.update.mock.calls[0]?.[0] as {
+      data: { status: string };
+    };
+    expect(updateCall.data.status).toBe('ACT_FORMED');
+  });
+
+  it('сохраняет снимок состава в itemsSnapshot', async () => {
+    // Снимок фиксируется один раз: иначе переименованный заказ менял бы уже
+    // подписанный документ.
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchWithItems());
+    prisma.batchAct.findFirst.mockResolvedValue({
+      id: 'act-1',
+      actNo: 'АПП-25-000001',
+      batchId: BATCH_ID,
+      itemsSnapshot: {
+        itemsCount: 1,
+        totalAmountMinor: 15000,
+        formedAt: '2025-09-16T07:00:00.000Z',
+        items: [{ orderNo: 'MSK1-2609-000001' }],
+        batchNo: 'П-250916-004',
+        direction: 'TO_PRODUCTION',
+        fromLabel: 'Магазин',
+        toLabel: 'Цех',
+      },
+      signedByFromId: null,
+      signedByToId: null,
+      signedFromAt: null,
+      signedToAt: null,
+      pdfFileId: null,
+    });
+
+    await makeService(prisma).formAct(BATCH_ID, LOGIST);
+
+    const createCall = prisma._tx.batchAct.create.mock.calls[0]?.[0] as {
+      data: { itemsSnapshot: { itemsCount: number; items: Array<{ orderNo: string }> } };
+    };
+    expect(createCall.data.itemsSnapshot.itemsCount).toBe(1);
+    expect(createCall.data.itemsSnapshot.items[0]?.orderNo).toBe('MSK1-2609-000001');
+  });
+
+  it('пишет акт в журнал аудита', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchWithItems());
+    prisma.batchAct.findFirst.mockResolvedValue({
+      id: 'act-1',
+      actNo: 'АПП-25-000001',
+      batchId: BATCH_ID,
+      itemsSnapshot: {
+        itemsCount: 1,
+        totalAmountMinor: 0,
+        formedAt: '2025-09-16T07:00:00.000Z',
+        items: [],
+        batchNo: 'П-1',
+        direction: 'TO_PRODUCTION',
+        fromLabel: 'a',
+        toLabel: 'b',
+      },
+      signedByFromId: null,
+      signedByToId: null,
+      signedFromAt: null,
+      signedToAt: null,
+      pdfFileId: null,
+    });
+
+    await makeService(prisma).formAct(BATCH_ID, LOGIST);
+
+    const auditCall = prisma._tx.auditLog.create.mock.calls[0]?.[0] as {
+      data: { entity: string };
+    };
+    expect(auditCall.data.entity).toBe('BatchAct');
+  });
+
+  it('отклоняет акт по пустой партии', async () => {
+    // «Акт на ноль изделий» подписывать бессмысленно: передавать нечего.
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchWithItems({ items: [] }));
+
+    await expect(makeService(prisma).formAct(BATCH_ID, LOGIST)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('отклоняет повторное формирование акта', async () => {
+    // Второй акт на ту же партию означал бы два документа о передаче одних и
+    // тех же изделий.
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchWithItems());
+    prisma._tx.batchAct.findFirst.mockResolvedValue({ id: 'act-old', actNo: 'АПП-25-000007' });
+
+    await expect(makeService(prisma).formAct(BATCH_ID, LOGIST)).rejects.toThrow(/АПП-25-000007/);
+  });
+
+  it('отклоняет акт по партии не в черновике', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchWithItems({ status: 'IN_TRANSIT' }));
+
+    await expect(makeService(prisma).formAct(BATCH_ID, LOGIST)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('не создаёт акт, если партия вне области видимости', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(null);
+
+    await expect(makeService(prisma).formAct(BATCH_ID, RECEIVER)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+});
+
+describe('BatchesService: заморозка состава после акта', () => {
+  it('запрещает добавлять заказы после формирования акта', async () => {
+    /*
+     * Акт — документ о передаче конкретных изделий. Добавление заказа после
+     * подписания сделало бы его недостоверным.
+     */
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchRow({ status: 'ACT_FORMED' }));
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST),
+    ).rejects.toThrow(/Акт уже сформирован/);
+
+    expect(prisma._tx.batchItem.upsert).not.toHaveBeenCalled();
+  });
+
+  it('запрещает исключать заказы после формирования акта', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchRow({ status: 'ACT_FORMED' }));
+
+    await expect(
+      makeService(prisma).removeOrder(BATCH_ID, ORDER_1, { reason: 'Изделие не готово' }, LOGIST),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(prisma._tx.batchItem.update).not.toHaveBeenCalled();
+  });
+
+  it('запрещает менять состав партии в пути', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchRow({ status: 'IN_TRANSIT' }));
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST),
+    ).rejects.toThrow(/в пути/);
+  });
+
+  it('разрешает менять состав черновика', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchRow({ status: 'DRAFT' }));
+
+    await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
+
+    expect(prisma._tx.batchItem.upsert).toHaveBeenCalled();
   });
 });

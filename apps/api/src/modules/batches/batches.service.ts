@@ -10,6 +10,9 @@ import {
   BATCH_DIRECTION,
   BATCH_STATUS,
   buildBatchNo,
+  batchCompositionLockReason,
+  buildBatchActNo,
+  buildBatchActSnapshot,
   checkBatchEligibility,
   documentDateParts,
   exceedsBatchLimit,
@@ -18,6 +21,7 @@ import {
   createBatchSchema,
   batchOrdersSchema,
   removeBatchOrderSchema,
+  type BatchActSnapshot,
   type BatchDirection,
 } from '@app/shared';
 
@@ -64,6 +68,26 @@ export interface BatchItemDto {
 
 export interface BatchDetailDto extends BatchDto {
   items: BatchItemDto[];
+}
+
+/** Акт приёма-передачи так, как его видит интерфейс. */
+export interface BatchActDto {
+  id: string;
+  actNo: string;
+  batchId: string;
+  batchNo: string;
+  itemsCount: number;
+  totalAmountMinor: number;
+  formedAt: string;
+  signedByFromId: string | null;
+  signedByToId: string | null;
+  signedFromAt: string | null;
+  signedToAt: string | null;
+  /** Подписан ли акт обеими сторонами. */
+  isFullySigned: boolean;
+  /** Есть ли PDF для скачивания. */
+  hasPdf: boolean;
+  snapshot: BatchActSnapshot;
 }
 
 /**
@@ -282,6 +306,14 @@ export class BatchesService {
       const batch = await tx.batch.findFirst({ where: { AND: [{ id: batchId }, scopeFilter] } });
       if (batch === null) throw new NotFoundException('Партия не найдена');
 
+      /*
+       * Состав заморожен после формирования акта: акт — документ о передаче
+       * конкретных изделий, и добавление заказа после подписания сделало бы его
+       * недостоверным.
+       */
+      const lock = batchCompositionLockReason(batch.status);
+      if (lock !== null) throw new ConflictException(lock);
+
       await this.addOrdersWithin(tx, batch, input.orderIds, actor);
     });
 
@@ -300,6 +332,10 @@ export class BatchesService {
       const scopeFilter = this.buildScopeFilter(actor);
       const batch = await tx.batch.findFirst({ where: { AND: [{ id: batchId }, scopeFilter] } });
       if (batch === null) throw new NotFoundException('Партия не найдена');
+
+      // Та же заморозка, что и при добавлении: состав неизменяем после акта.
+      const lock = batchCompositionLockReason(batch.status);
+      if (lock !== null) throw new ConflictException(lock);
 
       /*
        * Строка не удаляется, а помечается `removedAt` с причиной: состав партии
@@ -409,6 +445,187 @@ export class BatchesService {
         reason: entry.reason,
         message: entry.message,
       })),
+    };
+  }
+
+  /**
+   * Сформировать электронный акт приёма-передачи (задача 2.2).
+   *
+   * Акт фиксирует состав партии НА МОМЕНТ формирования: `itemsSnapshot` больше
+   * не пересчитывается. Иначе переименованный заказ или исправленное ФИО
+   * клиента меняли бы уже подписанный документ — а акт должен оставаться тем
+   * же, чем его подписали.
+   *
+   * Формирование и перевод партии в `ACT_FORMED` происходят в ОДНОЙ
+   * транзакции. Если бы акт создался, а статус не сменился, партия осталась бы
+   * `DRAFT` и допускала правку состава под уже существующим актом.
+   */
+  async formAct(batchId: string, actor: AuthenticatedUser): Promise<BatchActDto> {
+    const actId = await this.prisma.runInTransaction(async (tx) => {
+      const scopeFilter = this.buildScopeFilter(actor);
+      const batch = await tx.batch.findFirst({
+        where: { AND: [{ id: batchId }, scopeFilter] },
+        include: {
+          fromStore: { select: { name: true } },
+          toStore: { select: { name: true } },
+          toWorkshop: { select: { name: true } },
+          items: {
+            where: { removedAt: null },
+            orderBy: { addedAt: 'asc' },
+            include: {
+              order: {
+                select: {
+                  orderNo: true,
+                  totalAmountMinor: true,
+                  customer: { select: { fullName: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+      if (batch === null) throw new NotFoundException('Партия не найдена');
+
+      /*
+       * Акт формируется только по партии, состав которой утверждён. Пустая
+       * партия — это не «акт на ноль изделий»: передавать нечего, и подписывать
+       * такой документ бессмысленно.
+       */
+      if (batch.items.length === 0) {
+        throw new BadRequestException('Нельзя сформировать акт: в партии нет заказов');
+      }
+
+      // Повторное формирование запрещено: второй акт на ту же партию означал бы
+      // два документа о передаче одних и тех же изделий.
+      const existing = await tx.batchAct.findFirst({ where: { batchId } });
+      if (existing !== null) {
+        throw new ConflictException(`Акт по этой партии уже сформирован: ${existing.actNo}`);
+      }
+
+      if (batch.status !== BATCH_STATUS.DRAFT) {
+        throw new ConflictException(
+          `Акт можно сформировать только для черновика (партия в статусе ${batch.status})`,
+        );
+      }
+
+      const now = new Date();
+      const { year } = documentDateParts(now);
+      /*
+       * Номер акта — годовой (`АПП-25-000118`), в отличие от номера партии,
+       * который дневной. Так задан формат в docs/03 §2, и он же записан в
+       * комментарии к счётчику; менять формат нельзя, не затронув уже
+       * напечатанные акты.
+       */
+      const scope = `ACT:${year}`;
+      const counter = await tx.counter.upsert({
+        where: { scope },
+        update: { value: { increment: 1 } },
+        create: { scope, value: 1 },
+      });
+
+      const snapshot = buildBatchActSnapshot({
+        batchNo: batch.batchNo,
+        direction: batch.direction,
+        fromLabel: batch.fromStore?.name ?? 'Магазин',
+        toLabel: batch.toWorkshop?.name ?? batch.toStore?.name ?? 'Получатель',
+        formedAt: now,
+        items: batch.items.map((item) => ({
+          orderId: item.orderId,
+          orderNo: item.order.orderNo,
+          customerName: item.order.customer.fullName,
+          totalAmountMinor: item.order.totalAmountMinor,
+        })),
+      });
+
+      const act = await tx.batchAct.create({
+        data: {
+          batchId,
+          actNo: buildBatchActNo(now, counter.value),
+          // `itemsSnapshot` хранит снимок целиком: по нему акт читается и
+          // печатается без обращения к заказам.
+          itemsSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      await tx.batch.update({
+        where: { id: batchId },
+        data: { status: BATCH_STATUS.ACT_FORMED },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          actorRole: actor.primaryRole,
+          action: 'UPDATE',
+          entity: 'BatchAct',
+          entityId: act.id,
+          after: {
+            actNo: act.actNo,
+            batchNo: batch.batchNo,
+            itemsCount: snapshot.itemsCount,
+            totalAmountMinor: snapshot.totalAmountMinor,
+          },
+        },
+      });
+
+      return act.id;
+    });
+
+    return this.findAct(batchId, actor, actId);
+  }
+
+  /** Акт по партии. `actId` позволяет вернуть только что созданный акт. */
+  async findAct(batchId: string, actor: AuthenticatedUser, actId?: string): Promise<BatchActDto> {
+    const scopeFilter = this.buildScopeFilter(actor);
+    const batch = await this.prisma.batch.findFirst({
+      where: { AND: [{ id: batchId }, scopeFilter] },
+      select: { id: true, batchNo: true },
+    });
+    if (batch === null) throw new NotFoundException('Партия не найдена');
+
+    const act = await this.prisma.batchAct.findFirst({
+      where: { batchId, ...(actId === undefined ? {} : { id: actId }) },
+    });
+    if (act === null) throw new NotFoundException('Акт по этой партии не сформирован');
+
+    return this.toActDto(act, batch.batchNo);
+  }
+
+  private toActDto(
+    act: {
+      id: string;
+      actNo: string;
+      batchId: string;
+      itemsSnapshot: Prisma.JsonValue;
+      signedByFromId: string | null;
+      signedByToId: string | null;
+      signedFromAt: Date | null;
+      signedToAt: Date | null;
+      pdfFileId: string | null;
+    },
+    batchNo: string,
+  ): BatchActDto {
+    /*
+     * Снимок читается как есть. Приведение типа здесь неизбежно: Prisma хранит
+     * `Json`, а форму снимка задаёт `buildBatchActSnapshot`. Данные пишет только
+     * эта функция, поэтому снимок всегда соответствует типу.
+     */
+    const snapshot = act.itemsSnapshot as unknown as BatchActSnapshot;
+    return {
+      id: act.id,
+      actNo: act.actNo,
+      batchId: act.batchId,
+      batchNo,
+      itemsCount: snapshot.itemsCount,
+      totalAmountMinor: snapshot.totalAmountMinor,
+      formedAt: snapshot.formedAt,
+      signedByFromId: act.signedByFromId,
+      signedByToId: act.signedByToId,
+      signedFromAt: act.signedFromAt?.toISOString() ?? null,
+      signedToAt: act.signedToAt?.toISOString() ?? null,
+      isFullySigned: act.signedFromAt !== null && act.signedToAt !== null,
+      hasPdf: act.pdfFileId !== null,
+      snapshot,
     };
   }
 
