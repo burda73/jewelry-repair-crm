@@ -137,7 +137,10 @@ function createPrismaMock() {
       upsert: vi.fn(),
       update: vi.fn(),
     },
-    order: { findMany: vi.fn(async () => [orderRow()]) },
+    order: {
+      findMany: vi.fn(async () => [orderRow()]),
+      findUnique: vi.fn(async () => ({ version: 1, status: 'QUEUED_FOR_DISPATCH' })),
+    },
     batchAct: {
       findFirst: vi.fn(async () => null),
       create: vi.fn(async () => ({ id: 'act-1', actNo: 'АПП-25-000001' })),
@@ -194,8 +197,24 @@ function createPrismaMock() {
 }
 
 function makeService(prisma: ReturnType<typeof createPrismaMock>) {
-  return new BatchesService(prisma as never, storageMock as never, actPdfMock as never);
+  return new BatchesService(
+    prisma as never,
+    storageMock as never,
+    actPdfMock as never,
+    workflowMock as never,
+  );
 }
+
+/**
+ * Перевод статуса подменяется: проверяются правила партии, а не таблица
+ * переходов — она покрыта отдельно (`order-transitions.spec.ts` и
+ * `order-workflow.service.spec.ts`). Здесь важно, ЧТО сервис партии передаёт в
+ * переход: идентификатор заказа, целевой статус, актора и внешнюю транзакцию.
+ */
+const workflowMock = {
+  transition: vi.fn(async () => ({ id: 'order-1' })),
+  loadCalendar: vi.fn(async () => ({ days: [] })),
+};
 
 /** Хранилище подменяется: проверяются правила сервиса, а не запись на диск. */
 const storageMock = {
@@ -1479,5 +1498,239 @@ describe('BatchesService: фотофиксация партии (задача 2.
     await expect(makeService(prisma).removePhoto('photo-1', LOGIST)).rejects.toBeInstanceOf(
       ConflictException,
     );
+  });
+});
+
+describe('BatchesService: отправка и приём партии (задача 2.5)', () => {
+  /*
+   * Отправка переводит СРАЗУ все заказы партии в «в пути», приём — в
+   * «в производстве» или «готов к выдаче». Главное, что здесь проверяется:
+   * перевод идёт в ОДНОЙ транзакции и через общую таблицу переходов, а не
+   * собственным `UPDATE status`.
+   */
+
+  /*
+   * Строка состава в форме ответа Prisma: `findOne` (вызывается в конце
+   * `dispatch`/`receive`) читает заказ ЧЕРЕЗ строку состава, поэтому одного
+   * `orderId` мало — без `order` тест падал бы не на правиле сервиса, а на
+   * неполном двойнике.
+   */
+  const withItems = (status: string, direction = 'TO_PRODUCTION', items = 2) =>
+    batchRow({
+      status,
+      direction,
+      items: Array.from({ length: items }, (_, index) => ({
+        orderId: `order-${index}`,
+        addedAt: new Date('2025-09-16T07:00:00Z'),
+        addedById: LOGIST_ID,
+        order: {
+          orderNo: `MSK1-2609-00000${index + 1}`,
+          status: 'QUEUED_FOR_DISPATCH',
+          totalAmountMinor: 100000,
+          customer: { fullName: `Клиент ${index + 1}` },
+        },
+      })),
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // `findOne` в конце вызывает `batch.findFirst` ещё раз.
+    workflowMock.transition.mockResolvedValue({ id: 'order-1' });
+  });
+
+  it('отправляет партию и переводит заказы в «в пути»', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('ACT_FORMED'));
+
+    await makeService(prisma).dispatch(BATCH_ID, LOGIST);
+
+    const targets = workflowMock.transition.mock.calls.map(
+      (call) => (call[0] as { to: string }).to,
+    );
+    expect(targets).toEqual(['IN_TRANSIT_TO_PRODUCTION', 'IN_TRANSIT_TO_PRODUCTION']);
+  });
+
+  it('переводит заказы в ОДНОЙ транзакции', async () => {
+    /*
+     * Ключевое свойство задачи 2.5. Если каждый заказ откроет собственную
+     * транзакцию, половина партии уедет, а половина останется — и акт,
+     * подписанный на все изделия, не совпадёт с фактическим составом.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('ACT_FORMED'));
+
+    await makeService(prisma).dispatch(BATCH_ID, LOGIST);
+
+    // Транзакция открыта ровно один раз на всю партию.
+    expect(prisma.runInTransaction).toHaveBeenCalledTimes(1);
+    // И каждый переход получил ЭТУ ЖЕ транзакцию, а не открыл свою.
+    const passedTx = workflowMock.transition.mock.calls.map(
+      (call) => (call[0] as { tx?: unknown }).tx,
+    );
+    expect(passedTx[0]).toBeDefined();
+    expect(passedTx[1]).toBe(passedTx[0]);
+    expect(passedTx[0]).toBe(prisma._tx);
+  });
+
+  it('рейс в магазин переводит заказы в IN_TRANSIT_TO_STORE', async () => {
+    // Ветки направлений разные: перепутать значит отправить заказ в цех,
+    // который ждёт его из цеха.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('ACT_FORMED', 'TO_STORE'));
+
+    await makeService(prisma).dispatch(BATCH_ID, LOGIST);
+
+    const target = (workflowMock.transition.mock.calls[0]?.[0] as { to: string }).to;
+    expect(target).toBe('IN_TRANSIT_TO_STORE');
+  });
+
+  it('приём переводит заказы в IN_PRODUCTION', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT'));
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    const target = (workflowMock.transition.mock.calls[0]?.[0] as { to: string }).to;
+    expect(target).toBe('IN_PRODUCTION');
+  });
+
+  it('приём рейса из цеха переводит заказы в READY_FOR_PICKUP', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT', 'TO_STORE'));
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    const target = (workflowMock.transition.mock.calls[0]?.[0] as { to: string }).to;
+    expect(target).toBe('READY_FOR_PICKUP');
+  });
+
+  it('передаёт актора и его роль в переход', async () => {
+    // Без актора история статусов не скажет, кто отправил рейс, а проверка роли
+    // в таблице переходов пропустила бы запрещённое действие.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('ACT_FORMED'));
+
+    await makeService(prisma).dispatch(BATCH_ID, LOGIST);
+
+    const ctx = workflowMock.transition.mock.calls[0]?.[0] as {
+      actorId: string;
+      actorRole: string;
+      scope: string;
+    };
+    expect(ctx.actorId).toBe(LOGIST_ID);
+    expect(ctx.actorRole).toBe(LOGIST.primaryRole);
+    expect(ctx.scope).toBe(LOGIST.scope);
+  });
+
+  it('отклоняет отправку черновика', async () => {
+    // Перевозка изделий клиентов без документа: при утрате нечем подтвердить,
+    // что именно и в каком виде приняли.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('DRAFT'));
+
+    await expect(makeService(prisma).dispatch(BATCH_ID, LOGIST)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(workflowMock.transition).not.toHaveBeenCalled();
+  });
+
+  it('отклоняет повторную отправку', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT'));
+
+    await expect(makeService(prisma).dispatch(BATCH_ID, LOGIST)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('отклоняет приём партии, которая не уезжала', async () => {
+    // Иначе заказы оказались бы «в производстве» без доставки.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('ACT_FORMED'));
+
+    await expect(makeService(prisma).receive(BATCH_ID, LOGIST)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(workflowMock.transition).not.toHaveBeenCalled();
+  });
+
+  it('отклоняет отправку пустой партии', async () => {
+    // Акт подписан на нулевой состав, и «в пути» оказалось бы ничего.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('ACT_FORMED', 'TO_PRODUCTION', 0));
+
+    await expect(makeService(prisma).dispatch(BATCH_ID, LOGIST)).rejects.toThrow(
+      /нет ни одного заказа/,
+    );
+    expect(workflowMock.transition).not.toHaveBeenCalled();
+  });
+
+  it('отклоняет отправку невидимой партии', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(null);
+
+    await expect(makeService(prisma).dispatch(BATCH_ID, LOGIST)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('меняет статус партии и записывает время отправки', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('ACT_FORMED'));
+
+    await makeService(prisma).dispatch(BATCH_ID, LOGIST);
+
+    const update = prisma._tx.batch.update.mock.calls[0]?.[0] as {
+      data: { status: string; dispatchedAt: Date };
+    };
+    expect(update.data.status).toBe('IN_TRANSIT');
+    expect(update.data.dispatchedAt).toBeInstanceOf(Date);
+  });
+
+  it('записывает время приёма', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT'));
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    const update = prisma._tx.batch.update.mock.calls[0]?.[0] as {
+      data: { status: string; receivedAt: Date };
+    };
+    expect(update.data.status).toBe('RECEIVED');
+    expect(update.data.receivedAt).toBeInstanceOf(Date);
+  });
+
+  it('пропускает заказ, уже находящийся в целевом статусе', async () => {
+    /*
+     * Повторный вызов после частичного сбоя обязан доводить партию до конца, а
+     * не падать на «переход недопустим»: массовая операция должна быть
+     * повторяемой.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('ACT_FORMED'));
+    prisma._tx.order.findUnique.mockResolvedValue({
+      version: 1,
+      status: 'IN_TRANSIT_TO_PRODUCTION',
+    });
+
+    await makeService(prisma).dispatch(BATCH_ID, LOGIST);
+
+    expect(workflowMock.transition).not.toHaveBeenCalled();
+    // Статус партии всё равно доводится до конца.
+    expect(prisma._tx.batch.update).toHaveBeenCalled();
+  });
+
+  it('пишет изменение партии в журнал аудита', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('ACT_FORMED'));
+
+    await makeService(prisma).dispatch(BATCH_ID, LOGIST);
+
+    const audit = prisma._tx.auditLog.create.mock.calls[0]?.[0] as {
+      data: { entity: string; before: { status: string }; after: { status: string } };
+    };
+    expect(audit.data.entity).toBe('Batch');
+    expect(audit.data.before.status).toBe('ACT_FORMED');
+    expect(audit.data.after.status).toBe('IN_TRANSIT');
   });
 });

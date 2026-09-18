@@ -15,10 +15,15 @@ import {
   BATCH_INELIGIBILITY,
   BATCH_STATUS,
   batchCompositionLockReason,
+  batchDispatchLockReason,
+  batchOrderTargetStatus,
   batchPhotoDeleteLockReason,
   batchPhotoUploadLockReason,
+  batchReceiveLockReason,
   buildBatchActSnapshot,
   canDeleteBatchPhoto,
+  canDispatchBatch,
+  canReceiveBatch,
   canUploadBatchPhoto,
   isBatchCompositionEditable,
   checkBatchEligibility,
@@ -457,5 +462,85 @@ describe('Фотофиксация партии (задача 2.4)', () => {
     // Отменённая партия: добавлять нельзя, значит и удалять нечего.
     expect(canDeleteBatchPhoto(BATCH_STATUS.CANCELLED)).toBe(false);
     expect(batchPhotoDeleteLockReason(BATCH_STATUS.CANCELLED)).toContain('отменена');
+  });
+});
+
+describe('Отправка и приём партии (задача 2.5)', () => {
+  /*
+   * Отправка переводит СРАЗУ все заказы партии в «в пути», приём — в
+   * «в производстве» или «готов к выдаче». Ошибка здесь означает, что изделия
+   * клиентов уехали без документа или заказ попал в ветку встречного рейса.
+   */
+
+  it('отправить можно только сформированную партию', () => {
+    /*
+     * Отправка партии без акта — перевозка изделий клиентов без документа: при
+     * утрате нечем подтвердить, что именно и в каком виде приняли.
+     */
+    expect(canDispatchBatch(BATCH_STATUS.ACT_FORMED)).toBe(true);
+    expect(canDispatchBatch(BATCH_STATUS.DRAFT)).toBe(false);
+    expect(batchDispatchLockReason(BATCH_STATUS.DRAFT)).toContain('акт');
+  });
+
+  it('повторная отправка отклоняется', () => {
+    // Иначе заказы второй раз перешли бы в «в пути», а партия «уехала» дважды.
+    expect(canDispatchBatch(BATCH_STATUS.IN_TRANSIT)).toBe(false);
+    expect(batchDispatchLockReason(BATCH_STATUS.IN_TRANSIT)).toContain('уже отправлена');
+  });
+
+  it('принять можно только партию в пути', () => {
+    // Приём партии, которая не уезжала, означал бы приём несуществующей
+    // перевозки: заказы оказались бы «в производстве» без доставки.
+    expect(canReceiveBatch(BATCH_STATUS.IN_TRANSIT)).toBe(true);
+    expect(canReceiveBatch(BATCH_STATUS.DRAFT)).toBe(false);
+    expect(canReceiveBatch(BATCH_STATUS.ACT_FORMED)).toBe(false);
+    expect(batchReceiveLockReason(BATCH_STATUS.ACT_FORMED)).toContain('не отправлена');
+  });
+
+  it('повторный приём отклоняется', () => {
+    expect(canReceiveBatch(BATCH_STATUS.RECEIVED)).toBe(false);
+    expect(batchReceiveLockReason(BATCH_STATUS.RECEIVED)).toContain('уже принята');
+  });
+
+  it('отменённую партию нельзя ни отправить, ни принять', () => {
+    expect(canDispatchBatch(BATCH_STATUS.CANCELLED)).toBe(false);
+    expect(canReceiveBatch(BATCH_STATUS.CANCELLED)).toBe(false);
+  });
+
+  it('разрешающие статусы не возвращают причину отказа', () => {
+    // Иначе интерфейс показывал бы запрет там, где действие разрешено.
+    expect(batchDispatchLockReason(BATCH_STATUS.ACT_FORMED)).toBeNull();
+    expect(batchReceiveLockReason(BATCH_STATUS.IN_TRANSIT)).toBeNull();
+  });
+
+  it('рейс в цех: отправка даёт IN_TRANSIT_TO_PRODUCTION, приём — IN_PRODUCTION', () => {
+    /*
+     * Ключевое различие: «в пути» для рейса в цех и из цеха — РАЗНЫЕ статусы, и
+     * заказы этих рейсов движутся по разным веткам. Перепутать их значит
+     * отправить заказ в цех, который ждёт его из цеха.
+     */
+    expect(batchOrderTargetStatus(BATCH_DIRECTION.TO_PRODUCTION, 'DISPATCH')).toBe(
+      'IN_TRANSIT_TO_PRODUCTION',
+    );
+    expect(batchOrderTargetStatus(BATCH_DIRECTION.TO_PRODUCTION, 'RECEIVE')).toBe('IN_PRODUCTION');
+  });
+
+  it('рейс в магазин: отправка даёт IN_TRANSIT_TO_STORE, приём — READY_FOR_PICKUP', () => {
+    expect(batchOrderTargetStatus(BATCH_DIRECTION.TO_STORE, 'DISPATCH')).toBe(
+      'IN_TRANSIT_TO_STORE',
+    );
+    expect(batchOrderTargetStatus(BATCH_DIRECTION.TO_STORE, 'RECEIVE')).toBe('READY_FOR_PICKUP');
+  });
+
+  it('ветки направлений не пересекаются', () => {
+    // Страховка от копипасты: четыре комбинации обязаны дать четыре разных
+    // статуса, иначе одно из направлений ведёт не туда.
+    const statuses = [
+      batchOrderTargetStatus(BATCH_DIRECTION.TO_PRODUCTION, 'DISPATCH'),
+      batchOrderTargetStatus(BATCH_DIRECTION.TO_PRODUCTION, 'RECEIVE'),
+      batchOrderTargetStatus(BATCH_DIRECTION.TO_STORE, 'DISPATCH'),
+      batchOrderTargetStatus(BATCH_DIRECTION.TO_STORE, 'RECEIVE'),
+    ];
+    expect(new Set(statuses).size).toBe(4);
   });
 });

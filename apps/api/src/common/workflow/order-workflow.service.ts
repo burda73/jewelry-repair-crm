@@ -54,6 +54,16 @@ export interface TransitionContext {
   payload?: Record<string, unknown>;
   scope: string;
   storeIds: readonly string[];
+  /**
+   * Уже открытая транзакция.
+   *
+   * Зачем: партия переводит в новый статус СРАЗУ все свои заказы (задача 2.5).
+   * Если каждый заказ откроет собственную транзакцию, половина партии уедет, а
+   * половина останется — и на складе окажется состав, которого нет ни в одном
+   * документе. Поэтому вызывающий (сервис партий) открывает одну транзакцию и
+   * передаёт её сюда, а `transition` переиспользует её, а не создаёт новую.
+   */
+  tx?: Prisma.TransactionClient;
 }
 
 /** Данные, загруженные для проверки условий перехода. */
@@ -132,7 +142,13 @@ export class OrderWorkflowService {
    *  5. применение изменений, побочные эффекты, аудит — в ОДНОЙ транзакции.
    */
   async transition(ctx: TransitionContext): Promise<TransitionResult> {
-    const order = await this.loadOrderForGuards(ctx.orderId, ctx.scope, ctx.storeIds);
+    /*
+     * Если транзакция передана снаружи (массовый перевод партии), читаем заказ
+     * ВНУТРИ неё: иначе проверка условий увидела бы состояние до начала массовой
+     * операции и пропустила бы заказ, который эта же операция уже перевела.
+     */
+    const client = ctx.tx ?? this.prisma;
+    const order = await this.loadOrderForGuards(ctx.orderId, ctx.scope, ctx.storeIds, client);
 
     // 2. Оптимистичная блокировка: пользователь мог открыть карточку раньше,
     //    а другой сотрудник уже изменил заказ.
@@ -161,7 +177,7 @@ export class OrderWorkflowService {
 
     // 5. Применение в одной транзакции с аудитом и историей.
     const calendar = await this.loadCalendar();
-    return this.applyTransition(order, ctx, check.rule.effects, calendar);
+    return this.applyTransition(order, ctx, check.rule.effects, calendar, ctx.tx);
   }
 
   // -------------------------------------------------------------------------
@@ -172,6 +188,7 @@ export class OrderWorkflowService {
     orderId: string,
     scope: string,
     storeIds: readonly string[],
+    client: Pick<Prisma.TransactionClient, 'order'> = this.prisma,
   ): Promise<OrderGuardData> {
     const scopeFilter = this.prisma.buildOrderScopeFilter({
       scope,
@@ -179,7 +196,7 @@ export class OrderWorkflowService {
       userId: '',
     });
 
-    const order = await this.prisma.order.findFirst({
+    const order = await client.order.findFirst({
       where: { AND: [{ id: orderId }, scopeFilter] },
       include: {
         items: { select: { id: true } },
@@ -513,6 +530,7 @@ export class OrderWorkflowService {
     ctx: TransitionContext,
     effects: readonly EffectCode[],
     calendar: WorkingCalendar,
+    externalTx?: Prisma.TransactionClient,
   ): Promise<TransitionResult> {
     const now = new Date();
 
@@ -545,7 +563,13 @@ export class OrderWorkflowService {
       newDueAt = computeDueAt(now, norm, calendar);
     }
 
-    return this.prisma.runInTransaction(async (tx) => {
+    /*
+     * Тело перехода вынесено в отдельную функцию: при массовом переводе партии
+     * транзакция открывается ОДНА на все заказы, и повторный `runInTransaction`
+     * внутри неё создал бы вложенную транзакцию — часть заказов уехала бы
+     * независимо от остальных, а при ошибке откатилась бы только вложенная.
+     */
+    const apply = async (tx: Prisma.TransactionClient): Promise<TransitionResult> => {
       // Обновление заказа с проверкой version — защита от гонки.
       const updateData: Record<string, unknown> = {
         status: ctx.to,
@@ -629,7 +653,10 @@ export class OrderWorkflowService {
         where: { id: order.id },
         include: { statusHistory: { orderBy: { createdAt: 'desc' }, take: 1 } },
       });
-    });
+    };
+
+    if (externalTx !== undefined) return apply(externalTx);
+    return this.prisma.runInTransaction(apply);
   }
 
   /** Длительность пребывания в предыдущем статусе — для отчёта «Сроки по этапам». */

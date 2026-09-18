@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { BatchesService } from './batches.service';
 import { BatchesController } from './batches.controller';
 import { BatchActPdfService } from './batch-act-pdf.service';
+import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 
 /**
  * Логистика: партии (задача 2.1, ТЗ п. 2.6).
@@ -14,7 +15,10 @@ import { BatchActPdfService } from './batch-act-pdf.service';
  */
 @Module({
   controllers: [BatchesController],
-  providers: [BatchesService, BatchActPdfService],
+  // `OrderWorkflowService` даёт таблицу переходов и guard-условия: собственный
+  // `UPDATE status` обошёл бы проверку роли, обязательность акта и историю
+  // статусов, и заказ уехал бы без записи о том, кто и когда его отправил.
+  providers: [BatchesService, BatchActPdfService, OrderWorkflowService],
   exports: [BatchesService],
 })
 export class BatchesModule {}

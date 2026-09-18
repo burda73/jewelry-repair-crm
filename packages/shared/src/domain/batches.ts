@@ -318,6 +318,91 @@ export function batchPhotoDeleteLockReason(status: BatchStatus): string | null {
   return 'Партия отменена: фотофиксация недоступна';
 }
 
+/**
+ * Отправка и приём партии (задача 2.5, ТЗ п. 2.6).
+ *
+ * ЗАЧЕМ ОТДЕЛЬНЫЕ ПРАВИЛА. Отправка переводит СРАЗУ все заказы партии в «в пути»,
+ * а приём — в «в производстве» (или «готов к выдаче»). Если правило статуса
+ * живёт в сервисе, интерфейс не может показать кнопку заранее и логист узнаёт о
+ * запрете только по ошибке.
+ *
+ * ПОЧЕМУ ИЗ DRAFT НЕЛЬЗЯ ОТПРАВИТЬ. Отправлять партию без акта приёма-передачи
+ * значит везти изделия клиентов без документа: при утрате нечем подтвердить, что
+ * именно и в каком виде приняли. Акт формируется отдельным шагом (2.2), и
+ * требование акта — не формальность, а условие самой перевозки.
+ */
+export const BATCH_DISPATCHABLE_STATUSES: readonly BatchStatus[] = [BATCH_STATUS.ACT_FORMED];
+
+/** Принять партию можно, только когда она в пути. */
+export const BATCH_RECEIVABLE_STATUSES: readonly BatchStatus[] = [BATCH_STATUS.IN_TRANSIT];
+
+/** Можно ли отправить партию в этом статусе. */
+export function canDispatchBatch(status: BatchStatus): boolean {
+  return BATCH_DISPATCHABLE_STATUSES.includes(status);
+}
+
+/** Почему партию нельзя отправить. Текст показывается логисту. */
+export function batchDispatchLockReason(status: BatchStatus): string | null {
+  if (canDispatchBatch(status)) return null;
+  if (status === BATCH_STATUS.DRAFT) {
+    return 'Сначала сформируйте акт приёма-передачи';
+  }
+  if (status === BATCH_STATUS.IN_TRANSIT) {
+    return 'Партия уже отправлена';
+  }
+  if (status === BATCH_STATUS.RECEIVED) {
+    return 'Партия уже принята';
+  }
+  return 'Партия отменена: отправить нельзя';
+}
+
+/** Можно ли принять партию в этом статусе. */
+export function canReceiveBatch(status: BatchStatus): boolean {
+  return BATCH_RECEIVABLE_STATUSES.includes(status);
+}
+
+/** Почему партию нельзя принять. Текст показывается принимающему. */
+export function batchReceiveLockReason(status: BatchStatus): string | null {
+  if (canReceiveBatch(status)) return null;
+  if (status === BATCH_STATUS.DRAFT) {
+    return 'Партия ещё не отправлена: сначала сформируйте акт и отправьте';
+  }
+  if (status === BATCH_STATUS.ACT_FORMED) {
+    return 'Партия ещё не отправлена';
+  }
+  if (status === BATCH_STATUS.RECEIVED) {
+    return 'Партия уже принята';
+  }
+  return 'Партия отменена: принять нельзя';
+}
+
+/**
+ * Статус заказа, в который его переводит отправка или приём партии.
+ *
+ * Соответствие задано таблицей переходов (docs/04 §2), а не выведено из
+ * направления: «в пути» для рейса в цех и из цеха — РАЗНЫЕ статусы
+ * (`IN_TRANSIT_TO_PRODUCTION` и `IN_TRANSIT_TO_STORE`), и заказы этих рейсов
+ * движутся по разным веткам. Перепутать их значит отправить заказ в цех,
+ * который ждёт его из цеха.
+ *
+ * Возвращается `null`, когда направление и фаза несовместимы: подставлять
+ * «хоть какой-нибудь» статус нельзя, иначе заказ молча уедет не туда.
+ */
+export function batchOrderTargetStatus(
+  direction: BatchDirection,
+  phase: 'DISPATCH' | 'RECEIVE',
+): OrderStatus | null {
+  if (direction === BATCH_DIRECTION.TO_PRODUCTION) {
+    return phase === 'DISPATCH'
+      ? ORDER_STATUS.IN_TRANSIT_TO_PRODUCTION
+      : ORDER_STATUS.IN_PRODUCTION;
+  }
+  if (direction === BATCH_DIRECTION.TO_STORE) {
+    return phase === 'DISPATCH' ? ORDER_STATUS.IN_TRANSIT_TO_STORE : ORDER_STATUS.READY_FOR_PICKUP;
+  }
+  return null;
+}
+
 /** Строка состава так, как её видит снимок акта. */
 export interface BatchActItem {
   orderId: string;

@@ -17,10 +17,15 @@ import {
   documentDateParts,
   exceedsBatchLimit,
   partitionBatchCandidates,
+  batchDispatchLockReason,
   batchListQuerySchema,
+  batchOrderTargetStatus,
   batchPhotoDeleteLockReason,
   batchPhotoUploadLockReason,
+  batchReceiveLockReason,
   canDeleteBatchPhoto,
+  canDispatchBatch,
+  canReceiveBatch,
   canUploadBatchPhoto,
   createBatchSchema,
   batchOrdersSchema,
@@ -34,6 +39,7 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { BatchActPdfService } from './batch-act-pdf.service';
+import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 
 /**
@@ -144,6 +150,7 @@ export class BatchesService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly actPdf: BatchActPdfService,
+    private readonly workflow: OrderWorkflowService,
   ) {}
 
   /**
@@ -821,6 +828,137 @@ export class BatchesService {
     });
 
     return this.findAct(batchId, actor);
+  }
+
+  /**
+   * Отправить партию (задача 2.5, ТЗ п. 2.6).
+   *
+   * ЗАЧЕМ ОДНА ТРАНЗАКЦИЯ. Партия переводит в «в пути» СРАЗУ все свои заказы.
+   * Если каждый заказ откроет собственную транзакцию, половина партии уедет, а
+   * половина останется — и на складе окажется состав, которого нет ни в одном
+   * документе: акт подписан на все изделия, а в пути только часть.
+   *
+   * ПОЧЕМУ ЧЕРЕЗ `OrderWorkflowService`. Таблица переходов и guard-условия
+   * живут в одном месте (docs/04 §2). Собственный `UPDATE status` здесь обошёл бы
+   * и проверку роли, и обязательность акта, и историю статусов — то есть заказ
+   * уехал бы без записи о том, кто и когда его отправил.
+   */
+  async dispatch(batchId: string, actor: AuthenticatedUser): Promise<BatchDetailDto> {
+    return this.moveBatch(batchId, 'DISPATCH', actor);
+  }
+
+  /** Принять партию: заказы переходят в производство или в «готов к выдаче». */
+  async receive(batchId: string, actor: AuthenticatedUser): Promise<BatchDetailDto> {
+    return this.moveBatch(batchId, 'RECEIVE', actor);
+  }
+
+  private async moveBatch(
+    batchId: string,
+    phase: 'DISPATCH' | 'RECEIVE',
+    actor: AuthenticatedUser,
+  ): Promise<BatchDetailDto> {
+    const scopeFilter = this.buildScopeFilter(actor);
+
+    const batch = await this.prisma.batch.findFirst({
+      where: { AND: [{ id: batchId }, scopeFilter] },
+      include: { items: { where: { removedAt: null }, select: { orderId: true } } },
+    });
+    if (batch === null) throw new NotFoundException('Партия не найдена');
+
+    const status: BatchStatus = batch.status;
+    if (phase === 'DISPATCH' && !canDispatchBatch(status)) {
+      throw new ConflictException(batchDispatchLockReason(status));
+    }
+    if (phase === 'RECEIVE' && !canReceiveBatch(status)) {
+      throw new ConflictException(batchReceiveLockReason(status));
+    }
+
+    if (batch.items.length === 0) {
+      // Пустую партию отправлять нечем: акт подписан на нулевой состав, и
+      // «в пути» оказалось бы ничего.
+      throw new ConflictException('В партии нет ни одного заказа');
+    }
+
+    const direction: BatchDirection = batch.direction;
+    const target = batchOrderTargetStatus(direction, phase);
+    if (target === null) {
+      throw new ConflictException('Направление партии не поддерживается');
+    }
+
+    const now = new Date();
+
+    await this.prisma.runInTransaction(
+      async (tx) => {
+        /*
+         * Перевод заказов идёт ПОСЛЕДОВАТЕЛЬНО в одной транзакции, а не
+         * `Promise.all`: каждый переход читает историю статусов заказа, и
+         * параллельные чтения внутри одной транзакции Prisma не поддерживает.
+         * Партия ограничена лимитом (по умолчанию — составом одного рейса), и
+         * 15 секунд таймаута на неё хватает.
+         */
+        for (const item of batch.items) {
+          const current = await tx.order.findUnique({
+            where: { id: item.orderId },
+            select: { version: true, status: true },
+          });
+          if (current === null) continue;
+
+          /*
+           * Заказ уже в целевом статусе — пропускаем. Так повторный вызов после
+           * частичного сбоя доводит партию до конца, а не падает на «переход
+           * недопустим»: операция обязана быть повторяемой.
+           */
+          if (current.status === target) continue;
+
+          await this.workflow.transition({
+            orderId: item.orderId,
+            to: target,
+            actorId: actor.id,
+            actorRole: actor.primaryRole,
+            version: current.version,
+            scope: actor.scope,
+            storeIds: actor.storeIds ?? [],
+            tx,
+          });
+        }
+
+        await tx.batch.update({
+          where: { id: batchId },
+          data:
+            phase === 'DISPATCH'
+              ? { status: BATCH_STATUS.IN_TRANSIT, dispatchedAt: now }
+              : { status: BATCH_STATUS.RECEIVED, receivedAt: now },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            actorId: actor.id,
+            actorRole: actor.primaryRole,
+            action: 'UPDATE',
+            entity: 'Batch',
+            entityId: batchId,
+            before: { status },
+            after:
+              phase === 'DISPATCH'
+                ? {
+                    status: BATCH_STATUS.IN_TRANSIT,
+                    orderStatus: target,
+                    orders: batch.items.length,
+                  }
+                : {
+                    status: BATCH_STATUS.RECEIVED,
+                    orderStatus: target,
+                    orders: batch.items.length,
+                  },
+          },
+        });
+      },
+      // Партия из десятков заказов: стандартных 15 секунд может не хватить,
+      // и тогда половина рейса откатилась бы по таймауту.
+      { timeout: 60_000 },
+    );
+
+    return this.findOne(batchId, actor);
   }
 
   /**

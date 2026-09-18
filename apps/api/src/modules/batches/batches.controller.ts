@@ -162,6 +162,34 @@ export class BatchesController {
   }
 
   /**
+   * Отправить партию (задача 2.5).
+   *
+   * Переводит все заказы партии в «в пути» в ОДНОЙ транзакции: иначе половина
+   * рейса уехала бы, а половина осталась, и акт, подписанный на все изделия, не
+   * совпадал бы с фактическим составом.
+   */
+  @Post(':id/dispatch')
+  @RequirePermission(PERMISSION.LOGISTICS_MANAGE)
+  @ApiOperation({ summary: 'Отправить партию' })
+  dispatch(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<BatchDetailDto> {
+    return this.batchesService.dispatch(id, user);
+  }
+
+  /** Принять партию: заказы переходят в производство или в «готов к выдаче». */
+  @Post(':id/receive')
+  @RequirePermission(PERMISSION.LOGISTICS_MANAGE)
+  @ApiOperation({ summary: 'Принять партию' })
+  receive(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<BatchDetailDto> {
+    return this.batchesService.receive(id, user);
+  }
+
+  /**
    * Загрузить фотофиксацию партии (задача 2.4).
    *
    * `FilesInterceptor` читает `multipart/form-data`. Файлы держатся в памяти, а
