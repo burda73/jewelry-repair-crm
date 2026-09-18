@@ -13,6 +13,8 @@ import {
   normalizePhone,
   normalizeScanInput,
   buildOrderQrPayload,
+  buildOrderNo,
+  documentDateParts,
   calcOrderTotal,
   discountForTotal,
   sumMinor,
@@ -637,9 +639,21 @@ export class OrdersService {
       select: { code: true },
     });
 
+    /*
+     * Год берётся по московскому времени, а не по UTC: иначе заказ, принятый
+     * 1 января ночью, увеличил бы прошлогодний счётчик, а номер получил бы
+     * прошлогодний префикс. См. `documentDateParts`.
+     *
+     * Область счётчика — ГОДОВАЯ, а не месячная, как описано в
+     * docs/03-data-model.md и как считает `orderCounterScope` в общей библиотеке.
+     * Расхождение зафиксировано в docs/15-known-issues.md: на проде уже есть
+     * счётчик `ORDER:MSK1:2026` и номера `MSK1-2609-000006/000007`, поэтому
+     * переход на месячную область без переноса счётчиков дал бы повтор номера
+     * (месячный счётчик начал бы с 000001 и дошёл бы до уже занятого 000006).
+     * Пока поведение сохраняется, чтобы не сломать нумерацию живых заказов.
+     */
     const now = new Date();
-    const year = now.getUTCFullYear();
-    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const { year } = documentDateParts(now);
     const scope = `ORDER:${store.code}:${year}`;
 
     const counter = await tx.counter.upsert({
@@ -648,7 +662,9 @@ export class OrdersService {
       create: { scope, value: 1 },
     });
 
-    return `${store.code}-${String(year).slice(2)}${month}-${String(counter.value).padStart(6, '0')}`;
+    // Формат номера — общая функция, чтобы дата в номере нигде не считалась
+    // по-своему: именно расхождение двух реализаций и породило дефект.
+    return buildOrderNo(store.code, now, counter.value);
   }
 
   /**

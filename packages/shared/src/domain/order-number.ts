@@ -1,4 +1,37 @@
 /**
+ * Части даты в рабочем часовом поясе (Москва).
+ *
+ * ПОЧЕМУ НЕ `getUTCFullYear()`/`getUTCDate()`. Номера документов содержат дату
+ * (`MSK1-2509-…`, `П-250916-…`, `АПП-25-…`), и эта дата — рабочая дата точки, а
+ * вся система считает рабочий день по Москве (`toDateKey` в utils/dates.ts).
+ * UTC же отстаёт на 3 часа, поэтому документ, оформленный 1 октября в 01:00 МСК,
+ * получал номер за 30 сентября, а заказ, принятый 1 января ночью, попадал в
+ * декабрьский счётчик. Ошибка не косметическая: по номеру ищут документ, а
+ * отчётность группирует заказы по месяцу из номера.
+ */
+const DOCUMENT_TIME_ZONE = 'Europe/Moscow';
+
+/**
+ * Год, месяц (1–12) и день в московском времени.
+ *
+ * Экспортируется, потому что нужен не только построителям номеров: счётчик
+ * заказов в API формирует область видимости по году, и брать год из UTC там
+ * означало бы ту же ошибку на границе года, что и в самом номере.
+ */
+export function documentDateParts(date: Date): { year: number; month: number; day: number } {
+  // `sv-SE` даёт формат ГГГГ-ММ-ДД, который разбирается без догадок о локали.
+  const formatted = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: DOCUMENT_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+
+  const [year, month, day] = formatted.split('-').map((part) => Number(part));
+  return { year: year!, month: month!, day: day! };
+}
+
+/**
  * Номера и машиночитаемые коды (ответ A4, docs/00-decisions.md §6.12 и §6.14).
  *
  * Формат номера заказа: `{КОД_МАГАЗИНА}-{ГГ}{ММ}-{6 цифр}`, например `MSK1-2509-000142`.
@@ -29,8 +62,9 @@ export function isValidOrderNo(value: string): boolean {
  * @param sequence   порядковый номер в месяце (счётчик из БД)
  */
 export function buildOrderNo(storeCode: string, date: Date, sequence: number): string {
-  const year = String(date.getUTCFullYear()).slice(2);
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const parts = documentDateParts(date);
+  const year = String(parts.year).slice(2);
+  const month = String(parts.month).padStart(2, '0');
   const normalizedCode = storeCode
     .trim()
     .toUpperCase()
@@ -46,9 +80,11 @@ export function buildOrderNo(storeCode: string, date: Date, sequence: number): s
 
 /** Область счётчика номеров: уникальна для магазина и месяца. */
 export function orderCounterScope(storeCode: string, date: Date): string {
-  return `ORDER:${storeCode.trim().toUpperCase()}:${date.getUTCFullYear()}${String(
-    date.getUTCMonth() + 1,
-  ).padStart(2, '0')}`;
+  const parts = documentDateParts(date);
+  return `ORDER:${storeCode.trim().toUpperCase()}:${parts.year}${String(parts.month).padStart(
+    2,
+    '0',
+  )}`;
 }
 
 /**
@@ -123,24 +159,25 @@ export function normalizeScanInput(raw: string): string {
  * Номер партии: `П-{ГГ}{ММ}{ДД}-{3 цифры}`.
  */
 export function buildBatchNo(date: Date, sequence: number): string {
-  const ymd = `${String(date.getUTCFullYear()).slice(2)}${String(date.getUTCMonth() + 1).padStart(
+  const { year, month, day } = documentDateParts(date);
+  const ymd = `${String(year).slice(2)}${String(month).padStart(2, '0')}${String(day).padStart(
     2,
     '0',
-  )}${String(date.getUTCDate()).padStart(2, '0')}`;
+  )}`;
   return `П-${ymd}-${String(sequence).padStart(3, '0')}`;
 }
 
 /** Номер акта приёма-передачи: `АПП-{ГГ}-{6 цифр}`. */
 export function buildBatchActNo(date: Date, sequence: number): string {
-  return `АПП-${String(date.getUTCFullYear()).slice(2)}-${String(sequence).padStart(6, '0')}`;
+  return `АПП-${String(documentDateParts(date).year).slice(2)}-${String(sequence).padStart(6, '0')}`;
 }
 
 /** Номер акта отказа: `АО-{ГГ}-{6 цифр}`. */
 export function buildRefusalActNo(date: Date, sequence: number): string {
-  return `АО-${String(date.getUTCFullYear()).slice(2)}-${String(sequence).padStart(6, '0')}`;
+  return `АО-${String(documentDateParts(date).year).slice(2)}-${String(sequence).padStart(6, '0')}`;
 }
 
 /** Номер рекламации: `РЕК-{ГГ}-{5 цифр}`. */
 export function buildClaimNo(date: Date, sequence: number): string {
-  return `РЕК-${String(date.getUTCFullYear()).slice(2)}-${String(sequence).padStart(5, '0')}`;
+  return `РЕК-${String(documentDateParts(date).year).slice(2)}-${String(sequence).padStart(5, '0')}`;
 }
