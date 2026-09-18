@@ -150,7 +150,7 @@ ok "статика скопирована"
 step "Синхронизация шаблонов уведомлений"
 ssh "$SERVER" "su $SERVICE_USER -s /bin/bash -c '
   set -e
-  cd $APP_DIR/app
+  cd $APP_DIR
   /usr/bin/node scripts/sync-templates.mjs
 '"
 ok "шаблоны уведомлений синхронизированы"
