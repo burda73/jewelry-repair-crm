@@ -99,6 +99,15 @@
 | 2.8 | В письме руководителю — имя ответственного (дефект 32) | `docs/15` | `productionManager.fullName`, `createdBy.fullName` | `escalations.service.spec.ts` (падает при подстановке номера заказа) |
 | 2.8 | Сбой на одном заказе не отменяет остальные | `docs/07` §13.1 | `try/catch` внутри цикла | `escalations.service.spec.ts` |
 | 2.8 | Норматив в рабочих часах не истекает раньше срока (дефект 31) | `docs/15` | `addWorkingHours()` | `money-dates.spec.ts` (6 тестов, падают при возврате) |
+| 2.9 | Дашборд просрочек: сводка, разрезы, список | `docs/07` §13.1.1 | `overdue-dashboard.service.ts` → `build()` | `overdue-dashboard.service.spec.ts` (11 тестов) |
+| 2.9 | Просрочка считается по `dueAt`, не по факту уведомления | `docs/07` §13.1.1 | запрос без условия по `escalatedAt` | `overdue-dashboard.service.spec.ts` |
+| 2.9 | Набор заказов совпадает с воркером эскалаций | `docs/07` §13.1.1 | `EXCLUDED_STATUSES` | `overdue-dashboard.service.spec.ts` |
+| 2.9 | Самые задержанные сверху, разрезы по числу | `docs/07` §13.1.1 | сортировка в `build()` и `groupBy()` | `overdue-dashboard.service.spec.ts` |
+| 2.10 | Автостатус «Невостребовано» через 30 дней | `docs/04` §4, `docs/07` §13.1.2 | `unclaimed.service.ts` → `run()` | `unclaimed.service.spec.ts` (11 тестов) |
+| 2.10 | Перевод ЧЕРЕЗ таблицу переходов, а не UPDATE | `docs/07` §13.1.2 | `workflow.transition()` (переход 19) | `unclaimed.service.spec.ts` (падает при прямой записи) |
+| 2.10 | Порог из настройки, бессмысленный → по умолчанию | `docs/07` §13.1.2 | `Setting.orders.unclaimedAfterDays` | `unclaimed.service.spec.ts` |
+| 2.10 | Сбой на одном заказе не останавливает прогон | `docs/07` §13.1.2 | `try/catch` внутри цикла | `unclaimed.service.spec.ts` |
+| 2.10 | Уведомление приёмщикам магазина | `docs/02` §5.3 | `roles.some({ role: 'RECEIVER', storeId })` | `unclaimed.service.spec.ts` |
 | 2.6 | Загружать фото можно и при приёмке | `docs/07` §8.6 | `canUploadBatchPhoto()` | `batches.spec.ts` (падает при сужении списка) |
 | 2.6 | Удалять фото только до отправки | `docs/07` §8.6 | `canDeleteBatchPhoto()` | `batches.spec.ts`, `batches.service.spec.ts` (409) |
 | 2.6 | Ключ хранилища не отдаётся наружу | `docs/07` §8.5 | `listPhotos()` → только `url` | `batches.service.spec.ts` (подмена на objectKey роняет тест) |

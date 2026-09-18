@@ -22,6 +22,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { EscalationsService } from './modules/escalations/escalations.service';
+import { UnclaimedService } from './modules/escalations/unclaimed.service';
 
 interface WorkerDefinition {
   name: string;
@@ -40,10 +41,20 @@ interface WorkerDefinition {
  */
 const ESCALATION_INTERVAL_MS = 15 * 60_000;
 
+/**
+ * Периодичность проверки невостребованных заказов.
+ *
+ * Раз в сутки (ТЗ п. 2.8): порог измеряется календарными днями, и более частый
+ * прогон ничего не изменил бы. Первый запуск происходит сразу при старте, чтобы
+ * после перезапуска сервиса не ждать до утра.
+ */
+const UNCLAIMED_INTERVAL_MS = 24 * 60 * 60_000;
+
 const registeredWorkers: WorkerDefinition[] = [];
 
 /** Контейнер Nest: воркеры работают через те же сервисы, что и API. */
 let escalations: EscalationsService | null = null;
+let unclaimed: UnclaimedService | null = null;
 
 const timers: NodeJS.Timeout[] = [];
 let shuttingDown = false;
@@ -114,6 +125,7 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, { bufferLogs: true });
   await app.init();
   escalations = app.get(EscalationsService);
+  unclaimed = app.get(UnclaimedService);
 
   registeredWorkers.push({
     name: 'escalations',
@@ -133,6 +145,22 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  registeredWorkers.push({
+    name: 'unclaimed-orders',
+    intervalMs: UNCLAIMED_INTERVAL_MS,
+    run: async () => {
+      if (unclaimed === null) return 0;
+      const result = await unclaimed.run();
+      if (result.unclaimed > 0 || result.skipped > 0) {
+        log(
+          `unclaimed-orders: просмотрено ${result.scanned}, переведено ${result.unclaimed}, ` +
+            `пропущено ${result.skipped}`,
+        );
+      }
+      return result.unclaimed;
+    },
+  });
+
   for (const worker of registeredWorkers) {
     scheduleWorker(worker);
   }
@@ -146,6 +174,7 @@ function shutdown(signal: string): void {
   shuttingDown = true;
   log(`Получен сигнал ${signal}, останавливаю воркеры...`);
   escalations = null;
+  unclaimed = null;
 
   for (const timer of timers) {
     clearInterval(timer);

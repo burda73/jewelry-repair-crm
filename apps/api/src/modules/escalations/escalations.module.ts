@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 
 import { EscalationsController } from './escalations.controller';
 import { EscalationsService } from './escalations.service';
+import { UnclaimedService } from './unclaimed.service';
+import { OverdueDashboardService } from './overdue-dashboard.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 
@@ -14,7 +16,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 @Module({
   imports: [NotificationsModule],
   controllers: [EscalationsController],
-  providers: [EscalationsService, OrderWorkflowService],
-  exports: [EscalationsService],
+  providers: [EscalationsService, UnclaimedService, OverdueDashboardService, OrderWorkflowService],
+  exports: [EscalationsService, UnclaimedService, OverdueDashboardService],
 })
 export class EscalationsModule {}
