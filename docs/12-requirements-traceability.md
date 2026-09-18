@@ -138,7 +138,22 @@
 | 2.9 | Срок рассмотрения рекламации 10 раб. дней | `docs/02` §5.5 | `WarrantyClaim.dueAt`, `addWorkingDays()` | `money-dates.spec.ts` |
 | 2.9 | Запись рекламации в основном заказе | `docs/03` §2 | `WarrantyClaim.orderId` → `Order.claims` | — |
 | 2.10 | Роли и права доступа | `docs/02` §2, §4 | `packages/shared/src/domain/roles.ts` | `docs-sync.spec.ts` |
-| 2.11 | Отчёт «Сроки по этапам» | `docs/06` §1 | `OrderStatusHistory.durationMinutes` | этап 5 |
+| 2.11 | Отчёт «Сроки по этапам» | `docs/06` §1, `docs/07` §12.3 | `OrderStatusHistory.durationMinutes` | `reports.service.spec.ts`, `reports.spec.ts` |
+| 2.11 | Перцентиль совпадает с `percentile_cont` | `docs/06` §1 | `percentile()` | `reports.spec.ts` |
+| 2.11 | Переходы без длительности не занижают среднее | `docs/07` §12.3 | `durationMinutes: { not: null }` | `reports.service.spec.ts` |
+| 2.11 | «Доля в норме» только по этапам с нормативом | `docs/06` §1 | `inNormShare()` | `reports.spec.ts`, `reports.service.spec.ts` |
+| 2.11 | Срок ровно по нормативу — не нарушение | `docs/07` §12.3 | `durationHours > normHours` | `reports.service.spec.ts` |
+| 2.11 | Отчёт «Загрузка производства» | `docs/06` §2 | `OrderAssignment.finishedAt − startedAt` | `reports.service.spec.ts` |
+| 2.11 | Незавершённые назначения не дают фактических часов | `docs/06` §2 | `finishedAt !== null` | `reports.service.spec.ts` |
+| 2.11 | Отчёт «Просрочки» | `docs/06` §3 | `dueAt` | `reports.service.spec.ts` |
+| 2.11 | Просрочка «сейчас» исключает терминальные статусы | `docs/07` §12.3 | `TERMINAL_STATUSES` | `reports.service.spec.ts` |
+| 2.11 | Просрочка «за период» их НЕ исключает | `docs/07` §12.3 | фильтр периода | `reports.service.spec.ts` |
+| 2.11 | Единый формат `columns` + `rows` + `totals` | `docs/07` §12.1 | `ReportResult` | `reports.spec.ts` |
+| 2.11 | Параметр `storeId` сужает доступ, не расширяет | `docs/07` §12.2 | `scopedStoreIds()` | `reports.service.spec.ts` (4 теста) |
+| 2.11 | Роль без магазинов не видит ничего | `docs/07` §12.2 | `RESTRICTED_TO_NOTHING` | `reports.service.spec.ts` |
+| 2.11 | Границы периода — московские сутки | `docs/07` §12.2 | `moscowDayStart()` | `reports.service.spec.ts` |
+| 2.11 | Верхняя граница — конец суток | `docs/07` §12.2 | `endOfPeriod()` | `reports.service.spec.ts` |
+| 2.11 | Предел периода 800 дней | `docs/07` §12.2 | `MAX_PERIOD_DAYS` | `reports.service.spec.ts` |
 | 2.11 | Отчёт «Загрузка производства» | `docs/06` §2 | `OrderAssignment`, `durationHours` | этап 5 |
 | 2.11 | Отчёт «Просрочки» | `docs/06` §3 | `dueAt`, `escalatedAt` | этап 5 |
 | 2.11 | Отчёт «Выручка» | `docs/06` §4 | `Payment` по `paidAt` | этап 5 |

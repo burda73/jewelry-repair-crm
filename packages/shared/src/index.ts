@@ -10,6 +10,7 @@ export * from './domain/batches.js';
 export * from './domain/tracking.js';
 export * from './domain/escalation.js';
 export * from './domain/notification-templates.js';
+export * from './domain/reports.js';
 export * from './domain/receipt.js';
 export * from './domain/metal-kind.js';
 export * from './domain/roles.js';

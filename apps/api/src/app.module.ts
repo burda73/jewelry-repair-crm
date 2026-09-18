@@ -22,6 +22,7 @@ import { StageNormsModule } from './modules/norms/stage-norms.module';
 import { BatchesModule } from './modules/batches/batches.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { EscalationsModule } from './modules/escalations/escalations.module';
+import { ReportsModule } from './modules/reports/reports.module';
 
 /**
  * Найти файл `.env`.
@@ -102,6 +103,7 @@ function resolveEnvPaths(): string[] {
     BatchesModule,
     NotificationsModule,
     EscalationsModule,
+    ReportsModule,
   ],
   providers: [
     // Rate limit применяется глобально; отдельные эндпоинты переопределяют лимиты.
