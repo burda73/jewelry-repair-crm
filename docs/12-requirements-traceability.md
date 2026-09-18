@@ -106,6 +106,8 @@
 | 2.10 | Автостатус «Невостребовано» через 30 дней | `docs/04` §4, `docs/07` §13.1.2 | `unclaimed.service.ts` → `run()` | `unclaimed.service.spec.ts` (11 тестов) |
 | 2.10 | Перевод ЧЕРЕЗ таблицу переходов, а не UPDATE | `docs/07` §13.1.2 | `workflow.transition()` (переход 19) | `unclaimed.service.spec.ts` (падает при прямой записи) |
 | 2.10 | Системный переход передаёт `actorId = null` (дефект 33) | `docs/15` | `OrderWorkflowService.transition()` → `INVALID_ACTOR` | `unclaimed.service.spec.ts`, `order-workflow.service.spec.ts` |
+| 2.5–2.10 | Шаблоны уведомлений доходят до боевого сервера (дефект 34) | `docs/14`, `docs/15` | `@app/shared` → `NOTIFICATION_TEMPLATES`, `scripts/sync-templates.mjs` | `notification-templates.spec.ts` (5 тестов) |
+| 2.8–2.10 | Плановые задачи запускаются на сервере | `docs/14` | `infra/systemd/repair-worker.service`, `deploy.sh` | журнал воркера, `systemctl is-active repair-worker` |
 | 2.10 | Порог из настройки, бессмысленный → по умолчанию | `docs/07` §13.1.2 | `Setting.orders.unclaimedAfterDays` | `unclaimed.service.spec.ts` |
 | 2.10 | Сбой на одном заказе не останавливает прогон | `docs/07` §13.1.2 | `try/catch` внутри цикла | `unclaimed.service.spec.ts` |
 | 2.10 | Уведомление приёмщикам магазина | `docs/02` §5.3 | `roles.some({ role: 'RECEIVER', storeId })` | `unclaimed.service.spec.ts` |

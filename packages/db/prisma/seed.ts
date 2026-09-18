@@ -12,7 +12,13 @@
 
 import { PrismaClient, RoleCode, DataScope, PriceListStatus, OrderStatus } from '@prisma/client';
 import { hash } from 'argon2';
-import { addWorkingDays, buildOrderQrPayload, METAL_KIND, type WorkingCalendar } from '@app/shared';
+import {
+  addWorkingDays,
+  buildOrderQrPayload,
+  METAL_KIND,
+  NOTIFICATION_TEMPLATES,
+  type WorkingCalendar,
+} from '@app/shared';
 import { PRICE_LIST_CATEGORIES, PRICE_LIST_POSITIONS } from './price-list-spec.js';
 
 const prisma = new PrismaClient();
@@ -506,75 +512,13 @@ async function seedPriceList() {
 // ---------------------------------------------------------------------------
 
 async function seedNotificationTemplates() {
-  const templates = [
-    {
-      code: 'ORDER_ACCEPTED',
-      subject: 'Заказ принят',
-      body: 'Заказ {{orderNo}} принят в работу. Плановая готовность: {{dueDate}}.',
-    },
-    {
-      code: 'APPROVAL_REQUEST',
-      subject: 'Требуется согласование',
-      body: 'Согласуйте стоимость ремонта по заказу {{orderNo}}: {{amount}}.',
-    },
-    {
-      code: 'PREPAYMENT_RECEIVED',
-      subject: 'Предоплата получена',
-      body: 'Предоплата по заказу {{orderNo}} получена. Работы начаты.',
-    },
-    {
-      code: 'READY_FOR_PICKUP',
-      subject: 'Заказ готов',
-      body: 'Заказ {{orderNo}} готов к выдаче в {{storeName}}.',
-    },
-    {
-      code: 'UNCLAIMED_REMINDER',
-      subject: 'Напоминание о заказе',
-      body: 'Заказ {{orderNo}} ожидает вас более 30 дней.',
-    },
-    {
-      // Обращение к ПРИЁМЩИКУ, а не к клиенту: `UNCLAIMED_REMINDER` выше — это
-      // письмо клиенту («ожидает вас»), а здесь приёмщик должен понять, что
-      // изделие лежит на хранении и с ним надо что-то решать.
-      code: 'ORDER_UNCLAIMED',
-      subject: 'Заказ невостребован',
-      body: 'Заказ {{orderNo}} не получен клиентом более 30 дней — переведён в «Невостребовано».',
-    },
-    {
-      code: 'WARRANTY_ISSUED',
-      subject: 'Гарантия оформлена',
-      body: 'Гарантия по заказу {{orderNo}} действует до {{warrantyUntil}}.',
-    },
-    {
-      code: 'ORDER_OVERDUE',
-      subject: 'Просрочка по заказу',
-      body: 'Заказ {{orderNo}} просрочен на {{overdueDays}} дн. Этап: {{stage}}.',
-    },
-    {
-      code: 'ESCALATION_MANAGER',
-      subject: 'Эскалация: просрочка более 1 дня',
-      body: 'Заказ {{orderNo}} просрочен более чем на рабочий день. Ответственный: {{responsible}}.',
-    },
-    {
-      code: 'CLAIM_DEADLINE',
-      subject: 'Срок рекламации',
-      body: 'По рекламации {{claimNo}} истекает срок рассмотрения {{dueDate}}.',
-    },
-    /*
-     * Партия в пути (задача 2.6): без этих двух шаблонов отправитель рейса не
-     * узнаёт о приёмке, а логист — о задержке доставки.
-     */
-    {
-      code: 'BATCH_RECEIVED',
-      subject: 'Партия {{batchNo}} принята',
-      body: 'Партия {{batchNo}} принята получателем. Принял: {{receivedBy}}.',
-    },
-    {
-      code: 'BATCH_TRANSIT_LATE',
-      subject: 'Партия {{batchNo}} задерживается',
-      body: 'Партия {{batchNo}} в пути дольше норматива: {{elapsed}} при норме {{norm}}.',
-    },
-  ];
+  /*
+   * Список живёт в @app/shared: тот же модуль использует синхронизация
+   * шаблонов на боевом сервере. Пока список был только здесь, на сервере
+   * новый шаблон не появлялся — сид в продакшне не запускают, — и уведомление
+   * уходило по запасному тексту.
+   */
+  const templates = NOTIFICATION_TEMPLATES;
 
   for (const template of templates) {
     await prisma.notificationTemplate.upsert({
