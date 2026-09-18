@@ -100,6 +100,10 @@ export class EscalationsService {
         createdById: true,
         productionManagerId: true,
         createdStoreId: true,
+        // Имя ответственного нужно для текста письма руководителю
+        // (`{{responsible}}`): без него шаблон подставил бы пустоту.
+        createdBy: { select: { fullName: true } },
+        productionManager: { select: { fullName: true } },
       },
       /*
        * Ограничение прогона: если просроченных заказов аномально много (сбой
@@ -160,6 +164,9 @@ export class EscalationsService {
         order,
         state.overdueWorkingHours,
         isManagerLevel,
+        // Руководителю сообщается, КТО отвечает за заказ: без имени письмо
+        // требует вмешательства, не говоря, к кому идти.
+        order.productionManager?.fullName ?? order.createdBy.fullName,
       );
 
       if (created === 0) {
@@ -195,6 +202,7 @@ export class EscalationsService {
     order: { id: string; orderNo: string; status: string },
     overdueWorkingHours: number,
     isManagerLevel: boolean,
+    responsibleName: string,
   ): Promise<number> {
     let created = 0;
     for (const recipient of recipients) {
@@ -212,7 +220,10 @@ export class EscalationsService {
             // сотруднику ничего не говорит, а «1 день» — говорит.
             overdueDays: Math.floor(overdueWorkingHours / 9),
             stage: order.status,
-            responsible: order.orderNo,
+            // Имя ОТВЕТСТВЕННОГО, а не номер заказа: шаблон спрашивает «кто
+            // отвечает», и номер изделия на этот вопрос не отвечает. Подстановка
+            // номера дала бы письмо «Ответственный: MSK1-2509-000001».
+            responsible: responsibleName,
           },
           fallbackSubject: isManagerLevel
             ? `Эскалация: заказ ${order.orderNo} просрочен`

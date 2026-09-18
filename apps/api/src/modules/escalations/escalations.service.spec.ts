@@ -61,6 +61,10 @@ function orderRow(overrides: Record<string, unknown> = {}) {
     createdById: AUTHOR_ID,
     productionManagerId: PROD_MANAGER_ID,
     createdStoreId: STORE_ID,
+    // Имя ответственного приходит вместе с заказом: оно нужно для текста
+    // письма руководителю.
+    createdBy: { fullName: 'Приёмщиков Пётр' },
+    productionManager: { fullName: 'Мастеров Иван' },
     ...overrides,
   };
 }
@@ -221,7 +225,7 @@ describe('Воркер эскалаций: адресаты (задача 2.8)',
     // осталась бы без адресата.
     const { service, client, notifications } = makeService();
     client.order.findMany.mockResolvedValue([
-      orderRow({ status: 'IN_PRODUCTION', productionManagerId: null }),
+      orderRow({ status: 'IN_PRODUCTION', productionManagerId: null, productionManager: null }),
     ]);
     client.user.findMany.mockResolvedValue([{ id: PROD_MANAGER_ID }]);
 
@@ -384,5 +388,47 @@ describe('Воркер эскалаций: шаблоны (задача 2.8)', (
     };
     // 10 рабочих часов при девятичасовом дне — это один полный день.
     expect(call.values.overdueDays).toBe(1);
+  });
+});
+
+describe('Воркер эскалаций: имя ответственного (дефект 32)', () => {
+  it('в письмо руководителю подставляется ИМЯ, а не номер заказа', async () => {
+    /*
+     * ДЕФЕКТ 32, найденный на живом сервере. Шаблон `ESCALATION_MANAGER`
+     * содержит `{{responsible}}` — «кто отвечает». В него подставлялся номер
+     * заказа, и руководитель получал письмо «Ответственный:
+     * MSK1-2509-000001». На вопрос «к кому идти» это не отвечает.
+     */
+    const { service, client, notifications } = makeService();
+    client.order.findMany.mockResolvedValue([orderRow({ dueAt: DUE_10_WORKING_HOURS })]);
+    client.user.findMany.mockResolvedValue([{ id: MANAGER_ID }]);
+
+    await service.run(NOW);
+
+    const call = notifications.notifyByTemplate.mock.calls[0][0] as {
+      values: { responsible: string };
+    };
+    expect(call.values.responsible).toBe('Мастеров Иван');
+    expect(call.values.responsible).not.toContain('MSK1');
+  });
+
+  it('без назначенного менеджера указывается приёмщик заказа', async () => {
+    // Ответственный всё равно должен быть назван: «никто» — не ответ.
+    const { service, client, notifications } = makeService();
+    client.order.findMany.mockResolvedValue([
+      orderRow({
+        dueAt: DUE_10_WORKING_HOURS,
+        productionManagerId: null,
+        productionManager: null,
+      }),
+    ]);
+    client.user.findMany.mockResolvedValue([{ id: MANAGER_ID }]);
+
+    await service.run(NOW);
+
+    const call = notifications.notifyByTemplate.mock.calls[0][0] as {
+      values: { responsible: string };
+    };
+    expect(call.values.responsible).toBe('Приёмщиков Пётр');
   });
 });

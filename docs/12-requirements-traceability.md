@@ -96,6 +96,7 @@
 | 2.8 | Уровень не повышается без рассылки | `docs/07` §13.1 | проверка `created === 0` | `escalations.service.spec.ts` |
 | 2.8 | Повторная эскалация того же уровня молчит | `docs/07` §13.1 | `shouldEscalateAgain()` | `escalation.spec.ts`, `escalations.service.spec.ts` |
 | 2.8 | Руководителю — отдельный шаблон | `docs/07` §13.1 | `TEMPLATE_CODE.ESCALATION_MANAGER` | `escalations.service.spec.ts` |
+| 2.8 | В письме руководителю — имя ответственного (дефект 32) | `docs/15` | `productionManager.fullName`, `createdBy.fullName` | `escalations.service.spec.ts` (падает при подстановке номера заказа) |
 | 2.8 | Сбой на одном заказе не отменяет остальные | `docs/07` §13.1 | `try/catch` внутри цикла | `escalations.service.spec.ts` |
 | 2.8 | Норматив в рабочих часах не истекает раньше срока (дефект 31) | `docs/15` | `addWorkingHours()` | `money-dates.spec.ts` (6 тестов, падают при возврате) |
 | 2.6 | Загружать фото можно и при приёмке | `docs/07` §8.6 | `canUploadBatchPhoto()` | `batches.spec.ts` (падает при сужении списка) |
