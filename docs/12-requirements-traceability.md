@@ -88,6 +88,16 @@
 | 2.6 | Отсутствие шаблона не отменяет операцию | `docs/07` §14 | запасной текст в `notifyByTemplate()` | `notifications.service.spec.ts` |
 | 2.6 | Уведомление о приёмке отправителю рейса | `docs/07` §14 | `batches.service.ts` → `notifyBatchReceived()` | `batches.service.spec.ts` |
 | 2.6 | Сбой уведомления не отменяет приёмку | `docs/07` §14 | `.catch(() => undefined)` после транзакции | `batches.service.spec.ts` |
+| 2.8 | Эскалация просрочки: уровни и пороги | `docs/04` §4, `docs/07` §13.1 | `@app/shared` → `assessEscalation()` | `escalation.spec.ts` (20 тестов) |
+| 2.8 | Порог руководителя — рабочий день (9 раб. часов) | `docs/04` §4 | `MANAGER_ESCALATION_HOURS` | `escalation.spec.ts` (падает при сдвиге порога) |
+| 2.8 | Просрочка считается в РАБОЧИХ часах | `docs/04` §4 | `countWorkingHours()` | `escalation.spec.ts` (падает при календарном счёте) |
+| 2.8 | Согласованность подсчёта и расчёта сроков | `docs/04` §4 | сверка с `addWorkingHours()` | `escalation.spec.ts` (сверка на 7 значениях) |
+| 2.8 | Адресат зависит от этапа | `docs/04` §5 | `escalations.service.ts` → `resolveRecipients()` | `escalations.service.spec.ts` (20 тестов) |
+| 2.8 | Уровень не повышается без рассылки | `docs/07` §13.1 | проверка `created === 0` | `escalations.service.spec.ts` |
+| 2.8 | Повторная эскалация того же уровня молчит | `docs/07` §13.1 | `shouldEscalateAgain()` | `escalation.spec.ts`, `escalations.service.spec.ts` |
+| 2.8 | Руководителю — отдельный шаблон | `docs/07` §13.1 | `TEMPLATE_CODE.ESCALATION_MANAGER` | `escalations.service.spec.ts` |
+| 2.8 | Сбой на одном заказе не отменяет остальные | `docs/07` §13.1 | `try/catch` внутри цикла | `escalations.service.spec.ts` |
+| 2.8 | Норматив в рабочих часах не истекает раньше срока (дефект 31) | `docs/15` | `addWorkingHours()` | `money-dates.spec.ts` (6 тестов, падают при возврате) |
 | 2.6 | Загружать фото можно и при приёмке | `docs/07` §8.6 | `canUploadBatchPhoto()` | `batches.spec.ts` (падает при сужении списка) |
 | 2.6 | Удалять фото только до отправки | `docs/07` §8.6 | `canDeleteBatchPhoto()` | `batches.spec.ts`, `batches.service.spec.ts` (409) |
 | 2.6 | Ключ хранилища не отдаётся наружу | `docs/07` §8.5 | `listPhotos()` → только `url` | `batches.service.spec.ts` (подмена на objectKey роняет тест) |

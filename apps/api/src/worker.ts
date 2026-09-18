@@ -19,6 +19,9 @@
  */
 
 import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { EscalationsService } from './modules/escalations/escalations.service';
 
 interface WorkerDefinition {
   name: string;
@@ -28,7 +31,19 @@ interface WorkerDefinition {
   run: () => Promise<number>;
 }
 
+/**
+ * Периодичность прогона эскалаций.
+ *
+ * Пятнадцать минут (docs/04 §4): чаще — лишняя нагрузка без пользы, потому что
+ * `dueAt` измеряется часами и днями; реже — просрочка замечалась бы с
+ * задержкой, заметной клиенту.
+ */
+const ESCALATION_INTERVAL_MS = 15 * 60_000;
+
 const registeredWorkers: WorkerDefinition[] = [];
+
+/** Контейнер Nest: воркеры работают через те же сервисы, что и API. */
+let escalations: EscalationsService | null = null;
 
 const timers: NodeJS.Timeout[] = [];
 let shuttingDown = false;
@@ -87,15 +102,36 @@ function scheduleWorker(worker: WorkerDefinition): void {
  * Когда воркеры начнут обращаться к БД (этапы 2–5), функция станет `async`,
  * и её вызов ниже нужно будет await-ить.
  */
-function bootstrap(): void {
+async function bootstrap(): Promise<void> {
   log('Запуск фоновых воркеров...');
 
-  if (registeredWorkers.length === 0) {
-    log(
-      'Воркеры ещё не зарегистрированы: модули реализуются на этапах 2–5 ' +
-        '(docs/09-roadmap.md). Процесс ожидает подключения задач.',
-    );
-  }
+  /*
+   * Контейнер поднимается через тот же `AppModule`, что и API, но без HTTP:
+   * воркер обязан использовать ТУ ЖЕ логику сервисов, а не свою копию запросов.
+   * Копия неизбежно разошлась бы с API — и «просрочено» в воркере означало бы не
+   * то же, что на дашборде.
+   */
+  const app = await NestFactory.createApplicationContext(AppModule, { bufferLogs: true });
+  await app.init();
+  escalations = app.get(EscalationsService);
+
+  registeredWorkers.push({
+    name: 'escalations',
+    intervalMs: ESCALATION_INTERVAL_MS,
+    // Возвращается число разосланных уведомлений: по нему видно, работает ли
+    // воркер, не читая его внутреннее состояние.
+    run: async () => {
+      if (escalations === null) return 0;
+      const result = await escalations.run();
+      if (result.scanned > 0) {
+        log(
+          `escalations: просроченных ${result.scanned}, оповещено ${result.notified}, ` +
+            `повышен уровень у ${result.escalated}, без ответственного ${result.withoutResponsible}`,
+        );
+      }
+      return result.notified;
+    },
+  });
 
   for (const worker of registeredWorkers) {
     scheduleWorker(worker);
@@ -109,6 +145,7 @@ function shutdown(signal: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
   log(`Получен сигнал ${signal}, останавливаю воркеры...`);
+  escalations = null;
 
   for (const timer of timers) {
     clearInterval(timer);
@@ -124,12 +161,13 @@ function shutdown(signal: string): void {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// try/catch, а не `.catch()`: bootstrap синхронный и не возвращает Promise,
-// поэтому обработчик ошибок должен быть обычным блоком — `.catch()` здесь
-// упал бы с «bootstrap(...).catch is not a function».
-try {
-  bootstrap();
-} catch (error: unknown) {
+/*
+ * Контейнер поднимается асинхронно, поэтому ошибка запуска обрабатывается
+ * `.catch()`: без него отказ инициализации (например, недоступная БД) привёл бы
+ * к необработанному отклонению промиса — процесс упал бы с невнятным стеком
+ * вместо сообщения о причине.
+ */
+bootstrap().catch((error: unknown) => {
   logError('bootstrap', error);
   process.exit(1);
-}
+});

@@ -63,6 +63,8 @@ export const TEMPLATE_CODE = {
   BATCH_RECEIVED: 'BATCH_RECEIVED',
   /** Заказ просрочен по нормативу этапа. */
   ORDER_OVERDUE: 'ORDER_OVERDUE',
+  /** Эскалация руководителю: просрочка больше рабочего дня (задача 2.8). */
+  ESCALATION_MANAGER: 'ESCALATION_MANAGER',
   /** Заказ готов к выдаче. */
   READY_FOR_PICKUP: 'READY_FOR_PICKUP',
   /** Заказ невостребован 30 дней. */

@@ -12,6 +12,17 @@ export const MINUTE_MS = 60_000;
 export const HOUR_MS = 60 * MINUTE_MS;
 export const DAY_MS = 24 * HOUR_MS;
 
+/**
+ * Границы рабочего дня по местному времени.
+ *
+ * Вынесены константами, потому что их используют ДВА независимых расчёта:
+ * прибавление рабочих часов (срок этапа) и подсчёт рабочих часов просрочки
+ * (эскалация). При разных границах «просрочено на один рабочий день» означало
+ * бы одно в сроке и другое в эскалации, и объяснить разницу было бы нечем.
+ */
+export const WORK_DAY_START_HOUR = 10;
+export const WORK_DAY_END_HOUR = 19;
+
 /** Производственный календарь: набор нерабочих дат (праздники, переносы). */
 export interface CalendarDay {
   /** Дата в формате YYYY-MM-DD (локальная дата магазина). */
@@ -106,20 +117,30 @@ export function addWorkingHours(
   let guard = 0;
   while (remaining > 0 && guard < 366 * 24) {
     guard += 1;
+
+    /*
+     * Засчитывается ИНТЕРВАЛ, начинающийся в текущем моменте: если он попадает
+     * в рабочее окно, час отработан, и время сдвигается к его концу. Поэтому
+     * проверка идёт ДО сдвига, а выход из цикла — ПОСЛЕ него.
+     *
+     * Прежняя версия выходила из цикла ДО сдвига, поэтому «плюс один рабочий
+     * час» от 12:00 возвращала 12:00 (сдвига не было), а норматив в 4 часа от
+     * 15:00 истекал в 18:00 вместо 19:00 — то есть на час раньше срока. Заказ
+     * становился «просроченным» до его наступления. См. дефект 31 в
+     * docs/15-known-issues.md.
+     */
     if (isWorkday(result, calendar, timeZone)) {
-      // Считаем рабочий день с 10:00 до 19:00 по локальному времени.
+      // Считаем рабочий день по границам WORK_DAY_START_HOUR..WORK_DAY_END_HOUR.
       const localHour = Number(
         new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', hour12: false }).format(
           result,
         ),
       );
-      if (localHour >= 10 && localHour < 19) {
+      if (localHour >= WORK_DAY_START_HOUR && localHour < WORK_DAY_END_HOUR) {
         remaining -= 1;
-        if (remaining === 0) break;
-        result.setTime(result.getTime() + HOUR_MS);
-        continue;
       }
     }
+
     result.setTime(result.getTime() + HOUR_MS);
   }
   return result;
