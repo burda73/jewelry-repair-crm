@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiRequestError } from '@/lib/api-client';
 import { clearAllDraftsForUser } from '@/lib/draft-autosave';
+import { clearServiceWorkerCaches } from '@/components/service-worker-registrar';
 import type { AuthenticatedUser, LoginResponse } from '@/lib/api-types';
 
 interface AuthContextValue {
@@ -99,6 +100,9 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
       // очистки следующий сотрудник увидел бы предложение восстановить чужой
       // черновик (задача 1.7.3).
       if (user !== null) clearAllDraftsForUser(user.id);
+      // Кэш оболочки PWA тоже очищается: правило «выход очищает устройство»
+      // должно выполняться целиком (задача 1.7.5).
+      clearServiceWorkerCaches();
       setUser(null);
       queryClient.clear();
       router.push('/login');

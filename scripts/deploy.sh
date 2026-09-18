@@ -167,6 +167,16 @@ ssh "$SERVER" '
   code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000$chunk")
   [ "$code" = "200" ] || { echo "Статика $chunk: $code (страницы будут пустыми)"; exit 1; }
   echo "    Статика $chunk: $code"
+
+  # Файлы PWA. Их отсутствие не видно нигде, кроме телефона: приложение просто
+  # не устанавливается на домашний экран, без единой ошибки в интерфейсе.
+  # Так уже было — манифест ссылался на несуществующие иконки (дефект 27),
+  # и на проде оба адреса отдавали 404.
+  for pwa_file in /manifest.webmanifest /sw.js /offline.html /icons/icon-192.png /icons/icon-512.png; do
+    code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000$pwa_file")
+    [ "$code" = "200" ] || { echo "PWA $pwa_file: $code (установка на домашний экран не сработает)"; exit 1; }
+  done
+  echo "    Файлы PWA (манифест, воркер, иконки): 200"
 '
 ok "развёртывание подтверждено"
 

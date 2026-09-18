@@ -43,13 +43,17 @@ export default tseslint.config(
             // остального кода — уже случалось с другими конфигами.
             'packages/db/*.config.ts',
             'scripts/*.mjs',
+            // Service Worker: обычный браузерный скрипт вне tsconfig, но
+            // проверять его нужно — от его решений зависит, какие данные
+            // застревают на устройстве.
+            'apps/web/public/*.js',
           ],
           // Предел файлов, которые parserService разбирает вне tsconfig.
           // По умолчанию он равен 8, и добавление обычного служебного скрипта
           // упирается в него с ошибкой
           // «Too many files (>8) have matched the default project» — то есть
           // `npm run lint` падает не из-за кода, а из-за роста числа скриптов.
-          // Значение с запасом: файлов сейчас 9, лимит 16.
+          // Значение с запасом: файлов сейчас 10, лимит 16.
           //
           // Почему не отдельный tsconfig для `scripts/`: файлы там — простые
           // `.mjs` без типов, и включение их в проект потребовало бы `allowJs`,
@@ -109,13 +113,56 @@ export default tseslint.config(
     },
   },
 
+  /*
+   * Service Worker PWA (`apps/web/public/sw.js`).
+   *
+   * Это обычный браузерный скрипт, а не модуль и не часть TypeScript-проекта:
+   * он отдаётся браузеру файлом как есть, без сборки. Поэтому проверки,
+   * требующие информации о типах, к нему неприменимы, а глобалии воркера
+   * (`self`, `caches`, `clients`) нужно объявить явно — иначе `no-undef`
+   * ругается на них. Без этого блока линт падал с «was not found by the
+   * project service» и не доходил до остального кода.
+   */
+  {
+    files: ['apps/web/public/sw.js'],
+    ...tseslint.configs.disableTypeChecked,
+    /*
+     * `languageOptions` объединяется с настройками `disableTypeChecked`
+     * вручную. Причина: разворот `...disableTypeChecked` задаёт
+     * `parserOptions.project = false`, и если перезаписать `languageOptions`
+     * целиком, эта настройка теряется — тогда правила, требующие типов,
+     * остаются включёнными и падают на каждом обращении к `self` и `caches`
+     * («Unsafe call of a type that could not be resolved»). Ошибка тихая:
+     * линт «работает», но проверяет файл не тем набором правил.
+     */
+    languageOptions: {
+      ...tseslint.configs.disableTypeChecked.languageOptions,
+      globals: { ...globals.serviceworker },
+    },
+    /*
+     * `rules` тоже объединяется с `disableTypeChecked`, а не заменяет его:
+     * замена потеряла бы отключение 62 правил, требующих типов, и линт падал
+     * бы с «You have used a rule which requires type information».
+     */
+    rules: {
+      ...tseslint.configs.disableTypeChecked.rules,
+      // Явный тип возврата — требование TypeScript-кода; в обычном JS-скрипте
+      // аннотаций типов нет, и правило даёт только шум.
+      '@typescript-eslint/explicit-function-return-type': 'off',
+    },
+  },
+
   // CLI-инструменты и seed пишут в stdout — это их интерфейс, а не логирование
   // приложения. Правило `no-console` защищает рантайм от неструктурированных
   // логов, и на консольные утилиты оно не распространяется.
   {
     // `apply-price-list.ts` — такой же CLI-инструмент, как `seed.ts`: он
     // сообщает о ходе загрузки прейскуранта в stdout, и это его результат.
-    files: ['scripts/**/*.mjs', 'packages/db/prisma/seed.ts', 'packages/db/prisma/apply-price-list.ts'],
+    files: [
+      'scripts/**/*.mjs',
+      'packages/db/prisma/seed.ts',
+      'packages/db/prisma/apply-price-list.ts',
+    ],
     rules: {
       'no-console': 'off',
       // Явный тип возврата обязателен в коде приложения; в утилитах, где

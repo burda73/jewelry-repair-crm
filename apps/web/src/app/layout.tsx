@@ -4,6 +4,7 @@ import './globals.css';
 import { QueryProvider } from '@/lib/query-provider';
 import { AuthProvider } from '@/lib/auth-context';
 import { ToastProvider } from '@/components/ui/toast';
+import { ServiceWorkerRegistrar } from '@/components/service-worker-registrar';
 
 /**
  * PWA-манифест и метаданные (docs/08-ui-ux.md §5).
@@ -17,6 +18,15 @@ export const metadata: Metadata = {
     capable: true,
     statusBarStyle: 'default',
     title: 'Ремонт',
+  },
+  /*
+   * Иконка для домашнего экрана iOS. Манифест iOS не читает, поэтому ссылку
+   * задаём метаданными: без неё на домашнем экране iPad был бы скриншот
+   * страницы вместо иконки.
+   */
+  icons: {
+    icon: '/icons/icon-192.png',
+    apple: '/icons/apple-touch-icon.png',
   },
   formatDetection: { telephone: true },
 };
@@ -43,6 +53,8 @@ export default function RootLayout({
         <QueryProvider>
           <ToastProvider>
             <AuthProvider>{children}</AuthProvider>
+            {/* Регистрация PWA-воркера: сама ничего не рендерит (задача 1.7.5). */}
+            <ServiceWorkerRegistrar />
           </ToastProvider>
         </QueryProvider>
       </body>
