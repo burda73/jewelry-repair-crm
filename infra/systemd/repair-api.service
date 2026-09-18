@@ -1,0 +1,35 @@
+[Unit]
+Description=CRM ремонта ювелирных изделий — API (NestJS)
+Documentation=file:///opt/repair/app/docs/14-deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=repair
+Group=repair
+WorkingDirectory=/opt/repair/app/apps/api
+# .env читается приложением из корня монорепозитория (см. resolveEnvPaths).
+EnvironmentFile=/opt/repair/app/.env
+Environment=NODE_ENV=production
+Environment=PORT=4000
+Environment=NODE_OPTIONS=--max-old-space-size=768
+ExecStart=/usr/bin/node /opt/repair/app/apps/api/dist/main.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/repair/logs/api.log
+StandardError=append:/opt/repair/logs/api.log
+
+# Изоляция: процесс не может писать в системные каталоги.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Предохранитель от утечек памяти: контейнер всего 2 ГБ.
+MemoryHigh=350M
+MemoryMax=700M
+UMask=0027
+ReadWritePaths=/opt/repair
+
+[Install]
+WantedBy=multi-user.target

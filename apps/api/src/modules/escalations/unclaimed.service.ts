@@ -92,7 +92,16 @@ export class UnclaimedService {
         await this.workflow.transition({
           orderId: order.id,
           to: ORDER_STATUS.UNCLAIMED,
-          actorId: 'system',
+          /*
+           * `actorId = null`, а не строка `'system'`. Поле — внешний ключ на
+           * `User`, и подстановка несуществующего идентификатора нарушала
+           * `order_status_history_changedById_fkey`: переход падал, заказ
+           * оставался «готов к выдаче» навсегда, а в журнале была лишь одна
+           * строка «не переведён». Признак системности передаётся ролью —
+           * `actorRole: 'SYSTEM'`, — и она же выставляет `isSystem = true`.
+           * См. дефект 33 в docs/15-known-issues.md.
+           */
+          actorId: null,
           actorRole: 'SYSTEM',
           version: order.version,
           scope: 'ALL_STORES',

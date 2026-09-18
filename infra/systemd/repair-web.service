@@ -1,0 +1,36 @@
+[Unit]
+Description=CRM ремонта ювелирных изделий — веб-интерфейс (Next.js)
+Documentation=file:///opt/repair/app/docs/14-deployment.md
+After=network-online.target repair-api.service
+Wants=network-online.target
+# Веб проксирует /api/v1 на API, поэтому стартует после него.
+After=repair-api.service
+
+[Service]
+Type=simple
+User=repair
+Group=repair
+WorkingDirectory=/opt/repair/app/apps/web
+EnvironmentFile=/opt/repair/app/.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=0.0.0.0
+Environment=NODE_OPTIONS=--max-old-space-size=768
+ExecStart=/usr/bin/node /opt/repair/app/apps/web/.next/standalone/apps/web/server.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/repair/logs/web.log
+StandardError=append:/opt/repair/logs/web.log
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Предохранитель от утечек памяти: контейнер всего 2 ГБ.
+MemoryHigh=400M
+MemoryMax=800M
+UMask=0027
+ReadWritePaths=/opt/repair
+
+[Install]
+WantedBy=multi-user.target

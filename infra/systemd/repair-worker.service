@@ -1,0 +1,40 @@
+[Unit]
+Description=CRM ремонта ювелирных изделий — воркер (эскалации и планировщик)
+Documentation=file:///opt/repair/app/docs/14-deployment.md
+# База внешняя, её запуск от нас не зависит, поэтому postgresql.service не указан.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=repair
+Group=repair
+WorkingDirectory=/opt/repair/app/apps/api
+# .env читается приложением из корня монорепозитория (см. resolveEnvPaths).
+EnvironmentFile=/opt/repair/app/.env
+Environment=NODE_ENV=production
+# Воркеры не слушают порт: PORT здесь не задаётся намеренно. Плановые задачи не
+# зависят от HTTP, и забытый PORT не должен выглядеть как ошибка запуска.
+Environment=NODE_OPTIONS=--max-old-space-size=256
+ExecStart=/usr/bin/node /opt/repair/app/apps/api/dist/worker.js
+# `Restart=always` обязателен: упавший воркер не отвечает 500, и без перезапуска
+# его отсутствие заметили бы только по тишине в уведомлениях.
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/repair/logs/worker.log
+StandardError=append:/opt/repair/logs/worker.log
+
+# Изоляция: процесс не может писать в системные каталоги.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Воркеры обрабатывают пачки записей последовательно, поэтому памяти нужно
+# меньше, чем API.
+MemoryHigh=200M
+MemoryMax=400M
+UMask=0027
+ReadWritePaths=/opt/repair
+
+[Install]
+WantedBy=multi-user.target

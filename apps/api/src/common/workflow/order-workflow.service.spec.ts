@@ -24,7 +24,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { computeDueAt } from './order-workflow.service';
+import { computeDueAt, OrderWorkflowService } from './order-workflow.service';
 import {
   ALL_NORM_STAGES,
   ORDER_STATUS,
@@ -236,5 +236,57 @@ describe('Нормативы: значения по умолчанию из docs
       const day = due.getUTCDay();
       expect(day === 0 || day === 6, `${norm.stage}: срок попал на выходной`).toBe(false);
     }
+  });
+});
+
+describe('Системный переход: actorId обязателен как null (дефект 33)', () => {
+  /**
+   * ДЕФЕКТ 33, найденный на живом сервере. `OrderStatusHistory.changedById` —
+   * внешний ключ на `User`. Системный переход передавал строку `'system'`, и
+   * вставка нарушала `order_status_history_changedById_fkey`: переход падал,
+   * заказ оставался «готов к выдаче» навсегда, а в журнале была лишь одна
+   * строка «не переведён».
+   *
+   * Двойник Prisma принимает любой идентификатор, поэтому юнит-тест сервиса
+   * невостребованных заказов этого не ловил: он проверял, что переход ВЫЗВАН,
+   * но не то, с каким актором. Проверка перенесена в сам сервис переходов —
+   * переходов с актором `'SYSTEM'` несколько, и каждый новый вызывающий мог бы
+   * повторить ту же ошибку.
+   */
+  const service = new OrderWorkflowService({} as never);
+
+  it('системный переход со строкой вместо null отклоняется', async () => {
+    await expect(
+      service.transition({
+        orderId: 'o-1',
+        to: ORDER_STATUS.UNCLAIMED,
+        actorId: 'system',
+        actorRole: 'SYSTEM',
+        version: 1,
+        scope: 'ALL_STORES',
+        storeIds: [],
+      }),
+    ).rejects.toMatchObject({ response: { code: 'INVALID_ACTOR' } });
+  });
+
+  it('системный переход с null доходит до загрузки заказа', async () => {
+    /*
+     * Проверка не должна отвергать правильный вызов: ошибка здесь означала бы,
+     * что автостатус «Невостребовано» не работает вообще. Падение на загрузке
+     * заказа (двойник пуст) — ожидаемо и доказывает, что проверка пройдена.
+     */
+    const error = await service
+      .transition({
+        orderId: 'o-1',
+        to: ORDER_STATUS.UNCLAIMED,
+        actorId: null,
+        actorRole: 'SYSTEM',
+        version: 1,
+        scope: 'ALL_STORES',
+        storeIds: [],
+      })
+      .catch((e: unknown) => e);
+
+    expect((error as { response?: { code?: string } }).response?.code).not.toBe('INVALID_ACTOR');
   });
 });

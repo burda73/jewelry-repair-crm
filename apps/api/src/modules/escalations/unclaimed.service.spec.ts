@@ -116,12 +116,22 @@ describe('Невостребовано: перевод (задача 2.10)', () 
     const call = ctx.workflow.transition.mock.calls[0][0] as {
       orderId: string;
       to: string;
+      actorId: string | null;
       actorRole: string;
       version: number;
     };
     expect(call.orderId).toBe(ORDER_ID);
     expect(call.to).toBe('UNCLAIMED');
     expect(call.actorRole).toBe('SYSTEM');
+    /*
+     * ДЕФЕКТ 33: `actorId` — внешний ключ на `User`, и системный переход обязан
+     * передавать `null`, а не строку `'system'`. Со строкой вставка нарушала
+     * `order_status_history_changedById_fkey`: переход падал, заказ оставался
+     * «готов к выдаче» навсегда, и в журнале была лишь строка «не переведён».
+     * Двойник Prisma такой идентификатор принимает, поэтому поймать это можно
+     * только проверкой значения.
+     */
+    expect(call.actorId).toBeNull();
     // Версия передаётся: без неё оптимистичная блокировка не сработала бы, и
     // параллельная правка заказа была бы перезаписана.
     expect(call.version).toBe(5);

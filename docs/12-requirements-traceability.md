@@ -105,6 +105,7 @@
 | 2.9 | Самые задержанные сверху, разрезы по числу | `docs/07` §13.1.1 | сортировка в `build()` и `groupBy()` | `overdue-dashboard.service.spec.ts` |
 | 2.10 | Автостатус «Невостребовано» через 30 дней | `docs/04` §4, `docs/07` §13.1.2 | `unclaimed.service.ts` → `run()` | `unclaimed.service.spec.ts` (11 тестов) |
 | 2.10 | Перевод ЧЕРЕЗ таблицу переходов, а не UPDATE | `docs/07` §13.1.2 | `workflow.transition()` (переход 19) | `unclaimed.service.spec.ts` (падает при прямой записи) |
+| 2.10 | Системный переход передаёт `actorId = null` (дефект 33) | `docs/15` | `OrderWorkflowService.transition()` → `INVALID_ACTOR` | `unclaimed.service.spec.ts`, `order-workflow.service.spec.ts` |
 | 2.10 | Порог из настройки, бессмысленный → по умолчанию | `docs/07` §13.1.2 | `Setting.orders.unclaimedAfterDays` | `unclaimed.service.spec.ts` |
 | 2.10 | Сбой на одном заказе не останавливает прогон | `docs/07` §13.1.2 | `try/catch` внутри цикла | `unclaimed.service.spec.ts` |
 | 2.10 | Уведомление приёмщикам магазина | `docs/02` §5.3 | `roles.some({ role: 'RECEIVER', storeId })` | `unclaimed.service.spec.ts` |

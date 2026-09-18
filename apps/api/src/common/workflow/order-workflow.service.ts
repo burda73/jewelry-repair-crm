@@ -1,9 +1,10 @@
 import {
-  Injectable,
+  BadRequestException,
   ConflictException,
   ForbiddenException,
-  NotFoundException,
+  Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import {
   checkTransition,
@@ -142,6 +143,25 @@ export class OrderWorkflowService {
    *  5. применение изменений, побочные эффекты, аудит — в ОДНОЙ транзакции.
    */
   async transition(ctx: TransitionContext): Promise<TransitionResult> {
+    /*
+     * Системный переход обязан передавать `actorId = null`: это внешний ключ на
+     * `User`, и любая строка, не совпадающая с реальным пользователем, нарушает
+     * `order_status_history_changedById_fkey`. Поймать это можно только на живой
+     * базе — двойник Prisma принимает любой идентификатор, — поэтому дефект 33
+     * дошёл до прода: заказ не переводился, оставаясь «готов к выдаче».
+     *
+     * Проверка стоит здесь, а не в вызывающем коде, потому что переходов с
+     * актором `'SYSTEM'` несколько (`ACCEPTED → UNCLAIMED`, авто-закрытие), и
+     * каждый новый вызывающий мог бы повторить ту же ошибку.
+     */
+    if (ctx.actorRole === 'SYSTEM' && ctx.actorId !== null) {
+      throw new BadRequestException({
+        code: 'INVALID_ACTOR',
+        message: 'Системный переход не может ссылаться на пользователя',
+        details: { actorId: ctx.actorId },
+      });
+    }
+
     /*
      * Если транзакция передана снаружи (массовый перевод партии), читаем заказ
      * ВНУТРИ неё: иначе проверка условий увидела бы состояние до начала массовой
