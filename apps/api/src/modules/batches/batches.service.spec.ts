@@ -1951,3 +1951,193 @@ describe('BatchesService: уведомление о приёмке (задача
     await expect(makeService(prisma).receive(BATCH_ID, LOGIST)).resolves.toBeDefined();
   });
 });
+
+describe('BatchesService: доставки курьера (задача 2.7)', () => {
+  /*
+   * ЗАЧЕМ ЭТО ПРОВЕРЯЕТСЯ. Курьер работает с телефона, и ему нужен свой узкий
+   * список: только назначенные на него незавершённые рейсы. Показ всех рейсов
+   * сети означал бы не только неудобство, но и утечку: в строке видны адреса,
+   * состав и суммы чужих заказов.
+   */
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('курьеру показываются только его рейсы', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([batchRow({ courierId: LOGIST_ID })]);
+
+    await makeService(prisma).listMyDeliveries(LOGIST);
+
+    const where = prisma.batch.findMany.mock.calls[0][0].where;
+    // Фильтр по назначению обязателен: без него курьер увидел бы чужие рейсы.
+    expect(where.AND[0]).toEqual({ courierId: LOGIST_ID });
+  });
+
+  it('руководителю производства видны и нераспределённые рейсы', async () => {
+    /*
+     * Он эти рейсы распределяет. Если показать только назначенные, раздать
+     * будет нечего: рейс без курьера просто не появится в списке.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([batchRow({ courierId: null })]);
+    const manager: AuthenticatedUser = {
+      ...LOGIST,
+      roles: [ROLE.PRODUCTION_MANAGER],
+      primaryRole: ROLE.PRODUCTION_MANAGER,
+    };
+
+    await makeService(prisma).listMyDeliveries(manager);
+
+    expect(prisma.batch.findMany.mock.calls[0][0].where.AND[0]).toEqual({});
+  });
+
+  it('завершённые рейсы в список не попадают', async () => {
+    // Курьеру важно то, что он ещё должен отвезти; история есть в карточке.
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([]);
+
+    await makeService(prisma).listMyDeliveries(LOGIST);
+
+    const notIn = prisma.batch.findMany.mock.calls[0][0].where.AND[1].status.notIn as string[];
+    expect(notIn).toContain('RECEIVED');
+    expect(notIn).toContain('CANCELLED');
+  });
+
+  it('рейсы в пути идут первыми, самые задержанные — выше', async () => {
+    /*
+     * Порядок — это рабочая инструкция: сначала то, что уже едет и опаздывает.
+     * Сортировка по дате создания поставила бы давно отправленный рейс ниже
+     * только что назначенного.
+     */
+    const prisma = createPrismaMock();
+    const now = Date.now();
+    prisma.batch.findMany.mockResolvedValue([
+      batchRow({ id: 'b-plan', batchNo: 'П-план', status: 'ACT_FORMED', courierId: LOGIST_ID }),
+      batchRow({
+        id: 'b-fresh',
+        batchNo: 'П-свежий',
+        status: 'IN_TRANSIT',
+        courierId: LOGIST_ID,
+        dispatchedAt: new Date(now - 2 * 3_600_000),
+      }),
+      batchRow({
+        id: 'b-late',
+        batchNo: 'П-опаздывает',
+        status: 'IN_TRANSIT',
+        courierId: LOGIST_ID,
+        dispatchedAt: new Date(now - 20 * 3_600_000),
+      }),
+    ]);
+
+    const result = await makeService(prisma).listMyDeliveries(LOGIST);
+
+    expect(result.map((batch) => batch.batchNo)).toEqual(['П-опаздывает', 'П-свежий', 'П-план']);
+  });
+
+  it('курьер не видит рейсы чужих магазинов', async () => {
+    // Область видимости применяется и здесь: назначение не отменяет границы.
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([]);
+    const otherStoreCourier: AuthenticatedUser = { ...RECEIVER, id: LOGIST_ID };
+
+    await makeService(prisma).listMyDeliveries(otherStoreCourier);
+
+    const scope = prisma.batch.findMany.mock.calls[0][0].where.AND[2];
+    expect(scope).toEqual({
+      OR: [{ fromStoreId: { in: [STORE_MSK1] } }, { toStoreId: { in: [STORE_MSK1] } }],
+    });
+  });
+});
+
+describe('BatchesService: поиск партии по скану (задача 2.7)', () => {
+  /*
+   * ЗАЧЕМ ЭТО ПРОВЕРЯЕТСЯ. Сканер «печатает» содержимое QR в поле, и туда
+   * попадает и полный URI, и номер с переводом строки. Мобильный экран
+   * отправляет то, что получил; приводит в порядок та сторона, где правила уже
+   * описаны. Если этого не делать, отсканированный код даёт НОЛЬ результатов —
+   * дефект, уже случавшийся на экране приёма оплаты.
+   */
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('находит партию по точному номеру', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ batchNo: 'П-250916-004' }));
+
+    const result = await makeService(prisma).findByScan('П-250916-004', LOGIST);
+
+    expect(result.batchNo).toBe('П-250916-004');
+    const where = prisma.batch.findFirst.mock.calls[0][0].where;
+    expect(where.AND[0].batchNo).toEqual({ equals: 'П-250916-004', mode: 'insensitive' });
+  });
+
+  it('регистр и пробелы сканера не мешают', async () => {
+    // Сканер добавляет перевод строки, а наклейку могли набрать и строчными.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(batchRow());
+
+    await makeService(prisma).findByScan('  п-250916-004\n', LOGIST);
+
+    expect(prisma.batch.findFirst.mock.calls[0][0].where.AND[0].batchNo).toEqual({
+      equals: 'п-250916-004',
+      mode: 'insensitive',
+    });
+  });
+
+  it('находит рейс по номеру заказа из состава', async () => {
+    /*
+     * Курьер может сканировать квитанцию изделия, чтобы понять, в каком рейсе
+     * оно едет. Без этого поиска он получил бы «партия не найдена» на
+     * совершенно правильном коде.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst
+      .mockResolvedValueOnce(null) // по номеру партии не найдено
+      .mockResolvedValueOnce({ id: BATCH_ID }); // найдено по составу
+
+    const result = await makeService(prisma).findByScan('repair://order/MSK1-2609-000001', LOGIST);
+
+    expect(result.batchNo).toBe('П-250916-004');
+    const second = prisma.batch.findFirst.mock.calls[1][0].where.AND[0];
+    expect(second.items.some.order.orderNo).toEqual({
+      equals: 'MSK1-2609-000001',
+      mode: 'insensitive',
+    });
+  });
+
+  it('неизвестный код даёт 404, а не пустой ответ', async () => {
+    // Пустой ответ выглядел бы как «рейс есть, но пустой», и курьер не понял бы,
+    // что сканирование не удалось.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(null);
+
+    await expect(makeService(prisma).findByScan('П-000000-000', LOGIST)).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+
+  it('слишком короткий ввод отклоняется', async () => {
+    const prisma = createPrismaMock();
+
+    await expect(makeService(prisma).findByScan('П-', LOGIST)).rejects.toThrow(BadRequestException);
+  });
+
+  it('чужой рейс не находится', async () => {
+    /*
+     * Область видимости применяется в обоих запросах: иначе курьер, зная номер
+     * чужого рейса, прочитал бы его состав и адреса.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(null);
+    const otherStore: AuthenticatedUser = { ...RECEIVER, id: LOGIST_ID };
+
+    await expect(makeService(prisma).findByScan('П-250916-004', otherStore)).rejects.toThrow(
+      NotFoundException,
+    );
+
+    const where = prisma.batch.findFirst.mock.calls[0][0].where;
+    expect(where.AND[1]).toEqual({
+      OR: [{ fromStoreId: { in: [STORE_MSK1] } }, { toStoreId: { in: [STORE_MSK1] } }],
+    });
+  });
+});

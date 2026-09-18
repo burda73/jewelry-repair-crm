@@ -9,12 +9,15 @@ import { z } from 'zod';
 import {
   BATCH_DIRECTION,
   BATCH_STATUS,
+  ROLE,
   buildBatchNo,
   batchCompositionLockReason,
   buildBatchActNo,
   buildBatchActSnapshot,
   checkBatchEligibility,
   documentDateParts,
+  normalizeScanInput,
+  parseOrderNoFromScan,
   exceedsBatchLimit,
   partitionBatchCandidates,
   batchDispatchLockReason,
@@ -252,6 +255,136 @@ export class BatchesService {
     return rows
       .map((row) => this.toDto(row, normHours, now))
       .sort((a, b) => (b.transit.elapsedHours ?? 0) - (a.transit.elapsedHours ?? 0));
+  }
+
+  /**
+   * Доставки курьера: рейсы, назначенные на него (задача 2.7, ТЗ п. 2.6).
+   *
+   * ЗАЧЕМ ОТДЕЛЬНЫЙ МЕТОД. `listInTransit` отвечает на вопрос «что сейчас в
+   * пути» и доступен всем логистам и руководителю — это управленческий взгляд.
+   * Курьеру нужен свой узкий список: только его рейсы и только незавершённые
+   * (плюс, для истории, недавно завершённые). Показывать ему все рейсы сети
+   * бессмысленно, а на телефоне ещё и неудобно.
+   *
+   * Фильтр по `courierId` обязателен и стоит первым: без него курьер увидел бы
+   * чужие рейсы, а вместе с ними — адреса, состав и суммы чужих заказов.
+   */
+  async listMyDeliveries(actor: AuthenticatedUser): Promise<BatchDto[]> {
+    /*
+     * Роль решает, что видно.
+     *
+     * Отдельной роли «курьер» в системе нет: по матрице ролей
+     * (docs/02 §4) доставку ведёт `LOGISTICIAN` — «Логист / курьер». Поэтому
+     * «свой список» определяется не ролью, а НАЗНАЧЕНИЕМ: логист-курьер видит
+     * рейсы, назначенные на него, а руководитель производства, который рейсы
+     * распределяет, — все незавершённые, включая ещё не назначенные: иначе он
+     * не смог бы раздать то, чего не видит.
+     */
+    const seesAll =
+      actor.roles.includes(ROLE.PRODUCTION_MANAGER) || actor.roles.includes(ROLE.ADMIN);
+
+    const where: Prisma.BatchWhereInput = seesAll ? {} : { courierId: actor.id };
+
+    const rows = await this.prisma.batch.findMany({
+      where: {
+        AND: [
+          where,
+          // Завершённые рейсы в списке не нужны: курьеру важно то, что он ещё
+          // должен отвезти. История доступна в карточке партии.
+          { status: { notIn: [BATCH_STATUS.RECEIVED, BATCH_STATUS.CANCELLED] } },
+          this.buildScopeFilter(actor),
+        ],
+      },
+      include: {
+        fromStore: { select: { name: true } },
+        toStore: { select: { name: true } },
+        toWorkshop: { select: { name: true } },
+      },
+      take: 100,
+    });
+
+    const normHours = await this.transitNormHours(this.prisma);
+    const now = new Date();
+
+    /*
+     * Порядок: сначала то, что уже в пути (и дольше всех — сверху), затем
+     * назначенное. Курьер должен видеть задержку раньше плана.
+     */
+    return rows
+      .map((row) => this.toDto(row, normHours, now))
+      .sort((a, b) => {
+        const aTransit = a.status === BATCH_STATUS.IN_TRANSIT ? 1 : 0;
+        const bTransit = b.status === BATCH_STATUS.IN_TRANSIT ? 1 : 0;
+        if (aTransit !== bTransit) return bTransit - aTransit;
+        return (b.transit.elapsedHours ?? 0) - (a.transit.elapsedHours ?? 0);
+      });
+  }
+
+  /**
+   * Найти партию по отсканированному коду (задача 2.7).
+   *
+   * ЗАЧЕМ НА СЕРВЕРЕ, А НЕ В ИНТЕРФЕЙСЕ. Номер партии (`П-250916-001`) — не
+   * номер заказа, и `normalizeScanInput` его не распознаёт: она ищет формат
+   * заказа (`MSK1-2509-000001`), потому что квитанция клиента содержит именно
+   * его. Курьер сканирует НАКЛАДНУЮ рейса, и её номер надо разобрать отдельно.
+   *
+   * Разбор идёт на сервере, потому что сканер «печатает» содержимое QR в поле:
+   * туда может попасть и полный URI, и номер с переводом строки, и лишние
+   * пробелы. Мобильный экран отправляет то, что получил, а приводит в порядок
+   * та сторона, где правила уже описаны и покрыты тестами.
+   *
+   * Поиск идёт по точному номеру и, если он не найден, по номеру ЗАКАЗА из
+   * состава: курьер может сканировать не накладную, а квитанцию изделия,
+   * чтобы понять, в каком рейсе оно едет.
+   */
+  async findByScan(raw: string, actor: AuthenticatedUser): Promise<BatchDetailDto> {
+    const term = normalizeScanInput(raw);
+    if (term.length < 3) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Введите минимум 3 символа для поиска',
+      });
+    }
+
+    const scopeFilter = this.buildScopeFilter(actor);
+
+    // 1. Точный номер партии (без учёта регистра: «п-250916-001» тоже годится).
+    const byNumber = await this.prisma.batch.findFirst({
+      where: { AND: [{ batchNo: { equals: term, mode: 'insensitive' } }, scopeFilter] },
+      select: { id: true },
+    });
+    if (byNumber !== null) return this.findOne(byNumber.id, actor);
+
+    // 2. Номер заказа из состава рейса.
+    const orderNo = parseOrderNoFromScan(raw) ?? term;
+    const byOrder = await this.prisma.batch.findFirst({
+      where: {
+        AND: [
+          {
+            items: {
+              some: {
+                removedAt: null,
+                order: { orderNo: { equals: orderNo, mode: 'insensitive' } },
+              },
+            },
+          },
+          scopeFilter,
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (byOrder !== null) return this.findOne(byOrder.id, actor);
+
+    /*
+     * Ничего не найдено — 404, а не пустой объект. Курьер должен увидеть, что
+     * код не распознан, и повторить сканирование; пустой ответ выглядел бы как
+     * «рейс есть, но пустой».
+     */
+    throw new NotFoundException({
+      code: 'BATCH_NOT_FOUND',
+      message: `Партия по коду «${term}» не найдена`,
+    });
   }
 
   /** Партия с составом. */

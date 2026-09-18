@@ -693,3 +693,55 @@ export interface CreateNormVersionInput {
   changeReason: string;
   effectiveFrom?: string;
 }
+
+/** Состояние партии «в пути» (задача 2.6). */
+export interface BatchTransitState {
+  /** Часов с отправки; `null`, если рейс ещё не отправлен. */
+  elapsedHours: number | null;
+  /** Норматив в часах, взятый из настроек. */
+  normHours: number;
+  /** `ON_TIME` | `LATE` | `OVERDUE`. */
+  level: string;
+  /** Рейс вышел за норматив. */
+  isOverdue: boolean;
+  /** Готовая фраза для интерфейса. */
+  message: string;
+}
+
+/** Партия — рейс с изделиями (задачи 2.1–2.6). */
+export interface Batch {
+  id: string;
+  batchNo: string;
+  direction: string;
+  status: string;
+  fromStoreId: string | null;
+  fromStoreName: string | null;
+  toStoreId: string | null;
+  toStoreName: string | null;
+  toWorkshopId: string | null;
+  toWorkshopName: string | null;
+  courierId: string | null;
+  plannedAt: string;
+  dispatchedAt: string | null;
+  receivedAt: string | null;
+  itemsCount: number;
+  comment: string | null;
+  createdAt: string;
+  transit: BatchTransitState;
+}
+
+/** Строка состава партии (задача 2.7). */
+export interface BatchItem {
+  orderId: string;
+  orderNo: string;
+  status: OrderStatus;
+  customerName: string | null;
+  totalAmountMinor: number;
+  addedAt: string;
+  addedById: string | null;
+}
+
+/** Партия с составом. */
+export interface BatchDetail extends Batch {
+  items: BatchItem[];
+}

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -15,6 +16,17 @@ import { defineConfig } from 'vitest/config';
  * персональных данных клиента между сотрудниками или к потере ввода.
  */
 export default defineConfig({
+  /*
+   * Псевдоним `@/…` повторяет `tsconfig.json`: без него тест, импортирующий
+   * модуль приложения, не находит его зависимости, и падает не проверяемое
+   * правило, а разрешение импорта. Псевдоним был настроен только для сборки,
+   * поэтому тесты до сих пор не импортировали модули с зависимостями.
+   */
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   test: {
     environment: 'node',
     include: ['src/**/*.spec.ts', 'src/**/*.spec.tsx'],

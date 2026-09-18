@@ -111,6 +111,14 @@
 | 2.10 | Порог из настройки, бессмысленный → по умолчанию | `docs/07` §13.1.2 | `Setting.orders.unclaimedAfterDays` | `unclaimed.service.spec.ts` |
 | 2.10 | Сбой на одном заказе не останавливает прогон | `docs/07` §13.1.2 | `try/catch` внутри цикла | `unclaimed.service.spec.ts` |
 | 2.10 | Уведомление приёмщикам магазина | `docs/02` §5.3 | `roles.some({ role: 'RECEIVER', storeId })` | `unclaimed.service.spec.ts` |
+| 2.7 | Курьер видит только назначенные на него рейсы | `docs/07` §8.4.1 | `listMyDeliveries()` → фильтр `courierId` | `batches.service.spec.ts` (падает при снятии фильтра) |
+| 2.7 | Руководитель видит и нераспределённые рейсы | `docs/07` §8.4.1 | проверка `PRODUCTION_MANAGER`/`ADMIN` | `batches.service.spec.ts` |
+| 2.7 | Завершённые рейсы в списке курьера отсутствуют | `docs/07` §8.4.1 | `status.notIn([RECEIVED, CANCELLED])` | `batches.service.spec.ts` |
+| 2.7 | Рейсы «в пути» идут первыми, задержанные — выше | `docs/07` §8.4.1 | сортировка в `listMyDeliveries()` | `batches.service.spec.ts` |
+| 2.7 | Поиск по скану: точный номер, затем номер заказа | `docs/07` §8.4.1 | `findByScan()` | `batches.service.spec.ts` |
+| 2.7 | Неизвестный код даёт 404, а не пустой ответ | `docs/07` §8.4.1 | `NotFoundException(BATCH_NOT_FOUND)` | `batches.service.spec.ts` |
+| 2.7 | Область видимости применяется и при поиске по скану | `docs/07` §8.4.1 | `buildScopeFilter()` в обоих запросах | `batches.service.spec.ts` |
+| 2.7 | Кириллица и URI кодируются в запросе скана | `docs/07` §8.4.1 | `buildQuery()` в `findBatchByScan()` | `batch-scan.spec.ts` (4 теста, падают без кодирования) |
 | 2.6 | Загружать фото можно и при приёмке | `docs/07` §8.6 | `canUploadBatchPhoto()` | `batches.spec.ts` (падает при сужении списка) |
 | 2.6 | Удалять фото только до отправки | `docs/07` §8.6 | `canDeleteBatchPhoto()` | `batches.spec.ts`, `batches.service.spec.ts` (409) |
 | 2.6 | Ключ хранилища не отдаётся наружу | `docs/07` §8.5 | `listPhotos()` → только `url` | `batches.service.spec.ts` (подмена на objectKey роняет тест) |

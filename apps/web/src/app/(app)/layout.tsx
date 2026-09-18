@@ -41,6 +41,13 @@ const NAV_ITEMS: NavItem[] = [
   // поэтому право здесь `settings:manage` без второго варианта.
   { href: '/calendar', label: t.nav.calendar, permissions: ['settings:manage'] },
   { href: '/norms', label: t.nav.norms, permissions: ['settings:manage'] },
+  /*
+   * Доставки (задача 2.7) видны по праву чтения логистики: отдельной роли
+   * «курьер» нет, рейсы везёт `LOGISTICIAN` — «Логист / курьер» (docs/02 §4).
+   * Право, а не роль, потому что рейсы распределяет и руководитель
+   * производства: у него это же право есть.
+   */
+  { href: '/deliveries', label: t.nav.deliveries, permissions: ['logistics:read'] },
 ];
 
 /**

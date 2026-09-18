@@ -33,6 +33,8 @@ import type {
   StoneTypeOption,
   StoreOption,
   TimelineEntry,
+  Batch,
+  BatchDetail,
   WorkCategoryOption,
   WorkshopOption,
   RolesCatalog,
@@ -69,6 +71,14 @@ export const orderKeys = {
   search: (term: string) => ['orders', 'search', term] as const,
   payments: (orderId: string) => ['orders', 'payments', orderId] as const,
   photos: (orderId: string, itemId: string) => ['orders', 'photos', orderId, itemId] as const,
+};
+
+/** Ключи запросов логистики (задачи 2.6–2.7). */
+export const batchKeys = {
+  all: ['batches'] as const,
+  myDeliveries: () => ['batches', 'my-deliveries'] as const,
+  detail: (id: string) => ['batches', 'detail', id] as const,
+  scan: (code: string) => ['batches', 'scan', code] as const,
 };
 
 /**
@@ -1057,4 +1067,41 @@ export function useCreateNormVersion(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: normKeys.all });
     },
   });
+}
+
+/**
+ * Доставки курьера (задача 2.7).
+ *
+ * `staleTime` увеличен: список меняется действиями самого курьера, а не
+ * поминутно, и перезапрос при каждом возврате на экран на телефоне с плохой
+ * связью только тратил бы трафик и показывал мигание.
+ */
+export function useMyDeliveries(enabled: boolean): UseQueryResult<Batch[], Error> {
+  return useQuery<Batch[], Error>({
+    queryKey: batchKeys.myDeliveries(),
+    queryFn: () => api.get<Batch[]>('/batches/my-deliveries'),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+/** Партия с составом. */
+export function useBatch(id: string): UseQueryResult<BatchDetail, Error> {
+  return useQuery<BatchDetail, Error>({
+    queryKey: batchKeys.detail(id),
+    queryFn: () => api.get<BatchDetail>(`/batches/${id}`),
+    enabled: id !== '',
+  });
+}
+
+/**
+ * Найти партию по отсканированному коду.
+ *
+ * Отправляется ровно то, что прочитал сканер: разбор (`repair://…`, перевод
+ * строки, регистр) выполняется на сервере, где правила уже описаны и покрыты
+ * тестами. Дублирование разбора на клиенте дало бы две реализации, которые
+ * разошлись бы при первой же правке.
+ */
+export async function findBatchByScan(code: string): Promise<BatchDetail> {
+  return api.get<BatchDetail>(`/batches/scan${buildQuery({ code })}`);
 }

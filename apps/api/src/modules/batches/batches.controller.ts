@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -64,6 +65,33 @@ export class BatchesController {
   @ApiOperation({ summary: 'Партии в пути, самые задержанные сверху' })
   listInTransit(@CurrentUser() user: AuthenticatedUser): Promise<BatchDto[]> {
     return this.batchesService.listInTransit(user);
+  }
+
+  @Get('my-deliveries')
+  @RequirePermission(PERMISSION.LOGISTICS_READ)
+  @ApiOperation({ summary: 'Доставки курьера: его незавершённые рейсы (задача 2.7)' })
+  listMyDeliveries(@CurrentUser() user: AuthenticatedUser): Promise<BatchDto[]> {
+    return this.batchesService.listMyDeliveries(user);
+  }
+
+  @Get('scan')
+  @RequirePermission(PERMISSION.LOGISTICS_READ)
+  @ApiOperation({ summary: 'Найти партию по отсканированному коду (задача 2.7)' })
+  findByScan(
+    @Query('code') code: string | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<BatchDetailDto> {
+    /*
+     * Отсутствующий `code` — это ошибка ввода, а не «показать всё»: сканер мог
+     * не сработать, и пустой запрос вернул бы случайную партию.
+     */
+    if (code === undefined || code.trim() === '') {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Не указан код для поиска',
+      });
+    }
+    return this.batchesService.findByScan(code, user);
   }
 
   @Post()
