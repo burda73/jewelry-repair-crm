@@ -51,6 +51,10 @@ import type {
   WorkCategoryAdminInput,
   StoneTypeAdminItem,
   StoneTypeAdminInput,
+  CalendarDayItem,
+  CalendarDayInput,
+  CalendarListResponse,
+  CalendarMonthSummary,
 } from '@/lib/api-types';
 import type { CustomerInput, OrderStatus } from '@app/shared';
 
@@ -907,3 +911,95 @@ export const useUpdateStoneType = (): UseMutationResult<
   Error,
   { id?: string; input: StoneTypeAdminInput }
 > => useDictionaryMutation<StoneTypeAdminItem, StoneTypeAdminInput>('update', '/stone-types');
+
+// ---------------------------------------------------------------------------
+// Рабочий календарь (задача 1.3.3)
+// ---------------------------------------------------------------------------
+
+/** Ключ раздела календаря — отдельно от справочников: права и данные разные. */
+export const calendarKeys = {
+  all: ['working-calendar'] as const,
+  list: (from: string, to: string) => ['working-calendar', 'list', from, to] as const,
+  summary: (from: string, to: string) => ['working-calendar', 'summary', from, to] as const,
+};
+
+/**
+ * Записи-исключения и праздники за период.
+ *
+ * Период входит в ключ кэша: сроки считаются по конкретному окну, и если бы
+ * ключ был общим, переход на другой месяц показывал бы данные предыдущего.
+ */
+export function useWorkingCalendar(
+  from: string,
+  to: string,
+): UseQueryResult<CalendarListResponse, Error> {
+  return useQuery<CalendarListResponse, Error>({
+    queryKey: calendarKeys.list(from, to),
+    queryFn: () => api.get<CalendarListResponse>(`/working-calendar?from=${from}&to=${to}`),
+    staleTime: DICTIONARY_ADMIN_STALE_TIME,
+  });
+}
+
+/** Сводка по месяцам: рабочие дни и праздники. */
+export function useCalendarSummary(
+  from: string,
+  to: string,
+): UseQueryResult<CalendarMonthSummary[], Error> {
+  return useQuery<CalendarMonthSummary[], Error>({
+    queryKey: calendarKeys.summary(from, to),
+    queryFn: () =>
+      api.get<CalendarMonthSummary[]>(`/working-calendar/summary?from=${from}&to=${to}`),
+    staleTime: DICTIONARY_ADMIN_STALE_TIME,
+  });
+}
+
+/** Общая инвалидация календаря: записи и сводка обязаны сброситься вместе. */
+function useCalendarInvalidate(): () => void {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: calendarKeys.all });
+  };
+}
+
+export function useCreateCalendarDay(): UseMutationResult<
+  CalendarDayItem,
+  Error,
+  { input: CalendarDayInput }
+> {
+  const invalidate = useCalendarInvalidate();
+  return useMutation<CalendarDayItem, Error, { input: CalendarDayInput }>({
+    mutationFn: ({ input }) => api.post<CalendarDayItem>('/working-calendar', input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateCalendarDay(): UseMutationResult<
+  CalendarDayItem,
+  Error,
+  { id: string; input: CalendarDayInput }
+> {
+  const invalidate = useCalendarInvalidate();
+  return useMutation<CalendarDayItem, Error, { id: string; input: CalendarDayInput }>({
+    mutationFn: ({ id, input }) => api.patch<CalendarDayItem>(`/working-calendar/${id}`, input),
+    onSuccess: invalidate,
+  });
+}
+
+/**
+ * Снять отметку — день возвращается к обычному правилу.
+ *
+ * Здесь `DELETE` впервые в системе администратора, и это осознанно: на строку
+ * календаря не ссылается ни одна таблица, а «отключить дату» смысла не имеет.
+ * Прежнее значение сохраняется в журнале действий, поэтому действие обратимо.
+ */
+export function useDeleteCalendarDay(): UseMutationResult<
+  { removed: true },
+  Error,
+  { id: string }
+> {
+  const invalidate = useCalendarInvalidate();
+  return useMutation<{ removed: true }, Error, { id: string }>({
+    mutationFn: ({ id }) => api.delete<{ removed: true }>(`/working-calendar/${id}`),
+    onSuccess: invalidate,
+  });
+}

@@ -17,6 +17,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { DictionariesModule } from './modules/dictionaries/dictionaries.module';
 import { UsersModule } from './modules/users/users.module';
+import { WorkingCalendarModule } from './modules/calendar/working-calendar.module';
 
 /**
  * Найти файл `.env`.
@@ -92,6 +93,7 @@ function resolveEnvPaths(): string[] {
     CustomersModule,
     DictionariesModule,
     UsersModule,
+    WorkingCalendarModule,
   ],
   providers: [
     // Rate limit применяется глобально; отдельные эндпоинты переопределяют лимиты.

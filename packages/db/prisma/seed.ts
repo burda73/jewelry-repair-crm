@@ -242,45 +242,25 @@ async function seedUsers(stores: { id: string; code: string }[]) {
 // ---------------------------------------------------------------------------
 
 async function seedWorkingCalendar() {
-  // Заполняем текущий и следующий год: отмечаем выходные как нерабочие дни.
-  // Праздники заказчик добавляет через интерфейс администратора.
+  // ВАЖНО: календарь больше НЕ заполняется по строке на каждый день.
   //
-  // ВНИМАНИЕ: для общего календаря (storeId = null) нельзя использовать upsert
-  // по составному ключу [storeId, date] — в PostgreSQL NULL не равен NULL,
-  // и upsert создавал бы дубликат при каждом запуске. Поэтому ищем существующую
-  // запись явно.
-  const start = new Date();
-  start.setUTCHours(0, 0, 0, 0);
-  const daysToCreate = 548; // ~1.5 года
-
-  const existingDates = new Set(
-    (
-      await prisma.workingCalendar.findMany({
-        where: { storeId: null },
-        select: { date: true },
-      })
-    ).map((row) => row.date.toISOString().slice(0, 10)),
-  );
-
-  const toCreate: { storeId: null; date: Date; isWorkday: boolean; hours: number }[] = [];
-
-  for (let i = 0; i < daysToCreate; i += 1) {
-    const date = new Date(start.getTime());
-    date.setUTCDate(date.getUTCDate() + i);
-    const key = date.toISOString().slice(0, 10);
-    if (existingDates.has(key)) continue;
-
-    const dayOfWeek = date.getUTCDay(); // 0 = вс, 6 = сб
-    const isWorkday = dayOfWeek !== 0 && dayOfWeek !== 6;
-    toCreate.push({ storeId: null, date, isWorkday, hours: isWorkday ? 8 : 0 });
-  }
-
-  if (toCreate.length > 0) {
-    await prisma.workingCalendar.createMany({ data: toCreate, skipDuplicates: true });
-  }
-  console.log(
-    `  Дней рабочего календаря добавлено: ${toCreate.length} (уже было: ${existingDates.size})`,
-  );
+  // Раньше здесь создавалось ~548 строк-зеркал правила «работают только пн–пт».
+  // Среди них были и государственные праздники среди недели, помеченные
+  // рабочими. Так как запись из базы имеет приоритет над встроенным списком
+  // праздников, срок «5 рабочих дней от 25 декабря» попадал на 1 января —
+  // обещание клиенту, которое нельзя выполнить.
+  //
+  // Теперь правило «пн–пт рабочие, сб–вс выходные» и праздники РФ знает код
+  // (`isStateHoliday`, packages/shared/src/domain/working-calendar.ts), а в
+  // таблице хранятся ТОЛЬКО исключения: переносы и особые часы, которые
+  // администратор вносит через интерфейс. Пустая таблица — корректное
+  // состояние: все дни считаются по правилу.
+  //
+  // Существующие строки-зеркала удалены миграцией
+  // `20260919000000_calendar_mirror_rows_removed`.
+  const existing = await prisma.workingCalendar.count();
+  console.log(`  Дней рабочего календаря: ${existing} (исключения; правило и праздники — в коде)`);
+  return 0;
 }
 
 // ---------------------------------------------------------------------------

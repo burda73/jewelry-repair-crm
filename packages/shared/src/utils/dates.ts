@@ -6,6 +6,8 @@
  * на рекламацию) и нормативов этапов (ТЗ п. 2.7).
  */
 
+import { isStateHoliday } from '../domain/working-calendar.js';
+
 export const MINUTE_MS = 60_000;
 export const HOUR_MS = 60 * MINUTE_MS;
 export const DAY_MS = 24 * HOUR_MS;
@@ -37,7 +39,16 @@ export function toDateKey(date: Date, timeZone = 'Europe/Moscow'): string {
   return formatter.format(date);
 }
 
-/** Является ли день рабочим: сначала override, затем день недели. */
+/**
+ * Является ли день рабочим.
+ *
+ * Порядок проверок важен и определяет, что может администратор:
+ *   1. исключение из базы — сильнее всего, поэтому праздник можно объявить
+ *      рабочим (например, магазин работает в новогодние каникулы);
+ *   2. государственный праздник РФ — встроен в код, чтобы срок не попал на
+ *      нерабочий день даже там, где календарь в базе не заполнен;
+ *   3. день недели — суббота и воскресенье нерабочие.
+ */
 export function isWorkday(
   date: Date,
   calendar: WorkingCalendar,
@@ -46,6 +57,8 @@ export function isWorkday(
   const key = toDateKey(date, timeZone);
   const override = calendar.overrides.get(key);
   if (override !== undefined) return override.isWorkday;
+  // Праздник важнее дня недели: 1 января может быть четвергом, но он нерабочий.
+  if (isStateHoliday(key)) return false;
   const dayOfWeek = weekday(date, timeZone);
   return dayOfWeek !== 0 && dayOfWeek !== 6; // 0 = воскресенье, 6 = суббота
 }

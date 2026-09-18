@@ -9,6 +9,7 @@ export * from './domain/order-number.js';
 export * from './domain/receipt.js';
 export * from './domain/metal-kind.js';
 export * from './domain/roles.js';
+export * from './domain/working-calendar.js';
 export * from './utils/money.js';
 export * from './utils/price-by-metal.js';
 export * from './utils/dates.js';

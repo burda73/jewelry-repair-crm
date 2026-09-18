@@ -28,6 +28,10 @@
 | 2.4 | Переход открывается только после согласования | `docs/03` §3.5 | guard `APPROVAL_EXISTS` считает только `APPROVED` | прогон API: до согласования 409 |
 | 2.4 | `isVerbal` нельзя подделать | `docs/07` §6 | сервер выводит из `channel` | прогон API: `SMS` + флаг → `false` |
 | 2.4 | Срок считается по рабочему календарю | `docs/07` §6 | `addWorkingDays`, `promisedAt` | прогон API: срок не на выходной |
+| 2.7 | Праздники ТК РФ нерабочие | `docs/00` §10 | `isStateHoliday()`, приоритет «исключение → праздник → день недели» | `working-calendar.spec.ts` (15 тестов), `docs/07` §10.2 |
+| 2.7 | Срок не попадает на каникулы | `docs/00` §10 | `addWorkingDays(2026-12-25, 5)` → `2027-01-11` | `working-calendar.spec.ts`; 3 теста падают без исправления |
+| 2.7 | Календарь правится без разработчика | `docs/07` §10.2 | `GET/POST/PATCH/DELETE /working-calendar`, экран администратора | `working-calendar.service.spec.ts` (33 теста) |
+| 2.7 | Зеркальные записи не возвращаются | `docs/07` §10.2 | `CALENDAR_REDUNDANT_DAY`, миграция `20260919000000` | `working-calendar.service.spec.ts`: 4 теста падают без защиты |
 | 2.4 | Согласование суммы создаёт корректировку | `docs/03` §3.5 | `applyAdjustment()` из `createApproval()` | прогон API: 450→400, скидка 50 |
 | 2.4 | **Интеграция с IP-АТС** | `docs/05` §2 | `CallRecording`, `TelephonyPort`, скоринг сопоставления | этап 4 |
 | 2.4 | Обязательный пункт о записи разговоров | `docs/02` §5.6 | guard `CONSENT_CALL_RECORDING`, `Customer.consentCallRecording` | `order-transitions.spec.ts` |

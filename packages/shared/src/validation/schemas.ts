@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { ORDER_STATUS } from '../domain/order-status.js';
 import { ROLE, DATA_SCOPE } from '../domain/roles.js';
+import { DAY_MS } from '../utils/dates.js';
 
 /** Сумма в минорных единицах: целое, неотрицательное, в разумных границах. */
 export const minorAmountSchema = z
@@ -591,6 +592,97 @@ export const updateStoneTypeSchema = z
   });
 
 // ---------------------------------------------------------------------------
+// Рабочий календарь (задача 1.3.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Дата календаря в формате YYYY-MM-DD.
+ *
+ * Принимается строка, а не `Date`: календарная дата не имеет времени, и
+ * `z.coerce.date()` превратил бы «2027-01-01» в момент времени, который в
+ * таймзоне западнее UTC станет 31 декабря. Формат проверяется по календарю,
+ * а не только регуляркой, иначе «2027-02-31» прошло бы проверку и было бы
+ * молча превращено в 3 марта.
+ */
+export const calendarDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата в формате ГГГГ-ММ-ДД')
+  .refine((value) => {
+    const parsed = new Date(`${value}T00:00:00Z`);
+    // Обратное форматирование совпадёт с вводом только для существующей даты.
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  }, 'Такой даты не существует');
+
+/** Часы рабочего дня: 0 для выходного, иначе от 1 до 24. */
+const workHoursSchema = z.number().int().min(0).max(24);
+
+export const createCalendarDaySchema = z
+  .object({
+    date: calendarDateSchema,
+    isWorkday: z.boolean(),
+    hours: workHoursSchema.optional(),
+    note: z.string().max(200).nullable().optional(),
+  })
+  // Согласованность часов и признака рабочего дня: «рабочий день 0 часов» и
+  // «выходной 8 часов» одинаково бессмысленны, но по отдельности каждое поле
+  // выглядит допустимым. Проверка здесь, а не в сервисе, чтобы правило было
+  // одно и то же и в интерфейсе, и в API.
+  .refine((data) => (data.isWorkday ? (data.hours ?? 8) > 0 : (data.hours ?? 0) === 0), {
+    message: 'Рабочий день не может длиться 0 часов, а выходной — больше 0',
+    path: ['hours'],
+  });
+
+export const updateCalendarDaySchema = z
+  .object({
+    date: calendarDateSchema,
+    isWorkday: z.boolean(),
+    hours: workHoursSchema,
+    note: z.string().max(200).nullable(),
+  })
+  .partial()
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'Укажите хотя бы одно поле для изменения',
+  })
+  // Часы проверяются только когда в запросе есть ОБА поля: если меняется лишь
+  // `isWorkday`, часы берутся из существующей записи, и осуждать их здесь не за
+  // что. Иначе смена «выходной → рабочий» требовала бы прислать часы, хотя
+  // сервис и так подставит обычные 8.
+  .refine(
+    (data) =>
+      data.isWorkday === undefined ||
+      data.hours === undefined ||
+      (data.isWorkday ? data.hours > 0 : data.hours === 0),
+    {
+      message: 'Рабочий день не может длиться 0 часов, а выходной — больше 0',
+      path: ['hours'],
+    },
+  );
+
+/**
+ * Фильтр списка календаря.
+ *
+ * Период обязателен с ограничением длины: календарь за 10 лет — это ~3650 строк
+ * в ответе, и запрос «весь календарь» без периода превратил бы экран
+ * администратора в выгрузку всей таблицы.
+ */
+export const calendarQuerySchema = z
+  .object({
+    from: calendarDateSchema,
+    to: calendarDateSchema,
+  })
+  .refine((data) => data.from <= data.to, {
+    message: 'Начало периода позже окончания',
+    path: ['to'],
+  })
+  .refine(
+    (data) =>
+      (new Date(`${data.to}T00:00:00Z`).getTime() - new Date(`${data.from}T00:00:00Z`).getTime()) /
+        DAY_MS <=
+      366,
+    { message: 'Период не может превышать год', path: ['to'] },
+  );
+
+// ---------------------------------------------------------------------------
 // Отчёты
 // ---------------------------------------------------------------------------
 
@@ -659,3 +751,8 @@ export type CreateWorkCategoryInput = z.infer<typeof createWorkCategorySchema>;
 export type UpdateWorkCategoryInput = z.infer<typeof updateWorkCategorySchema>;
 export type CreateStoneTypeInput = z.infer<typeof createStoneTypeSchema>;
 export type UpdateStoneTypeInput = z.infer<typeof updateStoneTypeSchema>;
+
+export type CalendarDateInput = z.infer<typeof calendarDateSchema>;
+export type CreateCalendarDayInput = z.infer<typeof createCalendarDaySchema>;
+export type UpdateCalendarDayInput = z.infer<typeof updateCalendarDaySchema>;
+export type CalendarQueryInput = z.infer<typeof calendarQuerySchema>;
