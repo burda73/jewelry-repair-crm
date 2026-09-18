@@ -3,7 +3,16 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight, Check, Plus, Search, Trash2, UserPlus } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  History,
+  Plus,
+  Search,
+  Trash2,
+  UserPlus,
+} from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { useToast } from '@/components/ui/toast';
 import {
@@ -20,9 +29,10 @@ import { Badge } from '@/components/ui/badge';
 import { Field, FormError } from '@/components/ui/field';
 import { Input, Select, Textarea } from '@/components/ui/input';
 import { EmptyState } from '@/components/ui/card';
-import { formatMinor, formatMinorExact, plural } from '@/lib/format';
+import { formatDateTime, formatMinor, formatMinorExact, plural } from '@/lib/format';
 import { describeApiError } from '@/lib/api-client';
 import { t } from '@/lib/i18n';
+import { useDraftAutosave, type RestorableDraft } from '@/lib/draft-autosave';
 import {
   parseMoneyInput,
   multiplyMinor,
@@ -52,6 +62,16 @@ const STEP_TITLES = ['Клиент', 'Согласие', 'Изделие', 'Ра
 
 type StepIndex = 0 | 1 | 2 | 3 | 4;
 
+/**
+ * Время сохранения черновика — только часы и минуты.
+ *
+ * Отдельная функция, а не `formatDateTime`: в подписи «черновик сохранён …»
+ * дата избыточна (черновик живёт не дольше недели), а место занимает.
+ */
+function formatTime(value: Date): string {
+  return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(value);
+}
+
 /** Работа в черновике: из прейскуранта или нетиповая. */
 interface DraftWork {
   priceListItemId?: string;
@@ -79,6 +99,34 @@ interface DraftItem {
   hallmark: string;
   defects: string;
   completeness: string;
+}
+
+/**
+ * Черновик мастера (задача 1.7.3).
+ *
+ * Сохраняется всё, что приёмщик ввёл руками. Справочные данные (цены работ)
+ * НЕ сохраняются: они выводятся из металла и прейскуранта, а сохранённая копия
+ * цены могла бы «застрять» после изменения прейскуранта — ровно тот дефект,
+ * ради которого цены сделаны производными.
+ */
+interface OrderDraft {
+  step: number;
+  term: string;
+  /** Выбранный клиент целиком: восстановление не должно терять поля карточки. */
+  selectedCustomer: CustomerSearchItem | null;
+  isNewCustomer: boolean;
+  newCustomer: { fullName: string; phone: string; email: string; notes: string };
+  consentCallRecording: boolean;
+  consentMarketing: boolean;
+  item: DraftItem;
+  works: DraftWork[];
+  createdStoreId: string;
+  pickupStoreId: string;
+  workshopId: string;
+  priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+  description: string;
+  requiresPrepayment: boolean;
+  prepayment: string;
 }
 
 const EMPTY_ITEM: DraftItem = {
@@ -143,6 +191,107 @@ export default function NewOrderPage(): ReactNode {
   const search = useCustomerSearch(term);
   const createCustomer = useCreateCustomer();
   const createOrder = useCreateOrder();
+
+  /*
+   * Автосохранение черновика (задача 1.7.3).
+   *
+   * Приёмщика может отвлечь клиент: он уходит за изделием или отвечает на
+   * звонок. Черновик хранится в localStorage под ключом сотрудника, поэтому
+   * на общем компьютере точки данные одного приёмщика не открываются у другого.
+   *
+   * Черновик НЕ подставляется в форму автоматически — показывается отдельное
+   * предложение с временем сохранения. Молчаливая подстановка означала бы, что
+   * приёмщик, начавший новый заказ, видит в полях данные прошлого клиента.
+   */
+  const [draftRestored, setDraftRestored] = useState(false);
+  const draftSnapshot: OrderDraft = useMemo(
+    () => ({
+      step,
+      term,
+      selectedCustomer,
+      isNewCustomer,
+      newCustomer,
+      consentCallRecording,
+      consentMarketing,
+      item,
+      works,
+      createdStoreId,
+      pickupStoreId,
+      workshopId,
+      priority,
+      description,
+      requiresPrepayment,
+      prepayment,
+    }),
+    [
+      step,
+      term,
+      selectedCustomer,
+      isNewCustomer,
+      newCustomer,
+      consentCallRecording,
+      consentMarketing,
+      item,
+      works,
+      createdStoreId,
+      pickupStoreId,
+      workshopId,
+      priority,
+      description,
+      requiresPrepayment,
+      prepayment,
+    ],
+  );
+  const draft = useDraftAutosave<OrderDraft>({
+    scope: 'order-new',
+    userId: user?.id ?? null,
+    snapshot: draftSnapshot,
+    // После создания заказа сохранять нечего: черновик уже стал заказом.
+    enabled: !draftRestored && createOrder.isSuccess === false,
+  });
+
+  /**
+   * Привести сохранённый номер шага к допустимому.
+   *
+   * Черновик мог быть записан до изменения числа шагов мастера; значение вне
+   * диапазона оставило бы форму без содержимого — ни один блок не отрисовался
+   * бы, и приёмщик увидел бы пустой экран.
+   */
+  function clampStep(value: number): StepIndex {
+    if (!Number.isInteger(value) || value < 0) return 0;
+    if (value > STEP_TITLES.length - 1) return (STEP_TITLES.length - 1) as StepIndex;
+    return value as StepIndex;
+  }
+
+  /** Применить найденный черновик к форме. */
+  function applyDraft(found: RestorableDraft<OrderDraft>): void {
+    const data = found.data;
+    setStep(clampStep(data.step));
+    setTerm(data.term);
+    setIsNewCustomer(data.isNewCustomer);
+    setNewCustomer(data.newCustomer);
+    setConsentCallRecording(data.consentCallRecording);
+    setConsentMarketing(data.consentMarketing);
+    setItem(data.item);
+    setWorks(data.works);
+    setCreatedStoreId(data.createdStoreId);
+    setPickupStoreId(data.pickupStoreId);
+    setWorkshopId(data.workshopId);
+    setPriority(data.priority);
+    setDescription(data.description);
+    setRequiresPrepayment(data.requiresPrepayment);
+    setPrepayment(data.prepayment);
+    /*
+     * Клиент восстанавливается по сохранённым id и подписи, а не поиском:
+     * повторный запрос к API мог бы вернуть изменённую карточку, и приёмщик
+     * увидел бы не то, что выбирал. Если карточку удалили, приёмщик просто
+     * выберет клиента заново — это видно и понятно.
+     */
+    setSelectedCustomer(data.selectedCustomer);
+    draft.dismiss();
+    setDraftRestored(true);
+    toast.showSuccess('Черновик восстановлен');
+  }
 
   // Приёмщик ограничен своими магазинами; руководитель видит все.
   const availableStores = useMemo(() => {
@@ -434,6 +583,9 @@ export default function NewOrderPage(): ReactNode {
 
     try {
       const created = await createOrder.mutateAsync(payload);
+      // Черновик стал заказом: хранить его копию незачем, а на общем
+      // компьютере она содержала бы персональные данные уже принятого клиента.
+      draft.forget();
       toast.showSuccess(`Заказ ${created.orderNo} создан`);
       router.push(`/orders/${created.id}`);
     } catch (caught: unknown) {
@@ -457,6 +609,13 @@ export default function NewOrderPage(): ReactNode {
         <h1 className="text-xl font-semibold text-slate-900">Новый заказ</h1>
         <p className="mt-0.5 text-sm text-slate-500">
           Шаг {step + 1} из {STEP_TITLES.length} · {STEP_TITLES[step]}
+          {/*
+            Подпись о сохранении. Без неё приёмщик не знает, сохранился ли
+            ввод, и либо боится уйти от компьютера, либо теряет данные.
+          */}
+          {draft.savedAt !== null && (
+            <span className="text-slate-400"> · черновик сохранён {formatTime(draft.savedAt)}</span>
+          )}
         </p>
       </div>
 
@@ -503,6 +662,32 @@ export default function NewOrderPage(): ReactNode {
           );
         })}
       </ol>
+
+      {/*
+        Предложение восстановить черновик. Показывается ТОЛЬКО пока приёмщик не
+        решил: молчаливая подстановка означала бы, что в полях нового заказа
+        оказались данные прошлого клиента.
+      */}
+      {draft.restorable !== null && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+          <div className="flex items-start gap-2 text-sm text-amber-900">
+            <History className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>
+              Найден незавершённый черновик от{' '}
+              <strong>{formatDateTime(draft.restorable.savedAt)}</strong>. Восстановить введённые
+              данные?
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={() => draft.dismiss()}>
+              Начать заново
+            </Button>
+            <Button size="sm" onClick={() => applyDraft(draft.restorable!)}>
+              Восстановить
+            </Button>
+          </div>
+        </div>
+      )}
 
       <form
         onSubmit={(event) => {
