@@ -6,119 +6,146 @@
  * (docs/00-decisions.md §6.11). Здесь проверяются правила ВЫБОРА норматива,
  * а не конкретные числа.
  *
- * Эти тесты закрывают дефект, найденный при разработке: нормативы производства
- * заданы для типов работ SIMPLE и COMPLEX, но заказ не передавал свою сложность,
- * поэтому конкретные нормативы были недостижимы и для любого ремонта применялся
- * самый длинный (или общий) срок.
+ * ЧТО БЫЛО ИСПРАВЛЕНО В ЭТИХ ТЕСТАХ. Прежде здесь была СВОЯ копия
+ * `pickNorm`, «повторяющая логику» сервиса, и набор норм с именами
+ * `DISPATCH`/`DELIVERY_OUT`/`DELIVERY_IN`/`STORAGE`. Это давало ложное
+ * спокойствие: тесты проходили тогда, когда сервис искал норматив по имени
+ * СТАТУСА (`QUEUED_FOR_DISPATCH`) и не находил ни одного совпадения, то есть
+ * `dueAt` не устанавливался вообще. Копия логики в тесте не защищает от
+ * расхождения с оригиналом — она его и создаёт.
+ *
+ * Теперь вызывается настоящая `pickStageNorm` из домена (её же использует
+ * `OrderWorkflowService.loadStageNorm`), а имена этапов берутся из `NORM_STAGE`.
  */
 
 import { describe, expect, it } from 'vitest';
+import { ALL_NORM_STAGES, NORM_STAGE, pickStageNorm, type StageNormLike } from './order-status.js';
 
 /** Норматив так, как он хранится в справочнике `StageNorm`. */
-interface Norm {
-  stage: string;
-  workType: string; // 'ANY' | 'SIMPLE' | 'COMPLEX'
-  value: number;
-  unit: string;
-}
+type Norm = StageNormLike;
 
 /**
- * Правило выбора норматива.
+ * Стартовые нормативы заказчика (docs/04-status-workflow.md §3).
  *
- * Повторяет логику `OrderWorkflowService.loadStageNorm`:
- * конкретный тип работ приоритетнее общего (`ANY`).
+ * Значения НЕ хардкодятся в коде приложения — они лишь заполняются при первом
+ * развёртывании и далее меняются администратором. Здесь они нужны, чтобы
+ * проверить правило выбора на реалистичном наборе.
  */
-function pickNorm(norms: readonly Norm[], stage: string, workType: string | null): Norm | null {
-  const candidates = norms.filter(
-    (n) =>
-      n.stage === stage &&
-      (workType === null ? n.workType === 'ANY' : n.workType === workType || n.workType === 'ANY'),
-  );
-  if (candidates.length === 0) return null;
-  return candidates.find((n) => n.workType === workType) ?? candidates[0] ?? null;
-}
-
 const NORMS: readonly Norm[] = [
-  { stage: 'APPROVAL', workType: 'ANY', value: 3, unit: 'WORKDAY' },
-  { stage: 'PREPAYMENT', workType: 'ANY', value: 5, unit: 'WORKDAY' },
-  { stage: 'DISPATCH', workType: 'ANY', value: 24, unit: 'WORKHOUR' },
-  { stage: 'DELIVERY_OUT', workType: 'ANY', value: 8, unit: 'WORKHOUR' },
-  { stage: 'PRODUCTION', workType: 'SIMPLE', value: 5, unit: 'WORKDAY' },
-  { stage: 'PRODUCTION', workType: 'COMPLEX', value: 15, unit: 'WORKDAY' },
-  { stage: 'DELIVERY_IN', workType: 'ANY', value: 8, unit: 'WORKHOUR' },
-  { stage: 'STORAGE', workType: 'ANY', value: 30, unit: 'CALENDAR_DAY' },
-  { stage: 'CLAIM', workType: 'ANY', value: 10, unit: 'WORKDAY' },
+  { stage: NORM_STAGE.APPROVAL, workType: 'ANY', value: 3, unit: 'WORKDAY' },
+  { stage: NORM_STAGE.PREPAYMENT, workType: 'ANY', value: 5, unit: 'WORKDAY' },
+  { stage: NORM_STAGE.QUEUE, workType: 'ANY', value: 24, unit: 'WORKHOUR' },
+  { stage: NORM_STAGE.LOGISTICS_OUT, workType: 'ANY', value: 8, unit: 'WORKHOUR' },
+  // Общий норматив производства — для нераспознанной сложности (`ANY`):
+  // именно это значение по умолчанию у `Order.complexity`, пока калькуляция
+  // не реализована. Без него такой заказ остался бы без срока.
+  { stage: NORM_STAGE.PRODUCTION, workType: 'ANY', value: 15, unit: 'WORKDAY' },
+  { stage: NORM_STAGE.PRODUCTION, workType: 'SIMPLE', value: 5, unit: 'WORKDAY' },
+  { stage: NORM_STAGE.PRODUCTION, workType: 'COMPLEX', value: 15, unit: 'WORKDAY' },
+  { stage: NORM_STAGE.LOGISTICS_IN, workType: 'ANY', value: 8, unit: 'WORKHOUR' },
+  { stage: NORM_STAGE.PICKUP, workType: 'ANY', value: 30, unit: 'CALENDAR_DAY' },
+  { stage: NORM_STAGE.CLAIM, workType: 'ANY', value: 10, unit: 'WORKDAY' },
 ];
 
 describe('Выбор норматива этапа', () => {
-  it('для простого ремонта берёт норматив SIMPLE, а не общий', () => {
-    const norm = pickNorm(NORMS, 'PRODUCTION', 'SIMPLE');
-    expect(norm?.value).toBe(5);
-    expect(norm?.workType).toBe('SIMPLE');
+  it('выбирает норматив по конкретному типу работ', () => {
+    expect(pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, 'SIMPLE')?.value).toBe(5);
+    expect(pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, 'COMPLEX')?.value).toBe(15);
   });
 
-  it('для сложного ремонта берёт норматив COMPLEX', () => {
-    const norm = pickNorm(NORMS, 'PRODUCTION', 'COMPLEX');
-    expect(norm?.value).toBe(15);
-    expect(norm?.workType).toBe('COMPLEX');
+  it('для сложного ремонта не подставляет срок простого', () => {
+    // Дефект, ради которого правило и существует: при отсутствии учёта
+    // сложности для любого ремонта применялся бы один и тот же срок.
+    const simple = pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, 'SIMPLE');
+    const complex = pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, 'COMPLEX');
+    expect(simple?.value).not.toBe(complex?.value);
   });
 
-  it('этапы без разделения по сложности используют общий норматив', () => {
-    // Для согласования и логистики задан только ANY — сложность не влияет.
-    expect(pickNorm(NORMS, 'APPROVAL', 'SIMPLE')?.value).toBe(3);
-    expect(pickNorm(NORMS, 'DELIVERY_OUT', 'COMPLEX')?.value).toBe(8);
-    expect(pickNorm(NORMS, 'STORAGE', 'ANY')?.unit).toBe('CALENDAR_DAY');
+  it('падает обратно на общий норматив ANY, если конкретного нет', () => {
+    expect(pickStageNorm(NORMS, NORM_STAGE.APPROVAL, 'SIMPLE')?.value).toBe(3);
+    expect(pickStageNorm(NORMS, NORM_STAGE.LOGISTICS_OUT, 'COMPLEX')?.value).toBe(8);
   });
 
-  it('если сложность не определена, применяется общий норматив', () => {
-    expect(pickNorm(NORMS, 'PRODUCTION', null)).toBeNull(); // нет норматива ANY для производства
-    expect(pickNorm(NORMS, 'PRODUCTION', 'ANY')).toBeNull();
+  it('находит норматив этапа хранения в календарных днях', () => {
+    expect(pickStageNorm(NORMS, NORM_STAGE.PICKUP, 'ANY')?.unit).toBe('CALENDAR_DAY');
   });
 
-  it('простой ремонт не получает срок сложного — иначе сроки завышены', () => {
-    const simple = pickNorm(NORMS, 'PRODUCTION', 'SIMPLE');
-    const complex = pickNorm(NORMS, 'PRODUCTION', 'COMPLEX');
-    expect(simple!.value).toBeLessThan(complex!.value);
+  it('конкретный тип работ приоритетнее общего норматива', () => {
+    // У производства есть и общий `ANY` (15), и конкретные (5/15). Для простого
+    // ремонта должен применяться именно его норматив, а не общий: иначе общий
+    // «съел» бы конкретные, и разница в сложности исчезла бы.
+    expect(pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, 'SIMPLE')?.value).toBe(5);
+    expect(pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, 'COMPLEX')?.value).toBe(15);
   });
 
-  it('возвращает null для неизвестного этапа — дедлайн не выдумывается', () => {
-    // Если норматива нет, система не должна подставлять произвольный срок:
-    // лучше не менять dueAt, чем показать клиенту неверную дату.
-    expect(pickNorm(NORMS, 'UNKNOWN_STAGE', 'ANY')).toBeNull();
-  });
-});
-
-describe('Нормативы, требуемые ТЗ напрямую', () => {
-  it('хранение до выдачи — 30 календарных дней (ТЗ п. 2.8)', () => {
-    const norm = pickNorm(NORMS, 'STORAGE', 'ANY');
-    expect(norm?.unit).toBe('CALENDAR_DAY');
-    expect(norm?.value).toBe(30);
+  it('нераспознанная сложность получает общий норматив, а не остаётся без срока', () => {
+    // `Order.complexity` по умолчанию `ANY` (калькуляция ещё не реализована).
+    // Без общего норматива такой заказ не получил бы `dueAt` вообще.
+    expect(pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, 'ANY')?.value).toBe(15);
+    expect(pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, 'UNKNOWN')?.value).toBe(15);
   });
 
-  it('рассмотрение рекламации — 10 рабочих дней (ТЗ п. 2.9)', () => {
-    const norm = pickNorm(NORMS, 'CLAIM', 'ANY');
-    expect(norm?.unit).toBe('WORKDAY');
-    expect(norm?.value).toBe(10);
+  it('возвращает null, когда для этапа нет ни конкретного, ни общего норматива', () => {
+    const withoutClaim = NORMS.filter((n) => n.stage !== NORM_STAGE.CLAIM);
+    expect(pickStageNorm(withoutClaim, NORM_STAGE.CLAIM, 'ANY')).toBeNull();
   });
 
-  it('все этапы, по которым нужны эскалации, имеют норматив', () => {
-    // ТЗ п. 2.7: эскалация по каждому этапу. Пропуск норматива = нет контроля.
-    const requiredStages = [
-      'APPROVAL',
-      'PREPAYMENT',
-      'DISPATCH',
-      'DELIVERY_OUT',
-      'DELIVERY_IN',
-      'STORAGE',
-      'CLAIM',
-    ];
-    for (const stage of requiredStages) {
-      expect(pickNorm(NORMS, stage, 'ANY'), `нет норматива для этапа ${stage}`).not.toBeNull();
+  it('возвращает null для неизвестного этапа', () => {
+    expect(pickStageNorm(NORMS, 'NO_SUCH_STAGE', 'ANY')).toBeNull();
+  });
+
+  it('НЕ находит норматив по имени статуса', () => {
+    // Прямая регрессия на исходный дефект: расчёт передавал статус
+    // (`QUEUED_FOR_DISPATCH`), и совпадений было 0 из 13. Если это когда-нибудь
+    // снова начнёт «работать», значит справочник снова заполняется статусами.
+    for (const status of ['QUEUED_FOR_DISPATCH', 'IN_PRODUCTION', 'READY_FOR_PICKUP']) {
+      expect(pickStageNorm(NORMS, status, 'ANY')).toBeNull();
     }
   });
 
-  it('нормативы производства покрывают оба типа работ', () => {
-    expect(pickNorm(NORMS, 'PRODUCTION', 'SIMPLE')).not.toBeNull();
-    expect(pickNorm(NORMS, 'PRODUCTION', 'COMPLEX')).not.toBeNull();
+  it('возвращает пустой результат для пустого справочника', () => {
+    // Так выглядит состояние «нормативы не заданы»: срок не назначается, и это
+    // должно быть видно, а не подменяться значением по умолчанию.
+    expect(pickStageNorm([], NORM_STAGE.QUEUE, 'ANY')).toBeNull();
+  });
+});
+
+describe('Полнота набора нормативов', () => {
+  it('набор покрывает каждый этап справочника для нераспознанного типа работ', () => {
+    // Этап без общего норматива = заказ с `complexity = 'ANY'` без срока, то
+    // есть просрочка по нему не видна (ТЗ п. 2.7). Значение по умолчанию у
+    // `Order.complexity` — именно `ANY`, поэтому проверка идёт по нему.
+    for (const stage of ALL_NORM_STAGES) {
+      expect(pickStageNorm(NORMS, stage, 'ANY'), `нет норматива для этапа ${stage}`).not.toBeNull();
+    }
+  });
+
+  it('набор покрывает производство для каждой известной сложности', () => {
+    for (const workType of ['SIMPLE', 'COMPLEX']) {
+      expect(
+        pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, workType),
+        `нет норматива производства для ${workType}`,
+      ).not.toBeNull();
+    }
+  });
+
+  it('набор не содержит нормативов для чужих этапов', () => {
+    // Мёртвая строка: этап, которого нет в домене, расчёт никогда не найдёт.
+    for (const norm of NORMS) {
+      expect(ALL_NORM_STAGES).toContain(norm.stage);
+    }
+  });
+
+  it('производство покрыто обоими типами работ', () => {
+    // Проверяется и схемой создания версии: иначе для одной из сложностей
+    // срок не найдётся и заказ останется без dueAt.
+    expect(pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, 'SIMPLE')).not.toBeNull();
+    expect(pickStageNorm(NORMS, NORM_STAGE.PRODUCTION, 'COMPLEX')).not.toBeNull();
+  });
+
+  it('единицы измерения — из известного набора', () => {
+    for (const norm of NORMS) {
+      expect(['WORKHOUR', 'WORKDAY', 'CALENDAR_DAY']).toContain(norm.unit);
+    }
   });
 });

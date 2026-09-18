@@ -275,6 +275,17 @@ async function seedWorkingCalendar() {
 // иначе отчётность по срокам станет недостоверной.
 // ---------------------------------------------------------------------------
 
+/**
+ * Нормативы сроков (ТЗ п. 2.7).
+ *
+ * Имена этапов берутся из `NORM_STAGE` (packages/shared/src/domain/order-status.ts).
+ * Это принципиально: прежде здесь были имена `DISPATCH`, `DELIVERY_OUT`,
+ * `DELIVERY_IN`, `STORAGE`, тогда как расчёт сроков искал норматив по имени
+ * СТАТУСА (`QUEUED_FOR_DISPATCH`), а домен объявлял третий набор (`QUEUE`,
+ * `LOGISTICS_OUT`, ...). Ни одно значение не совпадало, норматив не находился
+ * никогда, и `dueAt` не устанавливался, хотя справочник был заполнен.
+ * Единый источник истины делает такое расхождение невозможным.
+ */
 async function seedStageNorms() {
   const norms = [
     {
@@ -292,18 +303,38 @@ async function seedStageNorms() {
       escalateToRole: RoleCode.RECEIVER,
     },
     {
-      stage: 'DISPATCH',
+      stage: 'QUEUE',
       workType: 'ANY',
       value: 24,
       unit: 'WORKHOUR',
       escalateToRole: RoleCode.PRODUCTION_MANAGER,
     },
     {
-      stage: 'DELIVERY_OUT',
+      stage: 'LOGISTICS_OUT',
       workType: 'ANY',
       value: 8,
       unit: 'WORKHOUR',
       escalateToRole: RoleCode.LOGISTICIAN,
+    },
+    {
+      // Общий норматив производства — ДЛЯ НЕРАСПОЗНАННОЙ СЛОЖНОСТИ.
+      //
+      // Поле `Order.complexity` имеет значение по умолчанию `ANY`, и задать
+      // его пока негде: калькуляция ещё не реализована (этап 1.7). Без этой
+      // строки заказ с `complexity = 'ANY'` не находил бы норматива вовсе, и
+      // `dueAt` у него не устанавливался бы — тот же дефект, что и с именами
+      // этапов, только по другой причине.
+      //
+      // Значение 15 — КОНСЕРВАТИВНОЕ: оно равно нормативу сложного ремонта,
+      // поэтому нераспознанный заказ не получит обещания короче, чем может
+      // потребовать работа. Конкретные SIMPLE/COMPLEX имеют приоритет
+      // (`pickStageNorm`), поэтому эта строка работает только как запасной
+      // вариант, а не переопределяет их.
+      stage: 'PRODUCTION',
+      workType: 'ANY',
+      value: 15,
+      unit: 'WORKDAY',
+      escalateToRole: RoleCode.PRODUCTION_MANAGER,
     },
     {
       stage: 'PRODUCTION',
@@ -320,14 +351,14 @@ async function seedStageNorms() {
       escalateToRole: RoleCode.PRODUCTION_MANAGER,
     },
     {
-      stage: 'DELIVERY_IN',
+      stage: 'LOGISTICS_IN',
       workType: 'ANY',
       value: 8,
       unit: 'WORKHOUR',
       escalateToRole: RoleCode.LOGISTICIAN,
     },
     {
-      stage: 'STORAGE',
+      stage: 'PICKUP',
       workType: 'ANY',
       value: 30,
       unit: 'CALENDAR_DAY',

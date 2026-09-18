@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { ORDER_STATUS } from '../domain/order-status.js';
 import { ROLE, DATA_SCOPE } from '../domain/roles.js';
 import { DAY_MS } from '../utils/dates.js';
+import { ALL_NORM_STAGES } from '../domain/order-status.js';
 
 /** Сумма в минорных единицах: целое, неотрицательное, в разумных границах. */
 export const minorAmountSchema = z
@@ -681,6 +682,93 @@ export const calendarQuerySchema = z
       366,
     { message: 'Период не может превышать год', path: ['to'] },
   );
+
+// ---------------------------------------------------------------------------
+// Нормативы этапов (задача 1.3.4, ТЗ п. 2.7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Этап, для которого задаётся норматив.
+ *
+ * Проверка по `ALL_NORM_STAGES`, а не по свободной строке: именно расхождение
+ * словарей («DISPATCH» в справочнике против «QUEUED_FOR_DISPATCH» в расчёте)
+ * было причиной дефекта, когда норматив не находился никогда.
+ */
+export const normStageSchema = z.enum([...ALL_NORM_STAGES] as [string, ...string[]]);
+
+/** Единица измерения норматива. */
+export const normUnitSchema = z.enum(['WORKHOUR', 'WORKDAY', 'CALENDAR_DAY']);
+
+/**
+ * Тип работ: `ANY` — общий норматив этапа, `SIMPLE`/`COMPLEX` — для конкретного.
+ *
+ * `ANY` вместо `null` намеренно (см. комментарий к модели `StageNorm`): NULL в
+ * уникальном индексе PostgreSQL не обеспечивает уникальность, поэтому
+ * `workType = null` допускал бы неограниченные дубли.
+ */
+export const normWorkTypeSchema = z.enum(['ANY', 'SIMPLE', 'COMPLEX']);
+
+/**
+ * Один норматив в составе версии.
+ *
+ * Верхняя граница `value` — не формальность: норматив попадает в расчёт срока
+ * выдачи, и «500 рабочих дней» вместо «5» — это ошибка ввода, которую дешевле
+ * отклонить, чем объяснять клиенту, почему заказ ждут два года.
+ */
+export const normEntrySchema = z.object({
+  stage: normStageSchema,
+  workType: normWorkTypeSchema.default('ANY'),
+  value: z.number().int().min(1).max(365),
+  unit: normUnitSchema,
+  escalateToRole: z
+    .enum(Object.values(ROLE) as [string, ...string[]])
+    .nullable()
+    .optional(),
+});
+
+/**
+ * Создание новой версии нормативов.
+ *
+ * Версия — это ПОЛНЫЙ набор нормативов, а не отдельная правка. Причина в
+ * уникальности `[version, stage, workType]`: набор версии должен быть
+ * самодостаточным, иначе «какая версия сейчас действует» нельзя ответить, не
+ * собирая её из нескольких версий. Так же устроен прейскурант.
+ *
+ * `changeReason` обязателен: норматив меняет сроки всех новых заказов, и по
+ * журналу должно быть понятно, почему.
+ */
+export const createNormVersionSchema = z
+  .object({
+    norms: z.array(normEntrySchema).min(1, 'Добавьте хотя бы один норматив').max(64),
+    changeReason: z.string().min(5, 'Опишите причину изменения').max(500),
+    effectiveFrom: calendarDateSchema.optional(),
+  })
+  .refine(
+    (data) => {
+      // Дубликат (этап, тип работ) внутри одной версии нарушил бы уникальный
+      // индекс и оставил бы неопределённым, какое значение применять.
+      const keys = data.norms.map((n) => `${n.stage}|${n.workType}`);
+      return new Set(keys).size === keys.length;
+    },
+    { message: 'Этап и тип работ повторяются в наборе', path: ['norms'] },
+  )
+  .refine(
+    (data) => {
+      // Для производства обязаны быть оба типа работ либо общий норматив:
+      // иначе для одного из типов срок не найдётся и заказ останется без dueAt.
+      const production = data.norms.filter((n) => n.stage === 'PRODUCTION');
+      if (production.length === 0) return true;
+      const types = new Set(production.map((n) => n.workType));
+      return types.has('ANY') || (types.has('SIMPLE') && types.has('COMPLEX'));
+    },
+    {
+      message: 'Для производства задайте общий норматив либо оба: SIMPLE и COMPLEX',
+      path: ['norms'],
+    },
+  );
+
+export type NormEntryInput = z.infer<typeof normEntrySchema>;
+export type CreateNormVersionInput = z.infer<typeof createNormVersionSchema>;
 
 // ---------------------------------------------------------------------------
 // Отчёты

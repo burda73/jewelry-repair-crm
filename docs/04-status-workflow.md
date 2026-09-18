@@ -11,7 +11,7 @@
 | `DRAFT` | Черновик | Приём | Заказ создаётся, данные ещё правятся | нет |
 | `AWAITING_APPROVAL` | Ожидает согласования | Согласование | Клиент думает над суммой/сроком | нет |
 | `AWAITING_PREPAYMENT` | Ожидает предоплату | Предоплата | Согласовано, но предоплата не внесена | нет |
-| `ACCEPTED` | Принят в работу | Приём | Готов к передаче в производство | нет |
+| `ACCEPTED` | Принят в работу | Приём | Готов к передаче в производство; срок ещё не назначен (назначит следующий этап) | нет |
 | `QUEUED_FOR_DISPATCH` | В очереди на отправку | Логистика → | Ожидает формирования партии | нет |
 | `IN_TRANSIT_TO_PRODUCTION` | В пути в цех | Логистика → | Передан курьеру, акт подписан | нет |
 | `IN_PRODUCTION` | В производстве | Производство | Принят цехом, назначен исполнитель | нет |
@@ -33,19 +33,19 @@
 | 1 | — | `DRAFT` | RECEIVER, ADMIN | `consentCallRecording = true`; изделий ≥ 1 | Генерация `orderNo`, аудит |
 | 2 | `DRAFT` | `AWAITING_APPROVAL` | RECEIVER, ADMIN | Согласие на запись разговоров; калькуляция непуста | Расчёт `totalAmount`; `dueAt` по нормативу согласования |
 | 3 | `DRAFT` | `ACCEPTED` | RECEIVER, ADMIN | Калькуляция непуста; предоплата не требуется | `acceptedAt` |
-| 4 | `AWAITING_APPROVAL` | `AWAITING_PREPAYMENT` | RECEIVER, CASHIER, ADMIN | Есть `Approval` по сумме и сроку | `approvedAt` |
+| 4 | `AWAITING_APPROVAL` | `AWAITING_PREPAYMENT` | RECEIVER, CASHIER, ADMIN | Есть `Approval` по сумме и сроку | `approvedAt`; `dueAt` по нормативу предоплаты |
 | 5 | `AWAITING_APPROVAL` | `ACCEPTED` | RECEIVER, ADMIN | Есть `Approval`; `requiresPrepayment = false` | `approvedAt` |
 | 6 | `AWAITING_APPROVAL` | `CANCELLED` | RECEIVER, MANAGER, ADMIN | — | Причина обязательна |
 | 7 | `AWAITING_PREPAYMENT` | `ACCEPTED` | **SYSTEM**, CASHIER, ADMIN | `paidAmount >= prepaymentRequired` | `prepaymentConfirmedAt`; снятие блокировки работ |
 | 8 | `AWAITING_PREPAYMENT` | `CANCELLED` | RECEIVER, MANAGER, ADMIN | — | Причина обязательна |
 | 9 | `ACCEPTED` | `QUEUED_FOR_DISPATCH` | PRODUCTION_MANAGER, LOGISTICIAN, SYSTEM | Блокировка предоплаты снята | `dueAt` по нормативу логистики |
 | 10 | `ACCEPTED` | `CANCELLED` | RECEIVER, MANAGER, ADMIN | Работы не начаты | Причина обязательна |
-| 11 | `QUEUED_FOR_DISPATCH` | `IN_TRANSIT_TO_PRODUCTION` | PRODUCTION_MANAGER, LOGISTICIAN | Есть `Batch`; `BatchAct` сформирован и подписан | Привязка к партии; уведомление цеха |
+| 11 | `QUEUED_FOR_DISPATCH` | `IN_TRANSIT_TO_PRODUCTION` | PRODUCTION_MANAGER, LOGISTICIAN | Есть `Batch`; `BatchAct` сформирован и подписан | Привязка к партии; уведомление цеха; `dueAt` по нормативу доставки в цех |
 | 12 | `IN_TRANSIT_TO_PRODUCTION` | `IN_PRODUCTION` | PRODUCTION_MANAGER | Партия фактически принята цехом | `productionStartedAt`; `dueAt` по нормативу производства |
-| 13 | `IN_PRODUCTION` | `QUEUED_FOR_DISPATCH` | PRODUCTION_MANAGER | Требуется перераспределение | Сброс исполнителя |
+| 13 | `IN_PRODUCTION` | `QUEUED_FOR_DISPATCH` | PRODUCTION_MANAGER | Требуется перераспределение | Сброс исполнителя; `dueAt` по нормативу очереди |
 | 14 | `IN_PRODUCTION` | `IN_TRANSIT_TO_STORE` | PRODUCTION_MANAGER | Есть исполнитель; работы завершены | `productionFinishedAt`; `dueAt` по нормативу доставки |
-| 15 | `IN_PRODUCTION` | `REWORK` | PRODUCTION_MANAGER | Есть `WarrantyClaim` или внутренний брак | Причина обязательна |
-| 16 | `REWORK` | `IN_PRODUCTION` | PRODUCTION_MANAGER | Назначен исполнитель | — |
+| 15 | `IN_PRODUCTION` | `REWORK` | PRODUCTION_MANAGER | Есть `WarrantyClaim` или внутренний брак | Причина обязательна; `dueAt` по нормативу производства |
+| 16 | `REWORK` | `IN_PRODUCTION` | PRODUCTION_MANAGER | Назначен исполнитель | `dueAt` по нормативу производства |
 | 17 | `IN_TRANSIT_TO_STORE` | `READY_FOR_PICKUP` | RECEIVER, LOGISTICIAN | Партия принята магазином | `readyAt`; уведомление клиенту (если включено); `dueAt` по нормативу выдачи |
 | 18 | `READY_FOR_PICKUP` | `COMPLETED` | RECEIVER, CASHIER, ADMIN | `paidAmount >= totalAmount`; есть подпись о получении | `completedAt`; расчёт `warrantyUntil` |
 | 19 | `READY_FOR_PICKUP` | `UNCLAIMED` | SYSTEM | `readyAt + 30 дней < now` | Уведомление приёмщику |
@@ -70,11 +70,27 @@
 | Доставка в цех | 8 раб. часов | часы | логист |
 | Производство (типовой ремонт) | 5 раб. дней | дни | менеджер производства |
 | Производство (сложный ремонт) | 15 раб. дней | дни | менеджер производства → руководитель |
+| Производство (сложность не определена) | 15 раб. дней | дни | менеджер производства |
 | Доставка в магазин | 8 раб. часов | часы | логист |
 | Хранение до выдачи | 30 календарных дней | дни | приёмщик |
 | Рассмотрение рекламации | 10 раб. дней | дни | менеджер производства → руководитель |
 
-Значения по умолчанию настраиваются администратором и **не хардкодятся** в коде.
+Значения по умолчанию настраиваются администратором и **не хардкодятся** в коде: их задаёт
+версионируемый справочник, редактируемый через `POST /stage-norms/versions` (задача 1.3.4).
+Новая версия применяется сразу и целиком; прежние версии сохраняются в истории, чтобы можно
+было объяснить сроки уже принятых заказов.
+
+**Этап, а не статус.** Норматив привязан к ЭТАПУ (`NORM_STAGE` в `packages/shared`), а не к
+статусу заказа. Соответствие «статус → этап» задаёт `stageForStatus()`. Это принципиально:
+когда расчёт искал норматив по имени статуса (`QUEUED_FOR_DISPATCH`), а справочник был
+заполнен этапами (`QUEUE`), совпадений было 0, и `dueAt` не устанавливался вовсе —
+см. дефект 26 в docs/15-known-issues.md.
+
+**Нераспознанная сложность.** `Order.complexity` по умолчанию `ANY`, и задать его пока
+негде: калькуляция ещё не реализована. Поэтому в справочнике есть общий норматив
+производства (`workType = ANY`, 15 раб. дней) — консервативный, равный сроку сложного
+ремонта: неизвестный заказ не должен обещать срок короче, чем может потребовать работа.
+Конкретные `SIMPLE`/`COMPLEX` приоритетнее общего.
 
 ## 4. Эскалации (ТЗ п. 2.7)
 

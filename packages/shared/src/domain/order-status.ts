@@ -136,3 +136,87 @@ export function statusColor(status: OrderStatus): string {
 export function statusStage(status: OrderStatus): OrderStage {
   return STATUS_STAGE[status];
 }
+
+/**
+ * Этапы, для которых задаются нормативы сроков (ТЗ п. 2.7).
+ *
+ * Набор шире `OrderStage`: сюда входят этапы, которым соответствует не статус
+ * заказа, а отдельный процесс — рассмотрение рекламации (`CLAIM`, ТЗ п. 2.9).
+ * Рекламация живёт в своей таблице `WarrantyClaim` и статуса заказа не имеет,
+ * поэтому её норматив нельзя выразить через `STATUS_STAGE`, но он нужен
+ * справочнику `StageNorm` и должен проверяться теми же правилами.
+ */
+export const NORM_STAGE = {
+  APPROVAL: 'APPROVAL',
+  PREPAYMENT: 'PREPAYMENT',
+  QUEUE: 'QUEUE',
+  LOGISTICS_OUT: 'LOGISTICS_OUT',
+  PRODUCTION: 'PRODUCTION',
+  LOGISTICS_IN: 'LOGISTICS_IN',
+  PICKUP: 'PICKUP',
+  CLAIM: 'CLAIM',
+} as const;
+export type NormStage = (typeof NORM_STAGE)[keyof typeof NORM_STAGE];
+/**
+ * Допустимые значения `StageNorm.stage` — единственный источник истины.
+ *
+ * ЗАЧЕМ ЭТА КОНСТАНТА. До неё существовали ТРИ несогласованных словаря этапов:
+ * справочник заполнялся именами `DISPATCH`/`DELIVERY_OUT`/`DELIVERY_IN`/`STORAGE`,
+ * домен объявлял `QUEUE`/`LOGISTICS_OUT`/`LOGISTICS_IN`/`PICKUP`, а расчёт
+ * сроков искал норматив по имени СТАТУСА (`QUEUED_FOR_DISPATCH`,
+ * `IN_PRODUCTION`). Ни одно из 13 значений не совпадало, поэтому норматив не
+ * находился никогда и `dueAt` не устанавливался — при том что справочник был
+ * заполнен, а тесты «проходили», потому что дублировали логику сервиса, а не
+ * вызывали её.
+ *
+ * Проверка принадлежности набору превращает это в ошибку на входе: неизвестный
+ * этап нельзя ни записать в справочник, ни молча не найти при расчёте.
+ */
+export const ALL_NORM_STAGES: readonly NormStage[] = Object.values(NORM_STAGE);
+/**
+ * Этап заказа по статусу — для расчёта нормативного срока.
+ *
+ * Терминальные статусы и `ACCEPTED` возвращают этап, у которого норматива нет
+ * намеренно: закрытым заказам срок не считают, а «принят в работу» означает
+ * готовность к передаче в производство, и его срок задаётся следующим этапом
+ * (`QUEUE`). Возврат `null` здесь — это осознанное «срок не меняем», а не
+ * потеря данных; расчёт обязан отличать его от «норматив не найден».
+ */
+export function stageForStatus(status: OrderStatus): OrderStage | null {
+  const stage = STATUS_STAGE[status];
+  return stage === ORDER_STAGE.CLOSED || stage === ORDER_STAGE.INTAKE ? null : stage;
+}
+/** Норматив этапа так, как он хранится в справочнике `StageNorm`. */
+export interface StageNormLike {
+  stage: string;
+  workType: string;
+  value: number;
+  unit: string;
+}
+/**
+ * Выбор норматива для этапа и типа работ.
+ *
+ * Вынесено в домен, чтобы у правила был ОДИН владелец. Раньше эту логику
+ * дублировал тест `stage-norms.spec.ts`: он проверял собственную копию, а не
+ * код сервиса, и потому «проходил» в то время, как сервис искал норматив по
+ * имени статуса и не находил ничего. Тест, проверяющий копию, не защищает от
+ * расхождения копии с оригиналом — он его и создаёт.
+ *
+ * Конкретный тип работ приоритетнее общего (`ANY`): для сложного ремонта
+ * должен применяться его норматив, а не общий срок этапа.
+ */
+export function pickStageNorm<T extends StageNormLike>(
+  norms: readonly T[],
+  stage: string,
+  workType: string | null,
+): T | null {
+  const candidates = norms.filter(
+    (norm) =>
+      norm.stage === stage &&
+      (workType === null
+        ? norm.workType === 'ANY'
+        : norm.workType === workType || norm.workType === 'ANY'),
+  );
+  if (candidates.length === 0) return null;
+  return candidates.find((norm) => norm.workType === workType) ?? candidates[0] ?? null;
+}

@@ -126,7 +126,12 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     to: ORDER_STATUS.ACCEPTED,
     actors: [ROLE.RECEIVER, ROLE.ADMIN],
     guards: [GUARD.CALC_NOT_EMPTY, GUARD.PREPAYMENT_NOT_REQUIRED],
-    effects: [EFFECT.RECALC_TOTALS, EFFECT.SET_ACCEPTED_AT, EFFECT.SET_DUE_AT],
+    // Без SET_DUE_AT: ACCEPTED — это этап INTAKE, норматива срока у него нет
+    // (docs/04 §2 в эффектах перехода dueAt не указывает). Срок появится на
+    // следующем этапе. Объявлять здесь SET_DUE_AT значило бы обещать, что срок
+    // будет назначен, тогда как назначать его нечем, — и расчёт молча оставлял
+    // бы поле пустым, что уже случалось.
+    effects: [EFFECT.RECALC_TOTALS, EFFECT.SET_ACCEPTED_AT],
     requiresReason: false,
     label: 'Принять в работу',
   },
@@ -146,7 +151,9 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     to: ORDER_STATUS.ACCEPTED,
     actors: [ROLE.RECEIVER, ROLE.ADMIN],
     guards: [GUARD.APPROVAL_EXISTS, GUARD.PREPAYMENT_NOT_REQUIRED],
-    effects: [EFFECT.SET_APPROVED_AT, EFFECT.SET_ACCEPTED_AT, EFFECT.SET_DUE_AT],
+    // Без SET_DUE_AT: ACCEPTED — этап INTAKE, норматива срока у него нет
+    // (docs/04 §2). Срок назначит переход в QUEUED_FOR_DISPATCH.
+    effects: [EFFECT.SET_APPROVED_AT, EFFECT.SET_ACCEPTED_AT],
     requiresReason: false,
     label: 'Согласовано, принят в работу',
   },
@@ -167,7 +174,8 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     to: ORDER_STATUS.ACCEPTED,
     actors: ['SYSTEM', ROLE.CASHIER, ROLE.ADMIN],
     guards: [GUARD.PREPAYMENT_SATISFIED],
-    effects: [EFFECT.SET_PREPAYMENT_CONFIRMED_AT, EFFECT.SET_DUE_AT, EFFECT.NOTIFY_NEXT_RESPIBLE],
+    // Без SET_DUE_AT по той же причине: ACCEPTED — этап INTAKE.
+    effects: [EFFECT.SET_PREPAYMENT_CONFIRMED_AT, EFFECT.NOTIFY_NEXT_RESPIBLE],
     requiresReason: false,
     label: 'Предоплата внесена, работы разблокированы',
   },

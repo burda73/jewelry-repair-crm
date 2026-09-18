@@ -11,9 +11,12 @@ import {
   ORDER_STATUS,
   computeWarrantyUntil,
   addWorkingDays,
+  addWorkingHours,
   addCalendarDays,
   isPrepaymentSatisfied,
   isPaidInFull,
+  stageForStatus,
+  pickStageNorm,
   type OrderStatus,
   type GuardCode,
   type EffectCode,
@@ -78,6 +81,8 @@ interface OrderGuardData {
   performerAssigned: boolean;
   workFinished: boolean;
   readyAt: Date | null;
+  /** Текущий нормативный срок — нужен для записи «до» в журнале статусов. */
+  dueAt: Date | null;
   workshopId: string | null;
   warrantyMonths: number;
   claimOpen: boolean;
@@ -230,6 +235,7 @@ export class OrderWorkflowService {
       performerAssigned: order.assignments.length > 0,
       workFinished: order.assignments.some((a) => a.status === 'DONE'),
       readyAt: order.readyAt,
+      dueAt: order.dueAt,
       workshopId: order.workshopId,
       warrantyMonths:
         order.works.length > 0 ? Math.max(...order.works.map((w) => w.warrantyMonths)) : 6,
@@ -281,10 +287,10 @@ export class OrderWorkflowService {
       },
     });
 
-    if (candidates.length === 0) return null;
-
-    // Конкретный тип работ важнее общего норматива.
-    return candidates.find((norm) => norm.workType === workType) ?? candidates[0] ?? null;
+    // Правило выбора — в домене (`pickStageNorm`), а не здесь: прежде его
+    // дублировал тест, проверявший собственную копию, и потому не замечал,
+    // что сервис ищет норматив по имени статуса и не находит ничего.
+    return pickStageNorm(candidates, stage, workType);
   }
 
   // -------------------------------------------------------------------------
@@ -513,22 +519,30 @@ export class OrderWorkflowService {
     // Расчёт изменения дедлайна (ТЗ п. 2.7): при входе в статус ставится
     // норматив этапа. Значения берутся из справочника, не хардкодятся.
     //
+    // Норматив ищется по ЭТАПУ, а не по имени статуса. Раньше сюда передавался
+    // `ctx.to` (например, `QUEUED_FOR_DISPATCH`), тогда как справочник заполнен
+    // этапами (`QUEUE`). Ни одно из 13 значений не совпадало, поэтому норматив
+    // не находился НИКОГДА и `dueAt` не устанавливался, хотя справочник был
+    // заполнен (проверено на проде: заказ дошёл до `QUEUED_FOR_DISPATCH` с
+    // `dueAt = NULL`).
+    //
     // Сложность заказа передаётся, чтобы для производства применить норматив
-    // SIMPLE/COMPLEX, а не общий. Для остальных этапов норматив задан как ANY,
-    // и конкретный тип работ там не влияет.
-    const norm = await this.loadStageNorm(ctx.to, order.complexity);
-    let newDueAt: Date | null = order.readyAt; // значение по умолчанию — не меняем
+    // SIMPLE/COMPLEX, а не общий.
+    const stage = stageForStatus(ctx.to);
+    const norm = stage === null ? null : await this.loadStageNorm(stage, order.complexity);
 
+    // По умолчанию срок НЕ меняется: `null` здесь означает «оставляем текущий
+    // dueAt». Прежде значением по умолчанию было `order.readyAt` — дата
+    // готовности, другое поле с другим смыслом, — и любой переход без
+    // норматива переписывал бы срок выдачи датой готовности.
+    let newDueAt: Date | null = null;
+
+    // Срок назначается только переходам с эффектом SET_DUE_AT и только когда
+    // норматив найден. Терминальные статусы этапа с нормативом не имеют
+    // (`stageForStatus` возвращает null), поэтому закрытый заказ срок не
+    // получает: он никого не торопит.
     if (effects.includes('SET_DUE_AT') && norm) {
-      if (norm.unit === 'WORKDAY') {
-        newDueAt = addWorkingDays(now, norm.value, calendar);
-      } else if (norm.unit === 'CALENDAR_DAY') {
-        newDueAt = addCalendarDays(now, norm.value);
-      } else {
-        // Рабочие часы — приблизительно, через рабочие дни с пропорцией 8 ч/день.
-        const days = Math.ceil(norm.value / 8);
-        newDueAt = addWorkingDays(now, days, calendar);
-      }
+      newDueAt = computeDueAt(now, norm, calendar);
     }
 
     return this.prisma.runInTransaction(async (tx) => {
@@ -576,7 +590,12 @@ export class OrderWorkflowService {
           orderId: order.id,
           fromStatus: order.status,
           toStatus: ctx.to,
-          stage: ctx.to,
+          // Этап, а не статус: поле называется `stage` и используется в
+          // отчётности по срокам (ТЗ п. 2.11). Прежде сюда писался статус
+          // (`QUEUED_FOR_DISPATCH`), из-за чего группировка по этапам давала
+          // столько же групп, сколько статусов, и не совпадала со справочником
+          // нормативов.
+          stage: stageForStatus(ctx.to),
           changedById: ctx.actorId,
           isSystem: ctx.actorRole === 'SYSTEM',
           reason: ctx.reason ?? null,
@@ -596,7 +615,7 @@ export class OrderWorkflowService {
           action: 'STATUS_CHANGE',
           entity: 'Order',
           entityId: order.id,
-          before: { status: order.status, dueAt: order.readyAt },
+          before: { status: order.status, dueAt: order.dueAt },
           after: { status: ctx.to, dueAt: newDueAt },
           reason: ctx.reason ?? null,
         },
@@ -643,5 +662,37 @@ export class OrderWorkflowService {
       default:
         return new ConflictException({ code: 'INVALID_TRANSITION', message });
     }
+  }
+}
+
+/**
+ * Нормативный срок этапа от момента `from` (ТЗ п. 2.7).
+ *
+ * Единицы измерения нормативов:
+ *  * `WORKDAY` — рабочие дни по производственному календарю;
+ *  * `WORKHOUR` — рабочие ЧАСЫ (`addWorkingHours`), а не «часы, поделённые на 8»:
+ *    норматив 24 рабочих часа для очереди на отправку означает три рабочих дня
+ *    ровно, но 8 рабочих часов доставки — это один день, а не «Math.ceil(8/8)»
+ *    от текущего момента: при оформлении в 18:00 прежний пересчёт давал
+ *    следующий день, тогда как доставка укладывается в остаток текущего;
+ *  * `CALENDAR_DAY` — календарные дни (хранение: 30 дней до выдачи).
+ */
+export function computeDueAt(
+  from: Date,
+  norm: { value: number; unit: string },
+  calendar: WorkingCalendar,
+): Date | null {
+  switch (norm.unit) {
+    case 'WORKDAY':
+      return addWorkingDays(from, norm.value, calendar);
+    case 'WORKHOUR':
+      return addWorkingHours(from, norm.value, calendar);
+    case 'CALENDAR_DAY':
+      return addCalendarDays(from, norm.value);
+    default:
+      // Неизвестная единица — срок не назначается. Молчаливая подстановка
+      // «похожего» значения дала бы неверное обещание клиенту; вместо этого
+      // справочник валидируется на входе (ALL_NORM_STAGES, unit).
+      return null;
   }
 }

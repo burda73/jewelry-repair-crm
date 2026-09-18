@@ -56,6 +56,42 @@ describe('Документация: статусная модель', () => {
     }
   });
 
+  /**
+   * Побочные эффекты переходов должны быть описаны в документе.
+   *
+   * ЗАЧЕМ. Это расхождение уже привело к реальному дефекту: переходы 4, 11, 13,
+   * 15 и 16 назначают нормативный срок (`SET_DUE_AT`), но в таблице документа
+   * `dueAt` у них не упоминался, а переходы 3, 5 и 7 (в `ACCEPTED`) его
+   * объявляли, хотя норматива у этапа `INTAKE` нет. Документ и код
+   * расходились в обе стороны, и ни один тест этого не видел.
+   *
+   * Проверка специально про `dueAt`: это единственный эффект, который зависит
+   * от СПРАВОЧНИКА (`StageNorm`), поэтому его рассинхронизация не проявляется
+   * ошибкой, а тихо оставляет заказ без срока.
+   */
+  it('назначение нормативного срока (dueAt) описано там же, где объявлено в коде', () => {
+    const section = workflow.split('## 2. Допустимые переходы')[1]?.split('## 3.')[0];
+    expect(section, 'в документе нет раздела «Допустимые переходы»').toBeTruthy();
+
+    const rows = (section ?? '').split('\n').filter((line) => /^\|\s*\d+\s*\|/.test(line.trim()));
+
+    const mismatches: string[] = [];
+    for (const transition of ORDER_TRANSITIONS) {
+      const row = rows.find((line) => Number(line.trim().split('|')[1]?.trim()) === transition.id);
+      if (row === undefined) continue; // отсутствие строки ловит тест выше
+      const inCode = transition.effects.includes('SET_DUE_AT');
+      const inDoc = /dueAt/i.test(row);
+      if (inCode !== inDoc) {
+        mismatches.push(
+          `переход ${transition.id} (${transition.from} → ${transition.to}): ` +
+            `в коде ${inCode ? 'есть' : 'нет'} SET_DUE_AT, в документе ${inDoc ? 'есть' : 'нет'} dueAt`,
+        );
+      }
+    }
+
+    expect(mismatches, `расхождения кода и документа:\n${mismatches.join('\n')}`).toEqual([]);
+  });
+
   it('документ не описывает больше переходов, чем реализовано', () => {
     // Ловим случай, когда переход удалили из кода, но оставили в документе.
     const tableRows = workflow.split('\n').filter((line) => /^\|\s*\d+\s*\|/.test(line.trim()));

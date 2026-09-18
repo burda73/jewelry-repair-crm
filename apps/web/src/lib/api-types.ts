@@ -643,3 +643,53 @@ export interface CalendarDayInput {
   hours?: number;
   note?: string | null;
 }
+
+/**
+ * Норматив этапа (задача 1.3.4, ТЗ п. 2.7).
+ *
+ * `stage` — ЭТАП, а не статус заказа: соответствие задаёт `stageForStatus()`.
+ * Прежде расчёт искал норматив по имени статуса и не находил ни одного — см.
+ * «Дефект 26» в docs/15-known-issues.md.
+ */
+export interface NormItem {
+  id: string;
+  /** Этап: APPROVAL | PREPAYMENT | QUEUE | LOGISTICS_OUT | PRODUCTION | LOGISTICS_IN | PICKUP | CLAIM. */
+  stage: string;
+  /** ANY — общий норматив этапа; SIMPLE/COMPLEX — для конкретной сложности. */
+  workType: string;
+  value: number;
+  /** WORKHOUR | WORKDAY | CALENDAR_DAY. */
+  unit: string;
+  escalateToRole: string | null;
+}
+
+/**
+ * Версия нормативов — набор ЦЕЛИКОМ.
+ *
+ * Правка создаёт новую версию, а не меняет строку: по прежней версии объясняют
+ * сроки уже принятых заказов. Поэтому интерфейс показывает историю, а не только
+ * действующий набор.
+ */
+export interface NormVersion {
+  version: number;
+  isActive: boolean;
+  effectiveFrom: string;
+  approvedAt: string | null;
+  approvedById: string | null;
+  norms: NormItem[];
+}
+
+/** Одна запись при создании версии. */
+export interface NormEntryInput {
+  stage: string;
+  workType: string;
+  value: number;
+  unit: string;
+  escalateToRole?: string | null;
+}
+
+export interface CreateNormVersionInput {
+  norms: NormEntryInput[];
+  changeReason: string;
+  effectiveFrom?: string;
+}

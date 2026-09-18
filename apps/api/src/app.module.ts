@@ -18,6 +18,7 @@ import { CustomersModule } from './modules/customers/customers.module';
 import { DictionariesModule } from './modules/dictionaries/dictionaries.module';
 import { UsersModule } from './modules/users/users.module';
 import { WorkingCalendarModule } from './modules/calendar/working-calendar.module';
+import { StageNormsModule } from './modules/norms/stage-norms.module';
 
 /**
  * Найти файл `.env`.
@@ -94,6 +95,7 @@ function resolveEnvPaths(): string[] {
     DictionariesModule,
     UsersModule,
     WorkingCalendarModule,
+    StageNormsModule,
   ],
   providers: [
     // Rate limit применяется глобально; отдельные эндпоинты переопределяют лимиты.

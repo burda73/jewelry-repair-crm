@@ -22,6 +22,7 @@ export const t = {
     users: 'Сотрудники',
     dictionaries: 'Справочники',
     calendar: 'Рабочий календарь',
+    norms: 'Нормативы этапов',
   },
 
   /**

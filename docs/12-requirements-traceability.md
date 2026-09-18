@@ -32,6 +32,13 @@
 | 2.7 | Срок не попадает на каникулы | `docs/00` §10 | `addWorkingDays(2026-12-25, 5)` → `2027-01-11` | `working-calendar.spec.ts`; 3 теста падают без исправления |
 | 2.7 | Календарь правится без разработчика | `docs/07` §10.2 | `GET/POST/PATCH/DELETE /working-calendar`, экран администратора | `working-calendar.service.spec.ts` (33 теста) |
 | 2.7 | Зеркальные записи не возвращаются | `docs/07` §10.2 | `CALENDAR_REDUNDANT_DAY`, миграция `20260919000000` | `working-calendar.service.spec.ts`: 4 теста падают без защиты |
+| 2.7 | **Норматив срока применяется при переходе** | `docs/04` §3 | `stageForStatus()` + `pickStageNorm()` + `computeDueAt()` | `order-workflow.service.spec.ts` (19 тестов); реальный переход проставил `dueAt` на живом API (до исправления — 0 из 13) |
+| 2.7 | Нормативы настраиваются администратором | `docs/07` §10.3 | `GET/POST /stage-norms/versions`, экран администратора | `stage-norms.service.spec.ts` (18 тестов), `stage-norms.spec.ts` (15) |
+| 2.7 | Единица нормативa соблюдается | `docs/04` §3 | `WORKDAY` / `WORKHOUR` / `CALENDAR_DAY` в `computeDueAt()` | `order-workflow.service.spec.ts`: 8 тестов единиц измерения |
+| 2.7 | Неизвестная единица не даёт срока | `docs/04` §3 | `computeDueAt()` возвращает `null` | тест падает без защиты: «похожее» значение обещало бы неверную дату |
+| 2.7 | Словарь этапов един | `docs/15` «Дефект 26» | `NORM_STAGE` + `ALL_NORM_STAGES` в домене, миграция `20260920000000` | `stage-norms.spec.ts`: тесты на недостижимые и чужие этапы |
+| 2.7 | Каждый переход с `SET_DUE_AT` имеет норматив | `docs/04` §2 | инвариант «статус → этап → норматив» | `order-workflow.service.spec.ts`: 2 теста падают, если вернуть `SET_DUE_AT` переходу в `ACCEPTED` |
+| 2.7 | Документация эффектов не расходится с кодом | `docs/04` §2 | сверка `SET_DUE_AT` ↔ `dueAt` в таблице переходов | `docs-sync.spec.ts`: падает с перечнем расхождений |
 | 2.4 | Согласование суммы создаёт корректировку | `docs/03` §3.5 | `applyAdjustment()` из `createApproval()` | прогон API: 450→400, скидка 50 |
 | 2.4 | **Интеграция с IP-АТС** | `docs/05` §2 | `CallRecording`, `TelephonyPort`, скоринг сопоставления | этап 4 |
 | 2.4 | Обязательный пункт о записи разговоров | `docs/02` §5.6 | guard `CONSENT_CALL_RECORDING`, `Customer.consentCallRecording` | `order-transitions.spec.ts` |

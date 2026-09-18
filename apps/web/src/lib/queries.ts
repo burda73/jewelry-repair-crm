@@ -55,6 +55,8 @@ import type {
   CalendarDayInput,
   CalendarListResponse,
   CalendarMonthSummary,
+  NormVersion,
+  CreateNormVersionInput,
 } from '@/lib/api-types';
 import type { CustomerInput, OrderStatus } from '@app/shared';
 
@@ -1001,5 +1003,58 @@ export function useDeleteCalendarDay(): UseMutationResult<
   return useMutation<{ removed: true }, Error, { id: string }>({
     mutationFn: ({ id }) => api.delete<{ removed: true }>(`/working-calendar/${id}`),
     onSuccess: invalidate,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Нормативы этапов (задача 1.3.4, ТЗ п. 2.7)
+// ---------------------------------------------------------------------------
+
+export const normKeys = {
+  all: ['stage-norms'] as const,
+  current: () => ['stage-norms', 'current'] as const,
+  versions: () => ['stage-norms', 'versions'] as const,
+};
+
+/** Действующая версия нормативов. `null` — нормативы не заданы. */
+export function useCurrentNorms(): UseQueryResult<NormVersion | null, Error> {
+  return useQuery<NormVersion | null, Error>({
+    queryKey: normKeys.current(),
+    queryFn: () => api.get<NormVersion | null>('/stage-norms'),
+    staleTime: DICTIONARY_ADMIN_STALE_TIME,
+  });
+}
+
+/**
+ * История версий.
+ *
+ * Возвращаются все версии, а не только действующая: смысл истории в том, чтобы
+ * объяснить срок уже принятого заказа.
+ */
+export function useNormVersions(): UseQueryResult<NormVersion[], Error> {
+  return useQuery<NormVersion[], Error>({
+    queryKey: normKeys.versions(),
+    queryFn: () => api.get<NormVersion[]>('/stage-norms/versions'),
+    staleTime: DICTIONARY_ADMIN_STALE_TIME,
+  });
+}
+
+/**
+ * Создать новую версию нормативов.
+ *
+ * Инвалидируется всё семейство ключей: новая версия меняет и действующий набор,
+ * и историю, а рассинхронизация показала бы администратору старые значения.
+ */
+export function useCreateNormVersion(): UseMutationResult<
+  NormVersion,
+  Error,
+  CreateNormVersionInput
+> {
+  const queryClient = useQueryClient();
+  return useMutation<NormVersion, Error, CreateNormVersionInput>({
+    mutationFn: (input) => api.post<NormVersion>('/stage-norms/versions', input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: normKeys.all });
+    },
   });
 }

@@ -40,6 +40,7 @@ const NAV_ITEMS: NavItem[] = [
   // Календарь виден только администратору: он определяет сроки всех заказов,
   // поэтому право здесь `settings:manage` без второго варианта.
   { href: '/calendar', label: t.nav.calendar, permissions: ['settings:manage'] },
+  { href: '/norms', label: t.nav.norms, permissions: ['settings:manage'] },
 ];
 
 /**
