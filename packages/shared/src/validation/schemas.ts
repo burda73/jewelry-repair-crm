@@ -265,19 +265,73 @@ export const reversePaymentSchema = z.object({
 // Логистика (ТЗ п. 2.6)
 // ---------------------------------------------------------------------------
 
-export const createBatchSchema = z.object({
-  direction: z.enum(['TO_PRODUCTION', 'TO_STORE']),
-  fromStoreId: z.string().cuid().optional(),
-  toStoreId: z.string().cuid().optional(),
-  toWorkshopId: z.string().cuid().optional(),
-  courierId: z.string().cuid().optional(),
-  plannedAt: z.coerce.date(),
-  comment: z.string().max(1000).optional(),
-});
+export const createBatchSchema = z
+  .object({
+    direction: z.enum(['TO_PRODUCTION', 'TO_STORE']),
+    fromStoreId: z.string().cuid().optional(),
+    toStoreId: z.string().cuid().optional(),
+    toWorkshopId: z.string().cuid().optional(),
+    courierId: z.string().cuid().nullable().optional(),
+    plannedAt: z.coerce.date(),
+    comment: z.string().max(1000).nullable().optional(),
+    /*
+     * Состав можно задать сразу при создании. Это не дублирование
+     * `batchOrdersSchema`: партию часто создают из уже отобранных в интерфейсе
+     * заказов, и два запроса вместо одного дали бы партию без состава, если
+     * второй не дошёл.
+     */
+    orderIds: z.array(z.string().cuid()).max(500).optional(),
+  })
+  .strict()
+  // Согласованность маршрута и направления: партия «в цех» без цеха или
+  // «в магазин» без магазина выглядит допустимой, но её нельзя выполнить.
+  .refine(
+    (data) =>
+      data.direction === 'TO_PRODUCTION'
+        ? data.toWorkshopId !== undefined
+        : data.toStoreId !== undefined,
+    {
+      message: 'Для партии в цех нужен цех, для партии в магазин — магазин назначения',
+      path: ['toWorkshopId'],
+    },
+  )
+  .refine(
+    (data) =>
+      data.direction !== 'TO_STORE' ||
+      data.fromStoreId === undefined ||
+      data.fromStoreId !== data.toStoreId,
+    {
+      message: 'Магазин отправления и назначения не могут совпадать',
+      path: ['toStoreId'],
+    },
+  );
 
 export const batchOrdersSchema = z.object({
-  orderIds: z.array(z.string().cuid()).min(1, 'Выберите хотя бы один заказ'),
+  orderIds: z.array(z.string().cuid()).min(1, 'Выберите хотя бы один заказ').max(500),
 });
+
+/** Исключение заказа из партии: причина обязательна (docs/07 §8). */
+export const removeBatchOrderSchema = z.object({
+  reason: z.string().trim().min(3, 'Укажите причину').max(300),
+});
+
+/** Список партий: фильтры и keyset-пагинация — как у списка заказов. */
+export const batchListQuerySchema = z
+  .object({
+    status: z
+      .array(z.enum(['DRAFT', 'ACT_FORMED', 'IN_TRANSIT', 'RECEIVED', 'CANCELLED']))
+      .optional(),
+    direction: z.enum(['TO_PRODUCTION', 'TO_STORE']).optional(),
+    fromStoreId: z.string().cuid().optional(),
+    toWorkshopId: z.string().cuid().optional(),
+    plannedOn: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата в формате ГГГГ-ММ-ДД')
+      .optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    cursor: z.string().min(1).optional(),
+  })
+  .strict();
 
 // ---------------------------------------------------------------------------
 // Производство
@@ -819,6 +873,9 @@ export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
 export type ApprovalInput = z.infer<typeof approvalSchema>;
 export type PaymentInput = z.infer<typeof paymentSchema>;
 export type CreateBatchInput = z.infer<typeof createBatchSchema>;
+export type AddBatchOrdersInput = z.infer<typeof batchOrdersSchema>;
+export type RemoveBatchOrderInput = z.infer<typeof removeBatchOrderSchema>;
+export type BatchListQueryInput = z.infer<typeof batchListQuerySchema>;
 export type PerformerInput = z.infer<typeof performerSchema>;
 export type AssignmentInput = z.infer<typeof assignmentSchema>;
 export type PriceListItemInput = z.infer<typeof priceListItemSchema>;

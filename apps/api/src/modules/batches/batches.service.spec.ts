@@ -1,0 +1,733 @@
+/**
+ * Тесты сервиса партий (задача 2.1, ТЗ п. 2.6).
+ *
+ * ЗАЧЕМ ЭТИ ТЕСТЫ. Партия — это физическая перевозка изделий клиентов с актом
+ * приёма-передачи. Проверяются правила, которые схема валидации проверить не
+ * может, потому что они зависят от состояния базы:
+ *
+ *  * состав проверяется ЦЕЛИКОМ до первой записи: иначе половина заказов
+ *    добавилась бы, а запрос завершился ошибкой, и логист не понял бы, что
+ *    именно попало в партию;
+ *  * заказ, уже лежащий в активной партии, отклоняется: иначе он уехал бы в
+ *    двух партиях, и его статус перевели бы дважды;
+ *  * заказ, исключённый из партии, можно вернуть — строка не удаляется, а
+ *    помечается причиной, и повторное включение снимает отметку;
+ *  * отменённая и принятая партии НЕ блокируют заказ: иначе после отмены рейса
+ *    заказ навсегда остался бы «в партии», которой уже нет;
+ *  * лимит состава не задан по умолчанию: включённый «на глазок» он
+ *    блокировал бы работу точки (решение по задаче 2.1).
+ *
+ * Prisma подменяется управляемым двойником: проверяются правила сервиса, а не
+ * поведение Postgres.
+ */
+
+import { describe, expect, it, vi } from 'vitest';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BatchesService } from './batches.service';
+import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
+import { DATA_SCOPE, ROLE } from '@app/shared';
+
+const LOGIST_ID = 'cmu4cpwbg000bdl0ubltmh740';
+const BATCH_ID = 'cmu5p70yu0001bm7pzqlcawsw';
+const STORE_MSK1 = 'cmu5p70yu0002bm7pzqlcawsw';
+const STORE_SPB1 = 'cmu5p70yu0003bm7pzqlcawsw';
+const WORKSHOP_1 = 'cmu5p70yu0004bm7pzqlcawsw';
+const WORKSHOP_2 = 'cmu5p70yu0005bm7pzqlcawsw';
+const ORDER_1 = 'cmu5p70yu0006bm7pzqlcawsw';
+const ORDER_2 = 'cmu5p70yu0007bm7pzqlcawsw';
+
+const LOGIST: AuthenticatedUser = {
+  id: LOGIST_ID,
+  email: 'logist@remixgold.ru',
+  fullName: 'Логист',
+  roles: [ROLE.LOGISTICIAN],
+  primaryRole: ROLE.LOGISTICIAN,
+  permissions: ['logistics:read', 'logistics:manage'],
+  scope: DATA_SCOPE.PRODUCTION,
+  storeIds: [],
+  mustChangePassword: false,
+};
+
+/** Приёмщик: видит только партии своего магазина. */
+const RECEIVER: AuthenticatedUser = {
+  ...LOGIST,
+  id: 'cmu4cpwbg000bdl0ubltmh741',
+  roles: [ROLE.RECEIVER],
+  primaryRole: ROLE.RECEIVER,
+  scope: DATA_SCOPE.STORES,
+  storeIds: [STORE_MSK1],
+};
+
+const batchRow = (overrides: Record<string, unknown> = {}) => ({
+  id: BATCH_ID,
+  batchNo: 'П-250916-004',
+  direction: 'TO_PRODUCTION',
+  status: 'DRAFT',
+  fromStoreId: STORE_MSK1,
+  toStoreId: null,
+  toWorkshopId: WORKSHOP_1,
+  courierId: null,
+  plannedAt: new Date('2025-09-16T07:00:00Z'),
+  dispatchedAt: null,
+  receivedAt: null,
+  itemsCount: 0,
+  comment: null,
+  createdById: LOGIST_ID,
+  createdAt: new Date('2025-09-16T07:00:00Z'),
+  updatedAt: new Date('2025-09-16T07:00:00Z'),
+  fromStore: { name: 'Магазин на Тверской' },
+  toStore: null,
+  toWorkshop: { name: 'Центральный цех' },
+  // `findOne` читает состав вместе с партией: без `items` двойник не
+  // воспроизводит форму ответа Prisma и тест падает не на правиле сервиса.
+  items: [],
+  ...overrides,
+});
+
+const orderRow = (overrides: Record<string, unknown> = {}) => ({
+  id: ORDER_1,
+  orderNo: 'MSK1-2609-000001',
+  status: 'QUEUED_FOR_DISPATCH',
+  createdStoreId: STORE_MSK1,
+  pickupStoreId: STORE_MSK1,
+  workshopId: null,
+  ...overrides,
+});
+
+/** Строки этой партии и строки других активных партий — задаются тестом отдельно. */
+const prismaMock: {
+  existingRows?: Array<{ orderId: string; removedAt: Date | null }>;
+  otherBatchRows?: Array<{ orderId: string }>;
+} = {};
+
+function createPrismaMock() {
+  prismaMock.existingRows = [];
+  prismaMock.otherBatchRows = [];
+  const tx = {
+    batch: {
+      create: vi.fn(async () => batchRow()),
+      findFirst: vi.fn(async () => batchRow()),
+      findMany: vi.fn(async () => []),
+      update: vi.fn(),
+    },
+    batchItem: {
+      findUnique: vi.fn(async () => null),
+      /*
+       * К `batchItem` идут ДВА разных запроса, и двойник обязан их различать:
+       *  * «заказы в других активных партиях» — в `where` есть
+       *    `batch.id.not`;
+       *  * «строки этой партии по списку заказов» — в `where` есть
+       *    `orderId.in`.
+       * Иначе один и тот же ответ попадал бы в обе проверки, и тест переставал
+       * бы различать две разные причины отказа.
+       */
+      findMany: vi.fn(async (args: { where?: Record<string, unknown> } = {}) => {
+        const where = (args.where ?? {}) as {
+          orderId?: { in?: string[] };
+          batch?: { id?: { not?: string } };
+        };
+        if (where.orderId?.in !== undefined) {
+          return (prismaMock.existingRows ?? []).filter((row: { orderId: string }) =>
+            where.orderId?.in?.includes(row.orderId),
+          );
+        }
+        return prismaMock.otherBatchRows ?? [];
+      }),
+      count: vi.fn(async () => 0),
+      upsert: vi.fn(),
+      update: vi.fn(),
+    },
+    order: { findMany: vi.fn(async () => [orderRow()]) },
+    counter: { upsert: vi.fn(async () => ({ value: 4 })) },
+    setting: { findUnique: vi.fn(async () => null) },
+    auditLog: { create: vi.fn() },
+  };
+
+  const prisma = {
+    batch: {
+      findFirst: vi.fn(async () => batchRow()),
+      findMany: vi.fn(async () => []),
+    },
+    batchItem: { findMany: vi.fn(async () => []) },
+    order: { findMany: vi.fn(async () => []) },
+    setting: { findUnique: vi.fn(async () => null) },
+    runInTransaction: vi.fn(async (callback: (t: typeof tx) => Promise<unknown>) => callback(tx)),
+    _tx: tx,
+  };
+
+  return prisma;
+}
+
+function makeService(prisma: ReturnType<typeof createPrismaMock>) {
+  return new BatchesService(prisma as never);
+}
+
+describe('BatchesService: создание партии', () => {
+  it('номер партии берёт ПЛАНОВУЮ дату отправки, а не дату создания', async () => {
+    /*
+     * Партия формируется по графику (ТЗ п. 2.6): рейс на 16 сентября логист
+     * планирует заранее. Номер `П-250916-…` означает «партия рейса 16
+     * сентября»; номер по дате создания говорил бы о другом дне и не совпадал
+     * бы ни с актом, ни с графиком курьера.
+     *
+     * Текущая дата в тесте заведомо другая — иначе проверка не отличала бы
+     * плановую дату от момента создания.
+     */
+    const prisma = createPrismaMock();
+    prisma._tx.counter.upsert.mockResolvedValue({ value: 4 });
+
+    await makeService(prisma).create(
+      {
+        direction: 'TO_PRODUCTION',
+        fromStoreId: STORE_MSK1,
+        toWorkshopId: WORKSHOP_1,
+        plannedAt: new Date('2025-09-16T07:00:00Z'),
+      },
+      LOGIST,
+    );
+
+    const counterCall = prisma._tx.counter.upsert.mock.calls[0]?.[0] as {
+      where: { scope: string };
+    };
+    // Счётчик — на календарный день, привязанный к дате в номере.
+    expect(counterCall.where.scope).toBe('BATCH:20250916');
+
+    const createCall = prisma._tx.batch.create.mock.calls[0]?.[0] as {
+      data: { batchNo: string };
+    };
+    expect(createCall.data.batchNo).toBe('П-250916-004');
+  });
+
+  it('22:00 UTC — уже следующие московские сутки', async () => {
+    // Дефект 28: номер по UTC отставал на день для документов, созданных
+    // после полуночи по Москве.
+    const prisma = createPrismaMock();
+    prisma._tx.counter.upsert.mockResolvedValue({ value: 1 });
+
+    await makeService(prisma).create(
+      {
+        direction: 'TO_PRODUCTION',
+        toWorkshopId: WORKSHOP_1,
+        plannedAt: new Date('2025-09-16T22:00:00Z'),
+      },
+      LOGIST,
+    );
+
+    const createCall = prisma._tx.batch.create.mock.calls[0]?.[0] as {
+      data: { batchNo: string };
+    };
+    expect(createCall.data.batchNo).toBe('П-250917-001');
+  });
+
+  it('без плановой даты берётся текущий момент', async () => {
+    // Партия отправляется «сейчас»: номер должен соответствовать сегодняшнему
+    // дню, а не быть пустым.
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).create(
+      { direction: 'TO_PRODUCTION', toWorkshopId: WORKSHOP_1, plannedAt: new Date() },
+      LOGIST,
+    );
+
+    const createCall = prisma._tx.batch.create.mock.calls[0]?.[0] as {
+      data: { batchNo: string };
+    };
+    expect(createCall.data.batchNo).toMatch(/^П-\d{6}-\d{3}$/);
+  });
+
+  it('счётчик инкрементируется, а не перезаписывается', async () => {
+    // Иначе номер повторился бы, и уникальный индекс `batchNo` отклонил бы
+    // вторую партию вместо понятной ошибки.
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).create(
+      { direction: 'TO_PRODUCTION', toWorkshopId: WORKSHOP_1, plannedAt: new Date() },
+      LOGIST,
+    );
+
+    const call = prisma._tx.counter.upsert.mock.calls[0]?.[0] as {
+      update: { value: { increment: number } };
+    };
+    expect(call.update.value.increment).toBe(1);
+  });
+
+  it('пишет партию в журнал аудита', async () => {
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).create(
+      { direction: 'TO_PRODUCTION', toWorkshopId: WORKSHOP_1, plannedAt: new Date() },
+      LOGIST,
+    );
+
+    expect(prisma._tx.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('отклоняет партию в цех без цеха', async () => {
+    // Партию нельзя выполнить: машине некуда ехать.
+    const prisma = createPrismaMock();
+
+    await expect(
+      makeService(prisma).create({ direction: 'TO_PRODUCTION', plannedAt: new Date() }, LOGIST),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('отклоняет партию в магазин без магазина назначения', async () => {
+    const prisma = createPrismaMock();
+
+    await expect(
+      makeService(prisma).create({ direction: 'TO_STORE', plannedAt: new Date() }, LOGIST),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('отклоняет партию, где магазин отправления и назначения совпадают', async () => {
+    const prisma = createPrismaMock();
+
+    await expect(
+      makeService(prisma).create(
+        {
+          direction: 'TO_STORE',
+          fromStoreId: STORE_MSK1,
+          toStoreId: STORE_MSK1,
+          plannedAt: new Date(),
+        },
+        LOGIST,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('BatchesService: состав партии', () => {
+  it('добавляет подходящий заказ', async () => {
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
+
+    expect(prisma._tx.batchItem.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma._tx.batch.update).toHaveBeenCalled();
+  });
+
+  it('НЕ пишет ничего, если хотя бы один заказ не подходит', async () => {
+    /*
+     * Ключевая проверка. Проверка идёт по всем заказам ДО первой записи: иначе
+     * половина состава добавилась бы, а запрос завершился ошибкой, и логист не
+     * понял бы, что именно попало в партию.
+     */
+    const prisma = createPrismaMock();
+    prisma._tx.order.findMany.mockResolvedValue([
+      orderRow({ id: ORDER_1 }),
+      orderRow({ id: ORDER_2, status: 'ACCEPTED' }),
+    ]);
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1, ORDER_2] }, LOGIST),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(prisma._tx.batchItem.upsert).not.toHaveBeenCalled();
+    expect(prisma._tx.batch.update).not.toHaveBeenCalled();
+  });
+
+  it('сообщает номер заказа в причине отказа', async () => {
+    // «Заказ не подходит» без номера бесполезно: в партии десятки заказов.
+    const prisma = createPrismaMock();
+    prisma._tx.order.findMany.mockResolvedValue([orderRow({ status: 'ACCEPTED' })]);
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST),
+    ).rejects.toThrow(/MSK1-2609-000001/);
+  });
+
+  it('отклоняет заказ, уже лежащий в активной партии', async () => {
+    const prisma = createPrismaMock();
+    prismaMock.otherBatchRows = [{ orderId: ORDER_1 }];
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('исключает саму партию из проверки «уже в партии»', async () => {
+    // Иначе заказы, уже лежащие в этой партии, считались бы занятыми другой.
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
+
+    const call = prisma._tx.batchItem.findMany.mock.calls[0]?.[0] as {
+      where: { batch: { id?: { not: string } } };
+    };
+    expect(call.where.batch.id?.not).toBe(BATCH_ID);
+  });
+
+  it('НЕ начисляет счётчик за заказ, уже активный в этой партии', async () => {
+    /*
+     * Дефект, найденный сквозной проверкой на живом сервере: повторное
+     * добавление заказа, который уже лежит в партии, не создавало новую строку
+     * (уникальный ключ `(batchId, orderId)`), но счётчик всё равно рос. В партии
+     * `П-250916-001` поле показывало 1 при 0 активных строках, и логист видел в
+     * партии заказ, которого там нет.
+     *
+     * Двойник возвращает активную строку этой же партии: заказ уже в ней.
+     */
+    const prisma = createPrismaMock();
+    prismaMock.existingRows = [{ orderId: ORDER_1, removedAt: null }];
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    // Главное: счётчик не тронут.
+    expect(prisma._tx.batch.update).not.toHaveBeenCalled();
+    expect(prisma._tx.batchItem.upsert).not.toHaveBeenCalled();
+  });
+
+  it('начисляет счётчик только за возвращённый заказ', async () => {
+    // Строка осталась от прежнего состава: заказ исключали и возвращают.
+    // Начисление на 1 корректно — активных строк станет ровно на одну больше.
+    const prisma = createPrismaMock();
+    prismaMock.existingRows = [{ orderId: ORDER_1, removedAt: new Date() }];
+
+    await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
+
+    const call = prisma._tx.batch.update.mock.calls[0]?.[0] as {
+      data: { itemsCount: { increment: number } };
+    };
+    expect(call.data.itemsCount.increment).toBe(1);
+  });
+
+  it('повторное включение заказа снимает отметку об исключении', async () => {
+    // Строка не удаляется, а помечается `removedAt`: уникальный ключ
+    // (batchId, orderId) не даст вставить её второй раз.
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
+
+    const call = prisma._tx.batchItem.upsert.mock.calls[0]?.[0] as {
+      update: { removedAt: null };
+    };
+    expect(call.update.removedAt).toBeNull();
+  });
+
+  it('отклоняет повторяющиеся заказы в одном запросе', async () => {
+    const prisma = createPrismaMock();
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1, ORDER_1] }, LOGIST),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('отклоняет неизвестный заказ', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.order.findMany.mockResolvedValue([]);
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('пустой список заказов отклоняется схемой', async () => {
+    const prisma = createPrismaMock();
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [] }, LOGIST),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('BatchesService: лимит состава', () => {
+  it('без настройки лимита партия не ограничена', async () => {
+    // Лимит не задан ни в ТЗ, ни в документации: включённый «на глазок» он
+    // блокировал бы работу точки.
+    const prisma = createPrismaMock();
+    prisma._tx.batchItem.count.mockResolvedValue(500);
+
+    await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
+
+    expect(prisma._tx.batchItem.upsert).toHaveBeenCalled();
+  });
+
+  it('настроенный лимит соблюдается', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.setting.findUnique.mockResolvedValue({ key: 'logistics.batchMaxItems', value: 2 });
+    prisma._tx.batchItem.count.mockResolvedValue(2);
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('настроенный лимит пропускает состав в пределах значения', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.setting.findUnique.mockResolvedValue({ key: 'logistics.batchMaxItems', value: 10 });
+    prisma._tx.batchItem.count.mockResolvedValue(0);
+
+    await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
+
+    expect(prisma._tx.batchItem.upsert).toHaveBeenCalled();
+  });
+
+  it('бессмысленное значение настройки не превращается в «нельзя ничего»', async () => {
+    // Настройка есть, но значение мусорное: лимит не применяется, а не
+    // блокирует работу. Иначе опечатка администратора остановила бы логистику.
+    const prisma = createPrismaMock();
+    prisma._tx.setting.findUnique.mockResolvedValue({ key: 'logistics.batchMaxItems', value: -5 });
+
+    await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
+
+    expect(prisma._tx.batchItem.upsert).toHaveBeenCalled();
+  });
+});
+
+describe('BatchesService: исключение заказа', () => {
+  it('помечает строку причиной, а не удаляет её', async () => {
+    // Состав входит в акт приёма-передачи: «куда делся заказ» должно быть
+    // объяснимо после подписания.
+    const prisma = createPrismaMock();
+    prisma._tx.batchItem.findUnique.mockResolvedValue({ orderId: ORDER_1, removedAt: null });
+
+    await makeService(prisma).removeOrder(
+      BATCH_ID,
+      ORDER_1,
+      { reason: 'Изделие не готово' },
+      LOGIST,
+    );
+
+    const call = prisma._tx.batchItem.update.mock.calls[0]?.[0] as {
+      data: { removeReason: string; removedAt: Date };
+    };
+    expect(call.data.removeReason).toBe('Изделие не готово');
+    expect(call.data.removedAt).toBeInstanceOf(Date);
+  });
+
+  it('уменьшает счётчик состава', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batchItem.findUnique.mockResolvedValue({ orderId: ORDER_1, removedAt: null });
+
+    await makeService(prisma).removeOrder(
+      BATCH_ID,
+      ORDER_1,
+      { reason: 'Изделие не готово' },
+      LOGIST,
+    );
+
+    const call = prisma._tx.batch.update.mock.calls[0]?.[0] as {
+      data: { itemsCount: { decrement: number } };
+    };
+    expect(call.data.itemsCount.decrement).toBe(1);
+  });
+
+  it('пишет причину в журнал аудита', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batchItem.findUnique.mockResolvedValue({ orderId: ORDER_1, removedAt: null });
+
+    await makeService(prisma).removeOrder(
+      BATCH_ID,
+      ORDER_1,
+      { reason: 'Изделие не готово' },
+      LOGIST,
+    );
+
+    const call = prisma._tx.auditLog.create.mock.calls[0]?.[0] as {
+      data: { after: { reason: string } };
+    };
+    expect(call.data.after.reason).toBe('Изделие не готово');
+  });
+
+  it('отклоняет слишком короткую причину', async () => {
+    const prisma = createPrismaMock();
+
+    await expect(
+      makeService(prisma).removeOrder(BATCH_ID, ORDER_1, { reason: 'ок' }, LOGIST),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('отклоняет заказ, которого нет в партии', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batchItem.findUnique.mockResolvedValue(null);
+
+    await expect(
+      makeService(prisma).removeOrder(BATCH_ID, ORDER_1, { reason: 'Изделие не готово' }, LOGIST),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('отклоняет повторное исключение того же заказа', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batchItem.findUnique.mockResolvedValue({ orderId: ORDER_1, removedAt: new Date() });
+
+    await expect(
+      makeService(prisma).removeOrder(BATCH_ID, ORDER_1, { reason: 'Изделие не готово' }, LOGIST),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('BatchesService: область видимости', () => {
+  it('логист видит все партии', async () => {
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).list({ limit: 50 }, LOGIST);
+
+    const call = prisma.batch.findMany.mock.calls[0]?.[0] as {
+      where: { AND: unknown[] };
+    };
+    expect(call.where.AND[1]).toEqual({});
+  });
+
+  it('приёмщик видит только партии своих магазинов', async () => {
+    // Иначе приёмщик одной точки видел бы рейсы всех магазинов сети.
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).list({ limit: 50 }, RECEIVER);
+
+    const call = prisma.batch.findMany.mock.calls[0]?.[0] as {
+      where: { AND: Array<{ OR?: Array<{ fromStoreId?: { in: string[] } }> }> };
+    };
+    const scope = call.where.AND[1] as { OR: Array<{ fromStoreId?: { in: string[] } }> };
+    expect(scope.OR[0]?.fromStoreId?.in).toEqual([STORE_MSK1]);
+  });
+
+  it('аудитор видит все партии, хотя его область не ALL_STORES', async () => {
+    /*
+     * Дефект, найденный сквозной проверкой: аудитор имеет право
+     * `logistics:read` (docs/02 §4, «Логистика: партия, акт» — «Р»), но его
+     * область — `READ_ALL`, а не `ALL_STORES`. Пока исключался только
+     * `ALL_STORES`, аудитор получал пустой список: право на чтение без единой
+     * доступной записи.
+     */
+    const prisma = createPrismaMock();
+    const auditor = { ...RECEIVER, scope: 'READ_ALL' as const, storeIds: [] };
+
+    await makeService(prisma).list({ limit: 50 }, auditor);
+
+    const call = prisma.batch.findMany.mock.calls[0]?.[0] as { where: { AND: unknown[] } };
+    expect(call.where.AND[1]).toEqual({});
+  });
+
+  it('руководитель производства видит все партии', async () => {
+    // Партия не привязана к статусу заказа: без общего обзора логист не смог бы
+    // спланировать перевозку между точками.
+    const prisma = createPrismaMock();
+    const pm = { ...LOGIST, scope: 'PRODUCTION' as const, storeIds: [] };
+
+    await makeService(prisma).list({ limit: 50 }, pm);
+
+    const call = prisma.batch.findMany.mock.calls[0]?.[0] as { where: { AND: unknown[] } };
+    expect(call.where.AND[1]).toEqual({});
+  });
+
+  it('приёмщик без магазинов не видит ничего', async () => {
+    // Роль без магазинов не должна видеть чужие рейсы: возвращать всё было бы
+    // утечкой.
+    const prisma = createPrismaMock();
+    const orphan = { ...RECEIVER, storeIds: [] };
+
+    await makeService(prisma).list({ limit: 50 }, orphan);
+
+    const call = prisma.batch.findMany.mock.calls[0]?.[0] as {
+      where: { AND: Array<{ id?: string }> };
+    };
+    expect(call.where.AND[1]).toEqual({ id: '__none__' });
+  });
+
+  it('не отдаёт партию вне области видимости', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(null);
+
+    await expect(makeService(prisma).findOne(BATCH_ID, RECEIVER)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+});
+
+describe('BatchesService: список', () => {
+  it('фильтр по плановой дате сравнивается по московским суткам', async () => {
+    /*
+     * `plannedAt` хранится моментом, а рабочий день точки — московский. При
+     * сравнении с началом суток UTC партия, назначенная на 1 октября 01:00 МСК,
+     * попала бы в выборку за 30 сентября.
+     */
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).list({ limit: 50, plannedOn: '2025-10-01' }, LOGIST);
+
+    const call = prisma.batch.findMany.mock.calls[0]?.[0] as {
+      where: { AND: Array<{ plannedAt?: { gte: Date; lt: Date } }> };
+    };
+    const range = call.where.AND[0]?.plannedAt;
+    expect(range?.gte.toISOString()).toBe('2025-09-30T21:00:00.000Z');
+    expect(range?.lt.toISOString()).toBe('2025-10-01T21:00:00.000Z');
+  });
+
+  it('курсор указывает на следующую страницу', async () => {
+    // Сортировка по `createdAt` неустойчива при совпадении времени: часть
+    // партий могла бы выпасть между страницами.
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([
+      batchRow({ id: 'b1' }),
+      batchRow({ id: 'b2' }),
+      batchRow({ id: 'b3' }),
+    ]);
+
+    const result = await makeService(prisma).list({ limit: 2 }, LOGIST);
+
+    expect(result.items).toHaveLength(2);
+    expect(result.nextCursor).toBe('b2');
+  });
+
+  it('последняя страница не содержит курсора', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([batchRow({ id: 'b1' })]);
+
+    const result = await makeService(prisma).list({ limit: 2 }, LOGIST);
+
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('одиночный статус в адресе приводится к массиву', async () => {
+    // `?status=DRAFT` Express отдаёт строкой, а схема ждёт массив: без
+    // приведения обычный фильтр не проходил бы проверку.
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).list({ limit: '50', status: 'DRAFT' }, LOGIST);
+
+    const call = prisma.batch.findMany.mock.calls[0]?.[0] as {
+      where: { AND: Array<{ status?: { in: string[] } }> };
+    };
+    expect(call.where.AND[0]?.status?.in).toEqual(['DRAFT']);
+  });
+
+  it('слишком большой limit отклоняется', async () => {
+    const prisma = createPrismaMock();
+
+    await expect(makeService(prisma).list({ limit: 5000 }, LOGIST)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+});
+
+describe('BatchesService: кандидаты в состав', () => {
+  it('берёт кандидатов по статусу, соответствующему направлению', async () => {
+    // Показывать логисту заведомо неподходящие заказы значит заставлять его
+    // читать длинный список отказов.
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).candidates(BATCH_ID, LOGIST);
+
+    const call = prisma.order.findMany.mock.calls[0]?.[0] as {
+      where: { status: string };
+    };
+    expect(call.where.status).toBe('QUEUED_FOR_DISPATCH');
+  });
+
+  it('возвращает и подходящие, и отклонённые с причиной', async () => {
+    const prisma = createPrismaMock();
+    prisma.order.findMany.mockResolvedValue([
+      orderRow({ id: ORDER_1, orderNo: 'MSK1-1' }),
+      orderRow({ id: ORDER_2, orderNo: 'MSK1-2', workshopId: WORKSHOP_2 }),
+    ]);
+
+    const result = await makeService(prisma).candidates(BATCH_ID, LOGIST);
+
+    expect(result.eligible.map((o) => o.orderNo)).toEqual(['MSK1-1']);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toBe('WRONG_WORKSHOP');
+    expect(result.rejected[0]?.message).toBeTruthy();
+  });
+});
