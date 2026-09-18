@@ -141,10 +141,17 @@ function createPrismaMock() {
     batchAct: {
       findFirst: vi.fn(async () => null),
       create: vi.fn(async () => ({ id: 'act-1', actNo: 'АПП-25-000001' })),
+      update: vi.fn(),
     },
     counter: { upsert: vi.fn(async () => ({ value: 4 })) },
     setting: { findUnique: vi.fn(async () => null) },
     auditLog: { create: vi.fn() },
+    user: { findMany: vi.fn(async () => []) },
+    // Идентификатор намеренно ОТЛИЧАЕТСЯ от `fileObject.id`: `pdfFileId`
+    // ссылается на `Document`, и если подставить туда идентификатор файла,
+    // тест обязан упасть.
+    document: { create: vi.fn(async () => ({ id: 'doc-1' })) },
+    fileObject: { create: vi.fn(async () => ({ id: 'file-1' })) },
   };
 
   const prisma = {
@@ -164,8 +171,21 @@ function createPrismaMock() {
 }
 
 function makeService(prisma: ReturnType<typeof createPrismaMock>) {
-  return new BatchesService(prisma as never);
+  return new BatchesService(prisma as never, storageMock as never, actPdfMock as never);
 }
+
+/** Хранилище подменяется: проверяются правила сервиса, а не запись на диск. */
+const storageMock = {
+  saveRaw: vi.fn(async () => ({
+    objectKey: 'batches/b1/act/file.pdf',
+    mimeType: 'application/pdf',
+    sizeBytes: 1234,
+    checksum: 'abc',
+  })),
+};
+
+/** PDF-сервис подменяется: содержание документа проверяется отдельным тестом. */
+const actPdfMock = { buildActPdf: vi.fn(async () => Buffer.from('%PDF-1.4 test')) };
 
 describe('BatchesService: создание партии', () => {
   it('номер партии берёт ПЛАНОВУЮ дату отправки, а не дату создания', async () => {
@@ -984,5 +1004,234 @@ describe('BatchesService: заморозка состава после акта'
     await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
 
     expect(prisma._tx.batchItem.upsert).toHaveBeenCalled();
+  });
+});
+
+describe('BatchesService: подпись акта (задача 2.3)', () => {
+  const signedBatch = (status = 'ACT_FORMED') => batchRow({ status });
+  const actRow = (overrides: Record<string, unknown> = {}) => ({
+    id: 'act-1',
+    actNo: 'АПП-25-000118',
+    batchId: BATCH_ID,
+    itemsSnapshot: {
+      batchNo: 'П-250916-004',
+      direction: 'TO_PRODUCTION',
+      fromLabel: 'Магазин',
+      toLabel: 'Цех',
+      itemsCount: 1,
+      items: [],
+      totalAmountMinor: 0,
+      formedAt: '2025-09-16T07:00:00.000Z',
+    },
+    signedByFromId: null,
+    signedByToId: null,
+    signedFromAt: null,
+    signedToAt: null,
+    pdfFileId: null,
+    ...overrides,
+  });
+
+  it('подписывает со стороны отправителя', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(signedBatch());
+    prisma._tx.batchAct.findFirst.mockResolvedValue(actRow());
+    prisma.batchAct.findFirst.mockResolvedValue(actRow({ signedFromAt: new Date() }));
+
+    await makeService(prisma).signAct(BATCH_ID, { side: 'FROM' }, LOGIST);
+
+    const call = prisma._tx.batchAct.update.mock.calls[0]?.[0] as {
+      data: { signedByFromId: string; signedFromAt: Date };
+    };
+    expect(call.data.signedByFromId).toBe(LOGIST_ID);
+    expect(call.data.signedFromAt).toBeInstanceOf(Date);
+  });
+
+  it('подписывает со стороны получателя', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(signedBatch());
+    prisma._tx.batchAct.findFirst.mockResolvedValue(actRow());
+    prisma.batchAct.findFirst.mockResolvedValue(actRow({ signedToAt: new Date() }));
+
+    await makeService(prisma).signAct(BATCH_ID, { side: 'TO' }, LOGIST);
+
+    const call = prisma._tx.batchAct.update.mock.calls[0]?.[0] as {
+      data: { signedByToId: string };
+    };
+    expect(call.data.signedByToId).toBe(LOGIST_ID);
+  });
+
+  it('отклоняет повторную подпись той же стороны', async () => {
+    /*
+     * Иначе «подпись» перестала бы означать конкретный момент передачи — а
+     * именно он важен при споре о том, кто и когда принял изделие.
+     */
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(signedBatch());
+    prisma._tx.batchAct.findFirst.mockResolvedValue(actRow({ signedFromAt: new Date() }));
+
+    await expect(makeService(prisma).signAct(BATCH_ID, { side: 'FROM' }, LOGIST)).rejects.toThrow(
+      /уже подписан отправителем/,
+    );
+    expect(prisma._tx.batchAct.update).not.toHaveBeenCalled();
+  });
+
+  it('разрешает вторую сторону после первой', async () => {
+    // Стороны подписывают по очереди: отправитель при отправке, получатель при
+    // приёмке.
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(signedBatch());
+    prisma._tx.batchAct.findFirst.mockResolvedValue(actRow({ signedFromAt: new Date() }));
+    prisma.batchAct.findFirst.mockResolvedValue(actRow({ signedFromAt: new Date() }));
+
+    await makeService(prisma).signAct(BATCH_ID, { side: 'TO' }, LOGIST);
+
+    expect(prisma._tx.batchAct.update).toHaveBeenCalled();
+  });
+
+  it('отклоняет подпись, если акт не сформирован', async () => {
+    // Партия ещё черновик: акта нет, подписывать нечего.
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchRow({ status: 'DRAFT' }));
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'DRAFT' }));
+    prisma.batchAct.findFirst.mockResolvedValue(null);
+
+    await expect(
+      makeService(prisma).signAct(BATCH_ID, { side: 'FROM' }, LOGIST),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('отклоняет подпись партии без акта', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(signedBatch());
+    prisma._tx.batchAct.findFirst.mockResolvedValue(null);
+
+    await expect(
+      makeService(prisma).signAct(BATCH_ID, { side: 'FROM' }, LOGIST),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('отклоняет неизвестную сторону', async () => {
+    const prisma = createPrismaMock();
+
+    await expect(
+      makeService(prisma).signAct(BATCH_ID, { side: 'SIDEWAYS' }, LOGIST),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('отклоняет подпись партии в пути', async () => {
+    // Подпись задним числом после отправки не подтверждает передачу, а создаёт
+    // видимость её отсутствия в момент отъезда.
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchRow({ status: 'IN_TRANSIT' }));
+    prisma._tx.batchAct.findFirst.mockResolvedValue({
+      id: 'act-1',
+      actNo: 'АПП-25-000118',
+      signedFromAt: null,
+      signedToAt: null,
+    });
+
+    await expect(
+      makeService(prisma).signAct(BATCH_ID, { side: 'FROM' }, LOGIST),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('пишет подпись в журнал аудита', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(signedBatch());
+    prisma._tx.batchAct.findFirst.mockResolvedValue(actRow());
+    prisma.batchAct.findFirst.mockResolvedValue(actRow({ signedFromAt: new Date() }));
+
+    await makeService(prisma).signAct(BATCH_ID, { side: 'FROM' }, LOGIST);
+
+    const call = prisma._tx.auditLog.create.mock.calls[0]?.[0] as {
+      data: { after: { signedSide: string } };
+    };
+    expect(call.data.after.signedSide).toBe('FROM');
+  });
+});
+
+describe('BatchesService: сохранение PDF акта (задача 2.3)', () => {
+  it('сохраняет файл и привязывает его к акту', async () => {
+    // Потоковый PDF нельзя предъявить, а сохранённый — можно.
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchRow({ status: 'ACT_FORMED' }));
+    prisma._tx.batchAct.findFirst.mockResolvedValue({ id: 'act-1', actNo: 'АПП-25-000118' });
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'ACT_FORMED' }));
+    prisma.batchAct.findFirst.mockResolvedValue({
+      id: 'act-1',
+      actNo: 'АПП-25-000118',
+      batchId: BATCH_ID,
+      itemsSnapshot: {
+        itemsCount: 1,
+        totalAmountMinor: 0,
+        formedAt: '2025-09-16T07:00:00.000Z',
+        items: [],
+        batchNo: 'П-1',
+        direction: 'TO_PRODUCTION',
+        fromLabel: 'a',
+        toLabel: 'b',
+      },
+      signedByFromId: null,
+      signedByToId: null,
+      signedFromAt: null,
+      signedToAt: null,
+      pdfFileId: 'file-1',
+    });
+    prisma.user = { findMany: vi.fn(async () => []) };
+
+    await makeService(prisma).storeActPdf(BATCH_ID, LOGIST);
+
+    expect(storageMock.saveRaw).toHaveBeenCalled();
+
+    /*
+     * Ключевая проверка. `BatchAct.pdfFileId` — внешний ключ на `Document`, а
+     * НЕ на `FileObject`, несмотря на имя поля. Когда сюда подставлялся
+     * `fileObject.id`, живой сервер отвечал 500 («Foreign key constraint
+     * violated on batch_act_pdfFileId_fkey»), а этот тест проходил, потому что
+     * двойник Prisma принимал любой идентификатор. Теперь идентификаторы
+     * документа и файла разные, и подмена снова уронит тест.
+     */
+    const actUpdate = prisma._tx.batchAct.update.mock.calls[0]?.[0] as {
+      data: { pdfFileId: string };
+    };
+    expect(actUpdate.data.pdfFileId).toBe('doc-1');
+    expect(actUpdate.data.pdfFileId).not.toBe('file-1');
+  });
+
+  it('создаёт запись документа с номером акта', async () => {
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst.mockResolvedValue(batchRow({ status: 'ACT_FORMED' }));
+    prisma._tx.batchAct.findFirst.mockResolvedValue({ id: 'act-1', actNo: 'АПП-25-000118' });
+    prisma.batch.findFirst.mockResolvedValue(batchRow({ status: 'ACT_FORMED' }));
+    prisma.batchAct.findFirst.mockResolvedValue({
+      id: 'act-1',
+      actNo: 'АПП-25-000118',
+      batchId: BATCH_ID,
+      itemsSnapshot: {
+        itemsCount: 1,
+        totalAmountMinor: 0,
+        formedAt: '2025-09-16T07:00:00.000Z',
+        items: [],
+        batchNo: 'П-1',
+        direction: 'TO_PRODUCTION',
+        fromLabel: 'a',
+        toLabel: 'b',
+      },
+      signedByFromId: null,
+      signedByToId: null,
+      signedFromAt: null,
+      signedToAt: null,
+      pdfFileId: null,
+    });
+    prisma.user = { findMany: vi.fn(async () => []) };
+
+    await makeService(prisma).storeActPdf(BATCH_ID, LOGIST);
+
+    const call = prisma._tx.document.create.mock.calls[0]?.[0] as {
+      data: { type: string; number: string; batchId: string };
+    };
+    expect(call.data.type).toBe('BATCH_ACT');
+    expect(call.data.number).toBe('АПП-25-000118');
+    expect(call.data.batchId).toBe(BATCH_ID);
   });
 });

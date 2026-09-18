@@ -310,6 +310,19 @@ export const batchOrdersSchema = z.object({
   orderIds: z.array(z.string().cuid()).min(1, 'Выберите хотя бы один заказ').max(500),
 });
 
+/**
+ * Подпись акта приёма-передачи (задача 2.3).
+ *
+ * Сторона задаётся явно, а не выводится из роли: получатель и отправитель
+ * подписывают один и тот же документ, и система не должна решать за человека,
+ * с чьей стороны он подписывает.
+ */
+export const signBatchActSchema = z
+  .object({
+    side: z.enum(['FROM', 'TO']),
+  })
+  .strict();
+
 /** Исключение заказа из партии: причина обязательна (docs/07 §8). */
 export const removeBatchOrderSchema = z.object({
   reason: z.string().trim().min(3, 'Укажите причину').max(300),
@@ -874,6 +887,7 @@ export type ApprovalInput = z.infer<typeof approvalSchema>;
 export type PaymentInput = z.infer<typeof paymentSchema>;
 export type CreateBatchInput = z.infer<typeof createBatchSchema>;
 export type AddBatchOrdersInput = z.infer<typeof batchOrdersSchema>;
+export type SignBatchActInput = z.infer<typeof signBatchActSchema>;
 export type RemoveBatchOrderInput = z.infer<typeof removeBatchOrderSchema>;
 export type BatchListQueryInput = z.infer<typeof batchListQuerySchema>;
 export type PerformerInput = z.infer<typeof performerSchema>;

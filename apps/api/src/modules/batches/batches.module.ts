@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BatchesService } from './batches.service';
 import { BatchesController } from './batches.controller';
+import { BatchActPdfService } from './batch-act-pdf.service';
 
 /**
  * Логистика: партии (задача 2.1, ТЗ п. 2.6).
@@ -13,7 +14,7 @@ import { BatchesController } from './batches.controller';
  */
 @Module({
   controllers: [BatchesController],
-  providers: [BatchesService],
+  providers: [BatchesService, BatchActPdfService],
   exports: [BatchesService],
 })
 export class BatchesModule {}

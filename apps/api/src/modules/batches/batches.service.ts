@@ -21,11 +21,14 @@ import {
   createBatchSchema,
   batchOrdersSchema,
   removeBatchOrderSchema,
+  signBatchActSchema,
   type BatchActSnapshot,
   type BatchDirection,
 } from '@app/shared';
 
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { StorageService } from '../../common/storage/storage.service';
+import { BatchActPdfService } from './batch-act-pdf.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 
 /**
@@ -105,12 +108,25 @@ const ACTIVE_BATCH_STATUSES = [
   BATCH_STATUS.IN_TRANSIT,
 ] as const;
 
+/**
+ * Название организации в шапке акта.
+ *
+ * Вынесено константой, а не берётся из настроек: реквизиты организации не
+ * меняются в ходе работы, а в акте они обязательны. Когда появится справочник
+ * организации (этап 5), значение переедет туда.
+ */
+const COMPANY_NAME = 'Ремонт ювелирных изделий';
+
 /** Лимит состава партии по умолчанию: не ограничен (решение по задаче 2.1). */
 const DEFAULT_MAX_ITEMS: number | null = null;
 
 @Injectable()
 export class BatchesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+    private readonly actPdf: BatchActPdfService,
+  ) {}
 
   /**
    * Список партий с фильтрами и keyset-пагинацией.
@@ -589,6 +605,204 @@ export class BatchesService {
     if (act === null) throw new NotFoundException('Акт по этой партии не сформирован');
 
     return this.toActDto(act, batch.batchNo);
+  }
+
+  /**
+   * Подписать акт со стороны отправителя или получателя (задача 2.3).
+   *
+   * Каждая сторона подписывает один раз: повторная подпись той же стороны
+   * отклоняется. Иначе «подпись» переставала бы означать конкретный момент
+   * передачи — а именно он и важен при споре о том, кто и когда принял изделие.
+   */
+  async signAct(
+    batchId: string,
+    rawInput: unknown,
+    actor: AuthenticatedUser,
+  ): Promise<BatchActDto> {
+    const input = parseOrThrow(signBatchActSchema, rawInput);
+
+    await this.prisma.runInTransaction(async (tx) => {
+      const scopeFilter = this.buildScopeFilter(actor);
+      const batch = await tx.batch.findFirst({ where: { AND: [{ id: batchId }, scopeFilter] } });
+      if (batch === null) throw new NotFoundException('Партия не найдена');
+
+      const act = await tx.batchAct.findFirst({ where: { batchId } });
+      if (act === null) throw new NotFoundException('Акт по этой партии не сформирован');
+
+      /*
+       * Подписывать можно только сформированный акт. Партия в пути уже уехала:
+       * подпись задним числом после отправки не подтверждает передачу, а
+       * создаёт видимость её отсутствия в момент отъезда.
+       */
+      if (batch.status !== BATCH_STATUS.ACT_FORMED) {
+        throw new ConflictException(
+          `Подписать можно только сформированный акт (партия в статусе ${batch.status})`,
+        );
+      }
+
+      const now = new Date();
+      if (input.side === 'FROM') {
+        if (act.signedFromAt !== null) {
+          throw new ConflictException('Акт уже подписан отправителем');
+        }
+        await tx.batchAct.update({
+          where: { id: act.id },
+          data: { signedByFromId: actor.id, signedFromAt: now },
+        });
+      } else {
+        if (act.signedToAt !== null) {
+          throw new ConflictException('Акт уже подписан получателем');
+        }
+        await tx.batchAct.update({
+          where: { id: act.id },
+          data: { signedByToId: actor.id, signedToAt: now },
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          actorRole: actor.primaryRole,
+          action: 'UPDATE',
+          entity: 'BatchAct',
+          entityId: act.id,
+          after: { actNo: act.actNo, signedSide: input.side, signedAt: now.toISOString() },
+        },
+      });
+    });
+
+    return this.findAct(batchId, actor);
+  }
+
+  /**
+   * PDF акта (задача 2.3).
+   *
+   * Документ собирается ИЗ СНИМКА состава: подписанный акт обязан оставаться тем
+   * же документом, даже если заказ позже переименовали. PDF не сохраняется в
+   * хранилище при каждой печати — он отдаётся потоком; в `BatchAct.pdfFileId`
+   * попадает только та версия, которую сохранили явно.
+   */
+  async buildActPdf(
+    batchId: string,
+    actor: AuthenticatedUser,
+  ): Promise<{ buffer: Buffer; actNo: string }> {
+    const scopeFilter = this.buildScopeFilter(actor);
+    const batch = await this.prisma.batch.findFirst({
+      where: { AND: [{ id: batchId }, scopeFilter] },
+      select: { id: true },
+    });
+    if (batch === null) throw new NotFoundException('Партия не найдена');
+
+    const act = await this.prisma.batchAct.findFirst({ where: { batchId } });
+    if (act === null) throw new NotFoundException('Акт по этой партии не сформирован');
+
+    /*
+     * ФИО подписавших читаются отдельным запросом, а не через `include`:
+     * в схеме `signedByFromId`/`signedByToId` объявлены без связи с `User`,
+     * поэтому связь пришлось бы добавлять миграцией. Здесь достаточно одного
+     * дополнительного запроса по двум идентификаторам.
+     */
+    const signerIds = [act.signedByFromId, act.signedByToId].filter(
+      (id): id is string => id !== null,
+    );
+    const signers =
+      signerIds.length === 0
+        ? []
+        : await this.prisma.user.findMany({
+            where: { id: { in: signerIds } },
+            select: { id: true, fullName: true },
+          });
+    const nameById = new Map(signers.map((user) => [user.id, user.fullName]));
+
+    const snapshot = act.itemsSnapshot as unknown as BatchActSnapshot;
+    const buffer = await this.actPdf.buildActPdf({
+      actNo: act.actNo,
+      companyName: COMPANY_NAME,
+      snapshot,
+      signedByFromName:
+        act.signedByFromId === null ? null : (nameById.get(act.signedByFromId) ?? null),
+      signedByToName: act.signedByToId === null ? null : (nameById.get(act.signedByToId) ?? null),
+      signedFromAt: act.signedFromAt,
+      signedToAt: act.signedToAt,
+    });
+
+    return { buffer, actNo: act.actNo };
+  }
+
+  /**
+   * Сохранить подписанный акт в хранилище и привязать файл к акту.
+   *
+   * Нужно для юридически значимой копии: потоковый PDF нельзя предъявить, а
+   * сохранённый — можно. Повторное сохранение заменяет прежний файл: держать
+   * несколько копий одного акта значит не знать, какая из них подписана.
+   */
+  async storeActPdf(batchId: string, actor: AuthenticatedUser): Promise<BatchActDto> {
+    const { buffer } = await this.buildActPdf(batchId, actor);
+
+    await this.prisma.runInTransaction(async (tx) => {
+      const scopeFilter = this.buildScopeFilter(actor);
+      const batch = await tx.batch.findFirst({ where: { AND: [{ id: batchId }, scopeFilter] } });
+      if (batch === null) throw new NotFoundException('Партия не найдена');
+
+      const act = await tx.batchAct.findFirst({ where: { batchId } });
+      if (act === null) throw new NotFoundException('Акт по этой партии не сформирован');
+
+      const stored = await this.storage.saveRaw({
+        buffer,
+        folder: `batches/${batchId}/act`,
+        extension: 'pdf',
+        mimeType: 'application/pdf',
+      });
+
+      const fileObject = await tx.fileObject.create({
+        data: {
+          bucket: 'local',
+          objectKey: stored.objectKey,
+          mimeType: stored.mimeType,
+          sizeBytes: stored.sizeBytes,
+          checksum: stored.checksum,
+          uploadedById: actor.id,
+        },
+      });
+
+      const document = await tx.document.create({
+        data: {
+          batchId,
+          type: 'BATCH_ACT',
+          number: act.actNo,
+          fileId: fileObject.id,
+        },
+      });
+
+      /*
+       * ВНИМАНИЕ: `BatchAct.pdfFileId` ссылается на `Document`, а не на
+       * `FileObject` — несмотря на имя поля. Это видно в схеме:
+       * `pdfFile Document? @relation("BatchActPdf", fields: [pdfFileId], ...)`.
+       *
+       * Здесь стоял `fileObject.id`, и сохранение акта отвечало 500 с нарушением
+       * внешнего ключа `batch_act_pdfFileId_fkey`. Юнит-тест этого не поймал:
+       * двойник Prisma принимал любой идентификатор. Дефект нашёлся только
+       * проверкой на живом сервере. Файл связан с документом через
+       * `Document.fileId`, поэтому отдельная ссылка на `FileObject` не нужна.
+       */
+      await tx.batchAct.update({
+        where: { id: act.id },
+        data: { pdfFileId: document.id },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          actorRole: actor.primaryRole,
+          action: 'UPDATE',
+          entity: 'BatchAct',
+          entityId: act.id,
+          after: { actNo: act.actNo, storedPdf: true, sizeBytes: stored.sizeBytes },
+        },
+      });
+    });
+
+    return this.findAct(batchId, actor);
   }
 
   private toActDto(

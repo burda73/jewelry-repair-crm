@@ -3,12 +3,15 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiCookieAuth } from '@nestjs/swagger';
 import { PERMISSION } from '@app/shared';
 
@@ -102,6 +105,56 @@ export class BatchesController {
   }
 
   /**
+   * PDF акта приёма-передачи.
+   *
+   * Документ собирается из снимка состава: подписанный акт обязан оставаться
+   * тем же документом, даже если заказ позже переименовали.
+   */
+  @Get(':id/act/pdf')
+  @RequirePermission(PERMISSION.LOGISTICS_READ)
+  @Header('Content-Type', 'application/pdf')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'PDF акта приёма-передачи' })
+  async downloadActPdf(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { buffer, actNo } = await this.batchesService.buildActPdf(id, user);
+    res.setHeader('Content-Length', String(buffer.length));
+    /*
+     * `inline`, а не `attachment`: акт чаще всего открывают на печать, и
+     * скачивание файла заставляло бы искать его в папке загрузок.
+     *
+     * Имя файла кодируется по RFC 5987. Номер акта начинается с кириллицы
+     * («АПП-26-000001»), а HTTP-заголовки — ASCII: прямая подстановка давала
+     * `ERR_INVALID_CHAR` и ответ 500 вместо PDF. Дефект найден проверкой на
+     * живом сервере; у квитанции заказа его не было, потому что номер заказа
+     * ASCII (`MSK1-2609-000001`).
+     */
+    res.setHeader('Content-Disposition', contentDisposition('inline', `act-${actNo}.pdf`));
+    res.end(buffer);
+  }
+
+  @Post(':id/act/sign')
+  @RequirePermission(PERMISSION.LOGISTICS_MANAGE)
+  @ApiOperation({ summary: 'Подписать акт со стороны отправителя или получателя' })
+  signAct(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<BatchActDto> {
+    return this.batchesService.signAct(id, body, user);
+  }
+
+  @Post(':id/act/store')
+  @RequirePermission(PERMISSION.LOGISTICS_MANAGE)
+  @ApiOperation({ summary: 'Сохранить PDF акта в хранилище' })
+  storeAct(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser): Promise<BatchActDto> {
+    return this.batchesService.storeActPdf(id, user);
+  }
+
+  /**
    * Исключить заказ из партии.
    *
    * `DELETE` с телом — необычно, но причина обязательна, а поместить её в путь
@@ -121,4 +174,19 @@ export class BatchesController {
   ): Promise<BatchDetailDto> {
     return this.batchesService.removeOrder(id, orderId, body, user);
   }
+}
+
+/**
+ * Собрать `Content-Disposition` с именем файла, безопасным для HTTP-заголовка.
+ *
+ * HTTP-заголовки допускают только ASCII, а номер акта начинается с кириллицы.
+ * Поэтому имя отдаётся дважды: ASCII-запасной вариант (`filename`) и точное имя
+ * в UTF-8 по RFC 5987 (`filename*`). Браузер выбирает второе и показывает
+ * правильное имя; старые клиенты берут первое.
+ */
+export function contentDisposition(kind: 'inline' | 'attachment', filename: string): string {
+  // Транслитерация для ASCII-варианта: кириллица и прочие не-ASCII заменяются
+  // подчёркиванием, чтобы заголовок оставался корректным.
+  const ascii = filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, "'");
+  return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }

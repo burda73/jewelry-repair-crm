@@ -956,6 +956,9 @@ model BatchAct {
   id         String   @id @default(cuid())
   batchId    String
   actNo      String   @unique
+  // Имя историческое и вводит в заблуждение: это идентификатор ДОКУМЕНТА
+  // (`Document`), а не файла; сам файл — в `Document.fileId`. Именно на этом
+  // ошиблись при первом сохранении PDF акта (ответ 500 по внешнему ключу).
   pdfFileId  String?  @unique
   signedByFromId String?
   signedByToId   String?
