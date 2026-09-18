@@ -552,6 +552,20 @@ async function seedNotificationTemplates() {
       subject: 'Срок рекламации',
       body: 'По рекламации {{claimNo}} истекает срок рассмотрения {{dueDate}}.',
     },
+    /*
+     * Партия в пути (задача 2.6): без этих двух шаблонов отправитель рейса не
+     * узнаёт о приёмке, а логист — о задержке доставки.
+     */
+    {
+      code: 'BATCH_RECEIVED',
+      subject: 'Партия {{batchNo}} принята',
+      body: 'Партия {{batchNo}} принята получателем. Принял: {{receivedBy}}.',
+    },
+    {
+      code: 'BATCH_TRANSIT_LATE',
+      subject: 'Партия {{batchNo}} задерживается',
+      body: 'Партия {{batchNo}} в пути дольше норматива: {{elapsed}} при норме {{norm}}.',
+    },
   ];
 
   for (const template of templates) {

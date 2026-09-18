@@ -3,6 +3,7 @@ import { BatchesService } from './batches.service';
 import { BatchesController } from './batches.controller';
 import { BatchActPdfService } from './batch-act-pdf.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 /**
  * Логистика: партии (задача 2.1, ТЗ п. 2.6).
@@ -14,6 +15,9 @@ import { OrderWorkflowService } from '../../common/workflow/order-workflow.servi
  * `PrismaModule` глобальный, импортировать его не нужно.
  */
 @Module({
+  // `NotificationsModule` даёт сервис уведомлений: о приёмке партии сообщается
+  // отправителю рейса, иначе он узнаёт об этом, только позвонив получателю.
+  imports: [NotificationsModule],
   controllers: [BatchesController],
   // `OrderWorkflowService` даёт таблицу переходов и guard-условия: собственный
   // `UPDATE status` обошёл бы проверку роли, обязательность акта и историю

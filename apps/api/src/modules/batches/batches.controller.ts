@@ -59,6 +59,13 @@ export class BatchesController {
     return this.batchesService.list(rawQuery, user);
   }
 
+  @Get('in-transit')
+  @RequirePermission(PERMISSION.LOGISTICS_READ)
+  @ApiOperation({ summary: 'Партии в пути, самые задержанные сверху' })
+  listInTransit(@CurrentUser() user: AuthenticatedUser): Promise<BatchDto[]> {
+    return this.batchesService.listInTransit(user);
+  }
+
   @Post()
   @RequirePermission(PERMISSION.LOGISTICS_MANAGE)
   @ApiOperation({ summary: 'Создать партию' })

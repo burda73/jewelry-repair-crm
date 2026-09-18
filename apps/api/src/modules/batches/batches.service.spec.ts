@@ -202,6 +202,7 @@ function makeService(prisma: ReturnType<typeof createPrismaMock>) {
     storageMock as never,
     actPdfMock as never,
     workflowMock as never,
+    notificationsMock as never,
   );
 }
 
@@ -214,6 +215,15 @@ function makeService(prisma: ReturnType<typeof createPrismaMock>) {
 const workflowMock = {
   transition: vi.fn(async () => ({ id: 'order-1' })),
   loadCalendar: vi.fn(async () => ({ days: [] })),
+};
+
+/**
+ * Сервис уведомлений подменяется (задача 2.6): проверяется, ЧТО партия просит
+ * сообщить и кому, а не формат письма — он покрыт в
+ * `notifications.service.spec.ts`.
+ */
+const notificationsMock = {
+  notifyByTemplate: vi.fn(async () => null),
 };
 
 /** Хранилище подменяется: проверяются правила сервиса, а не запись на диск. */
@@ -1732,5 +1742,212 @@ describe('BatchesService: отправка и приём партии (зада�
     expect(audit.data.entity).toBe('Batch');
     expect(audit.data.before.status).toBe('ACT_FORMED');
     expect(audit.data.after.status).toBe('IN_TRANSIT');
+  });
+});
+
+describe('BatchesService: отслеживание «в пути» (задача 2.6)', () => {
+  /*
+   * ЗАЧЕМ ЭТО ПРОВЕРЯЕТСЯ. Партия уехала, и до приёмки о ней ничего не
+   * известно. Состояние считается на чтение: «в пути 6 часов» — это разница
+   * между текущим моментом и отправкой, и записанное в базу значение устарело
+   * бы сразу после записи.
+   */
+
+  beforeEach(() => vi.clearAllMocks());
+
+  const listRow = (dispatchedAt: Date | null, status = 'IN_TRANSIT') =>
+    batchRow({ status, dispatchedAt, receivedAt: null });
+
+  it('в списке партий есть состояние «в пути»', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([listRow(new Date(Date.now() - 3 * 3_600_000))]);
+
+    const result = await makeService(prisma).list({ limit: 10 }, LOGIST);
+
+    expect(result.items[0]?.transit.level).toBe('ON_TIME');
+    expect(result.items[0]?.transit.elapsedHours).toBeGreaterThan(2.9);
+  });
+
+  it('задержка отражается в состоянии партии', async () => {
+    // Без этого логист не видит, какая машина не доехала.
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([listRow(new Date(Date.now() - 20 * 3_600_000))]);
+
+    const result = await makeService(prisma).list({ limit: 10 }, LOGIST);
+
+    expect(result.items[0]?.transit.isOverdue).toBe(true);
+    expect(result.items[0]?.transit.level).toBe('OVERDUE');
+  });
+
+  it('неотправленная партия не помечается просроченной', async () => {
+    // Иначе каждая созданная партия сразу попала бы в тревоги.
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([listRow(null, 'DRAFT')]);
+
+    const result = await makeService(prisma).list({ limit: 10 }, LOGIST);
+
+    expect(result.items[0]?.transit.isOverdue).toBe(false);
+    expect(result.items[0]?.transit.elapsedHours).toBeNull();
+  });
+
+  it('норматив берётся из настройки', async () => {
+    /*
+     * Городской и междугородний рейс имеют разную норму, и «в пути 6 часов» без
+     * норматива ничего не значит. Настройку меняет логистик, а не разработчик.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([listRow(new Date(Date.now() - 6 * 3_600_000))]);
+    prisma.setting.findUnique.mockResolvedValue({ key: 'logistics.transitNormHours', value: 48 });
+
+    const result = await makeService(prisma).list({ limit: 10 }, LOGIST);
+
+    expect(result.items[0]?.transit.normHours).toBe(48);
+    expect(result.items[0]?.transit.isOverdue).toBe(false);
+  });
+
+  it('бессмысленный норматив заменяется значением по умолчанию', async () => {
+    /*
+     * Ноль дал бы деление на ноль, и партия осталась бы «в норме» навсегда —
+     * тревога не сработала бы никогда. Значение приходит из настройки, которую
+     * заполняет человек, и ошибиться в ней легко.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([listRow(new Date(Date.now() - 100 * 3_600_000))]);
+    prisma.setting.findUnique.mockResolvedValue({ key: 'logistics.transitNormHours', value: 0 });
+
+    const result = await makeService(prisma).list({ limit: 10 }, LOGIST);
+
+    expect(result.items[0]?.transit.normHours).toBe(8);
+    expect(result.items[0]?.transit.isOverdue).toBe(true);
+  });
+
+  it('в списке «в пути» задержанные идут первыми', async () => {
+    /*
+     * В обычном списке партии идут по дате создания, и машина, пропавшая сутки
+     * назад, оказалась бы НИЖЕ вчерашней городской — то есть ровно то, что
+     * требует вмешательства, логист увидел бы последним.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([
+      batchRow({
+        id: 'b-fresh',
+        batchNo: 'П-1',
+        status: 'IN_TRANSIT',
+        dispatchedAt: new Date(Date.now() - 3_600_000),
+      }),
+      batchRow({
+        id: 'b-late',
+        batchNo: 'П-2',
+        status: 'IN_TRANSIT',
+        dispatchedAt: new Date(Date.now() - 40 * 3_600_000),
+      }),
+    ]);
+
+    const result = await makeService(prisma).listInTransit(LOGIST);
+
+    expect(result.map((batch) => batch.batchNo)).toEqual(['П-2', 'П-1']);
+  });
+
+  it('в список «в пути» попадают только партии в пути', async () => {
+    // Принятая партия уже не в пути: её место в истории, а не в отслеживании.
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([]);
+
+    await makeService(prisma).listInTransit(LOGIST);
+
+    const where = prisma.batch.findMany.mock.calls[0]?.[0] as { where: { AND: unknown[] } };
+    expect(where.where.AND[0]).toEqual({ status: 'IN_TRANSIT' });
+  });
+
+  it('норматив читается один раз на страницу, а не на каждую строку', async () => {
+    // Запрос на строку превратил бы список в N+1.
+    const prisma = createPrismaMock();
+    prisma.batch.findMany.mockResolvedValue([
+      listRow(new Date(Date.now() - 3_600_000)),
+      listRow(new Date(Date.now() - 3_600_000)),
+      listRow(new Date(Date.now() - 3_600_000)),
+    ]);
+
+    await makeService(prisma).list({ limit: 10 }, LOGIST);
+
+    expect(prisma.setting.findUnique).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('BatchesService: уведомление о приёмке (задача 2.6)', () => {
+  /*
+   * ЗАЧЕМ ЭТО ПРОВЕРЯЕТСЯ. Отправитель рейса иначе узнаёт о доставке, только
+   * позвонив получателю. Проверяется, ЧТО сервис просит сообщить и кому.
+   */
+
+  beforeEach(() => vi.clearAllMocks());
+
+  const receivable = (senderId: string | null, status = 'IN_TRANSIT') =>
+    batchRow({
+      status,
+      direction: 'TO_PRODUCTION',
+      createdById: senderId,
+      items: [
+        {
+          orderId: 'order-1',
+          addedAt: new Date('2025-09-16T07:00:00Z'),
+          addedById: LOGIST_ID,
+          order: {
+            orderNo: 'MSK1-2609-000001',
+            status: 'IN_TRANSIT_TO_PRODUCTION',
+            totalAmountMinor: 100000,
+            customer: { fullName: 'Клиент 1' },
+          },
+        },
+      ],
+    });
+
+  it('отправителю рейса сообщается о приёмке', async () => {
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(receivable(LOGIST_ID));
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    expect(notificationsMock.notifyByTemplate).toHaveBeenCalledTimes(1);
+    const call = notificationsMock.notifyByTemplate.mock.calls[0]?.[0] as {
+      code: string;
+      userId: string;
+    };
+    expect(call.code).toBe('BATCH_RECEIVED');
+    expect(call.userId).toBe(LOGIST_ID);
+  });
+
+  it('при отправке уведомление о приёмке не создаётся', async () => {
+    // Событие ещё не наступило: сообщать «принято» в момент отправки — ложь.
+    const prisma = createPrismaMock();
+    // Отправляется партия с АКТОМ: из DRAFT отправить нельзя.
+    prisma.batch.findFirst.mockResolvedValue(receivable(LOGIST_ID, 'ACT_FORMED'));
+
+    await makeService(prisma).dispatch(BATCH_ID, LOGIST);
+
+    expect(notificationsMock.notifyByTemplate).not.toHaveBeenCalled();
+  });
+
+  it('без известного отправителя уведомление не создаётся', async () => {
+    // Сообщение «в никуда» только засорило бы таблицу.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(receivable(null));
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    expect(notificationsMock.notifyByTemplate).not.toHaveBeenCalled();
+  });
+
+  it('сбой уведомления НЕ отменяет приёмку', async () => {
+    /*
+     * Партия уже принята, изделия физически у получателя. Сообщить
+     * пользователю об ошибке бессмысленно — исправить он ничего не может, а
+     * откатывать приёмку из-за недоступной почты нельзя.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(receivable(LOGIST_ID));
+    notificationsMock.notifyByTemplate.mockRejectedValueOnce(new Error('SMTP timeout'));
+
+    await expect(makeService(prisma).receive(BATCH_ID, LOGIST)).resolves.toBeDefined();
   });
 });

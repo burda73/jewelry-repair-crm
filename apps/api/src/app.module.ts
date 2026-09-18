@@ -20,6 +20,7 @@ import { UsersModule } from './modules/users/users.module';
 import { WorkingCalendarModule } from './modules/calendar/working-calendar.module';
 import { StageNormsModule } from './modules/norms/stage-norms.module';
 import { BatchesModule } from './modules/batches/batches.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 /**
  * Найти файл `.env`.
@@ -98,6 +99,7 @@ function resolveEnvPaths(): string[] {
     WorkingCalendarModule,
     StageNormsModule,
     BatchesModule,
+    NotificationsModule,
   ],
   providers: [
     // Rate limit применяется глобально; отдельные эндпоинты переопределяют лимиты.

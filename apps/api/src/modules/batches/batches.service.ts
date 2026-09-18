@@ -31,15 +31,19 @@ import {
   batchOrdersSchema,
   removeBatchOrderSchema,
   signBatchActSchema,
+  assessTransit,
+  DEFAULT_TRANSIT_NORM_HOURS,
   type BatchActSnapshot,
   type BatchDirection,
   type BatchStatus,
+  type TransitState,
 } from '@app/shared';
 
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { BatchActPdfService } from './batch-act-pdf.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
+import { NotificationsService, TEMPLATE_CODE } from '../notifications/notifications.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 
 /**
@@ -67,6 +71,12 @@ export interface BatchDto {
   itemsCount: number;
   comment: string | null;
   createdAt: string;
+  /*
+   * Отслеживание «в пути» (задача 2.6). Считается на чтение, а не хранится:
+   * «в пути 6 часов» — это разница между текущим моментом и отправкой, и
+   * записанное в базу значение устарело бы сразу после записи.
+   */
+  transit: TransitState;
 }
 
 /** Фотофиксация партии (задача 2.4). */
@@ -151,6 +161,7 @@ export class BatchesService {
     private readonly storage: StorageService,
     private readonly actPdf: BatchActPdfService,
     private readonly workflow: OrderWorkflowService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -201,10 +212,46 @@ export class BatchesService {
     const hasMore = rows.length > query.limit;
     const page = hasMore ? rows.slice(0, query.limit) : rows;
 
+    // Норматив читается один раз на страницу, а не в каждой строке: значение
+    // одно и то же, а запрос на строку превратил бы список в N+1.
+    const normHours = await this.transitNormHours(this.prisma);
+    const now = new Date();
+
     return {
-      items: page.map((row) => this.toDto(row)),
+      items: page.map((row) => this.toDto(row, normHours, now)),
       nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
     };
+  }
+
+  /**
+   * Партии, которые сейчас в пути (задача 2.6).
+   *
+   * Отдельно от `list`, потому что сортировка здесь другая: сначала те, чей
+   * норматив превышен сильнее. В обычном списке партии идут по дате создания, и
+   * пропавшая сутки назад машина оказалась бы ниже вчерашней городской — то
+   * есть ровно то, что требует вмешательства, логист увидел бы последним.
+   *
+   * Сортировка выполняется в памяти: состояние считается от текущего момента,
+   * а не хранится в базе, и `ORDER BY` по нему невозможен. Число партий «в
+   * пути» ограничено числом машин в рейсе, поэтому полная выборка здесь
+   * допустима.
+   */
+  async listInTransit(actor: AuthenticatedUser): Promise<BatchDto[]> {
+    const rows = await this.prisma.batch.findMany({
+      where: { AND: [{ status: BATCH_STATUS.IN_TRANSIT }, this.buildScopeFilter(actor)] },
+      include: {
+        fromStore: { select: { name: true } },
+        toStore: { select: { name: true } },
+        toWorkshop: { select: { name: true } },
+      },
+    });
+
+    const normHours = await this.transitNormHours(this.prisma);
+    const now = new Date();
+
+    return rows
+      .map((row) => this.toDto(row, normHours, now))
+      .sort((a, b) => (b.transit.elapsedHours ?? 0) - (a.transit.elapsedHours ?? 0));
   }
 
   /** Партия с составом. */
@@ -236,7 +283,7 @@ export class BatchesService {
     if (batch === null) throw new NotFoundException('Партия не найдена');
 
     return {
-      ...this.toDto(batch),
+      ...this.toDto(batch, await this.transitNormHours(this.prisma)),
       items: batch.items.map((item) => ({
         orderId: item.orderId,
         orderNo: item.order.orderNo,
@@ -958,6 +1005,24 @@ export class BatchesService {
       { timeout: 60_000 },
     );
 
+    /*
+     * Уведомление создаётся ПОСЛЕ транзакции, а не внутри неё. Во-первых,
+     * отправка во внешний канал не должна удлинять транзакцию: держать блокировки
+     * на строках заказов, пока отвечает почтовый сервер, — верный способ
+     * получить таймаут на ровном месте. Во-вторых, при откате транзакции
+     * уведомление о несостоявшейся перевозке уже не отозвать.
+     *
+     * Ошибка уведомления не отменяет операцию: партия уже уехала, и сообщать
+     * об ошибке пользователю бессмысленно — исправить он ничего не может.
+     */
+    if (phase === 'RECEIVE') {
+      // `createdById` — скалярное поле партии, оно уже прочитано вместе с
+      // партией: отдельный запрос к `user` был бы лишним кругом к базе.
+      await this.notifyBatchReceived(batch.createdById, batch.batchNo, actor).catch(
+        () => undefined,
+      );
+    }
+
     return this.findOne(batchId, actor);
   }
 
@@ -1479,25 +1544,86 @@ export class BatchesService {
     };
   }
 
-  private toDto(row: {
-    id: string;
-    batchNo: string;
-    direction: string;
-    status: string;
-    fromStoreId: string | null;
-    toStoreId: string | null;
-    toWorkshopId: string | null;
-    courierId: string | null;
-    plannedAt: Date;
-    dispatchedAt: Date | null;
-    receivedAt: Date | null;
-    itemsCount: number;
-    comment: string | null;
-    createdAt: Date;
-    fromStore?: { name: string } | null;
-    toStore?: { name: string } | null;
-    toWorkshop?: { name: string } | null;
-  }): BatchDto {
+  /**
+   * Сообщить о приёмке партии (задача 2.6).
+   *
+   * Получатель — отправитель рейса, если он известен: именно он ждёт
+   * подтверждения, что изделия доехали. Когда отправителя нет (рейс заведён
+   * системой или прежним сотрудником), уведомление не создаётся: сообщение «в
+   * никуда» только засорило бы таблицу.
+   */
+  private async notifyBatchReceived(
+    senderId: string | null,
+    batchNo: string,
+    actor: AuthenticatedUser,
+  ): Promise<void> {
+    if (senderId === null) return;
+
+    await this.notifications.notifyByTemplate({
+      code: TEMPLATE_CODE.BATCH_RECEIVED,
+      userId: senderId,
+      recipient: senderId,
+      values: { batchNo, receivedBy: actor.email },
+      fallbackSubject: `Партия ${batchNo} принята`,
+      fallbackBody: `Партия ${batchNo} принята получателем.`,
+    });
+  }
+
+  /**
+   * Норматив доставки в часах (задача 2.6).
+   *
+   * Читается из `Setting`, а не из переменной окружения: городской и
+   * междугородний рейс имеют разную норму, и менять её должен логистик, а не
+   * разработчик с перезапуском сервиса. Значение бессмысленное (ноль,
+   * отрицательное, не число) — берётся значение по умолчанию: иначе деление на
+   * ноль оставило бы партию «в норме» навсегда, и тревога не сработала бы.
+   */
+  private async transitNormHours(
+    client: Prisma.TransactionClient | PrismaService,
+  ): Promise<number> {
+    const setting = await client.setting.findUnique({
+      where: { key: 'logistics.transitNormHours' },
+    });
+    if (setting === null) return DEFAULT_TRANSIT_NORM_HOURS;
+
+    /*
+     * Значение может быть записано и числом, и объектом `{ value: 5 }` — форма
+     * зависит от того, как настройку сохранил администратор. Проверяются оба
+     * варианта: «настройка есть, но не прочиталась» выглядела бы как отсутствие
+     * норматива, то есть как молчаливое отключение контроля.
+     */
+    const value: unknown = setting.value;
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+    if (typeof value === 'object' && value !== null && 'value' in value) {
+      const inner: unknown = value.value;
+      if (typeof inner === 'number' && Number.isFinite(inner) && inner > 0) return inner;
+    }
+    return DEFAULT_TRANSIT_NORM_HOURS;
+  }
+
+  private toDto(
+    row: {
+      id: string;
+      batchNo: string;
+      direction: string;
+      status: string;
+      fromStoreId: string | null;
+      toStoreId: string | null;
+      toWorkshopId: string | null;
+      courierId: string | null;
+      plannedAt: Date;
+      dispatchedAt: Date | null;
+      receivedAt: Date | null;
+      itemsCount: number;
+      comment: string | null;
+      createdAt: Date;
+      fromStore?: { name: string } | null;
+      toStore?: { name: string } | null;
+      toWorkshop?: { name: string } | null;
+    },
+    normHours: number,
+    now?: Date,
+  ): BatchDto {
     return {
       id: row.id,
       batchNo: row.batchNo,
@@ -1516,6 +1642,11 @@ export class BatchesService {
       itemsCount: row.itemsCount,
       comment: row.comment,
       createdAt: row.createdAt.toISOString(),
+      transit: assessTransit({
+        dispatchedAt: row.dispatchedAt,
+        now: now ?? new Date(),
+        normHours,
+      }),
     };
   }
 }
