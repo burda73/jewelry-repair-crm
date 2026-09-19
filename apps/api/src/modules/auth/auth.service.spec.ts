@@ -65,14 +65,24 @@ function createPrismaMock() {
       findMany: vi.fn().mockResolvedValue([]),
       update: vi.fn().mockResolvedValue({}),
     },
-    userSession: { create: vi.fn().mockResolvedValue({}) },
+    userSession: {
+      create: vi.fn().mockResolvedValue({}),
+      findUnique: vi.fn().mockResolvedValue(null),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
   };
 }
 
-function makeService(prisma: ReturnType<typeof createPrismaMock>) {
+/** Секрет refresh-токенов. Значение важно: тесты §«refresh» его меняют. */
+const REFRESH_SECRET = 'test_refresh_secret_at_least_32_characters';
+
+function makeService(prisma: ReturnType<typeof createPrismaMock>, refreshSecret = REFRESH_SECRET) {
   const jwt = { signAsync: vi.fn().mockResolvedValue('signed.jwt.token') };
-  return new AuthService(prisma as never, jwt as never);
+  const config = {
+    getOrThrow: (key: string) => (key === 'JWT_REFRESH_SECRET' ? refreshSecret : ''),
+  };
+  return new AuthService(prisma as never, jwt as never, config as never);
 }
 
 describe('AuthService: список сотрудников для входа', () => {
@@ -213,5 +223,62 @@ describe('AuthService: вход по идентификатору сотрудн
      * при входе из списка «Неверный email» отправлял бы исправлять почту.
      */
     expect(rejection.response?.message ?? '').not.toMatch(/email/i);
+  });
+});
+
+describe('AuthService: refresh-токен защищён секретом JWT_REFRESH_SECRET (дефект 51)', () => {
+  /*
+   * `JWT_REFRESH_SECRET` был объявлен как ОБЯЗАТЕЛЬНАЯ настройка (схема
+   * окружения, `.env.example`), но в коде не использовался нигде: хеш считался
+   * открытым `sha256`. Эксплуатация считала, что секрет защищает сессии и что
+   * его смена их завершит, — а смена не меняла ничего. Тесты ниже фиксируют,
+   * что секрет стал реальным рычагом отзыва.
+   */
+  const user = {
+    id: USER_ID,
+    email: 'receiver@remixgold.ru',
+    fullName: 'Приёмщик',
+    primaryRole: ROLE.RECEIVER,
+    isActive: true,
+    mustChangePassword: false,
+    roles: [],
+    stores: [],
+  };
+
+  it('при смене секрета сохранённый хеш перестаёт совпадать', async () => {
+    const prisma = createPrismaMock();
+    const issued = makeService(prisma);
+    const { refreshToken } = await issued.issueTokens(user as never, {});
+    const stored = prisma.userSession.create.mock.calls[0]![0].data.refreshHash as string;
+
+    /*
+     * Смена секрета — штатная реакция на кражу сессий. Хеш, сохранённый под
+     * прежним секретом, обязан перестать совпадать; иначе «отзыв через секрет»
+     * был бы обещанием без механизма. Сравниваются именно хеши, по которым
+     * идёт поиск сессии, а не факт вызова updateMany: `updateMany` вызывается
+     * всегда и сам по себе ничего не доказывает.
+     */
+    const rotated = makeService(prisma, 'ANOTHER_refresh_secret_at_least_32_chars');
+    await rotated.logout(refreshToken);
+    const rotatedHash = prisma.userSession.updateMany.mock.calls.at(-1)![0].where
+      .refreshHash as string;
+
+    expect(rotatedHash).not.toBe(stored);
+
+    // Тот же секрет — тот же хеш: сессия действительно отзывается.
+    await issued.logout(refreshToken);
+    const sameHash = prisma.userSession.updateMany.mock.calls.at(-1)![0].where.refreshHash;
+    expect(sameHash).toBe(stored);
+  });
+
+  it('в базе не остаётся открытого токена', async () => {
+    const prisma = createPrismaMock();
+    const service = makeService(prisma);
+    const { refreshToken } = await service.issueTokens(user as never, {});
+
+    const stored = prisma.userSession.create.mock.calls[0]![0].data.refreshHash as string;
+    // Ни сам токен, ни его открытый sha256 не должны лежать в базе.
+    expect(stored).not.toBe(refreshToken);
+    expect(stored).toMatch(/^[0-9a-f]{64}$/);
   });
 });

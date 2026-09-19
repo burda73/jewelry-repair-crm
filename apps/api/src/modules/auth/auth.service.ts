@@ -1,7 +1,8 @@
 import { Injectable, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { hash, verify } from 'argon2';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import {
   permissionsFor,
   loginSchema,
@@ -58,7 +59,47 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Хеш refresh-токена для хранения в базе.
+   *
+   * ## Почему HMAC, а не `createHash('sha256')`
+   *
+   * Настройка `JWT_REFRESH_SECRET` была объявлена в схеме окружения как
+   * ОБЯЗАТЕЛЬНАЯ (не короче 32 символов, проверяется в `superRefine` вместе с
+   * остальными секретами, задокументирована в `.env.example`) — но в коде не
+   * использовалась нигде. То есть эксплуатация считала, что секрет защищает
+   * refresh-токены, и что его смена завершит сессии, а на деле смена секрета не
+   * меняла ровно ничего. Это тот же класс дефекта, что «Дефект 41» и «Дефект 50»:
+   * объявленная настройка без эффекта, которую невозможно заметить по ошибке.
+   *
+   * ## Что это даёт
+   *
+   * Ключевой хеш даёт **рабочий рычаг отзыва**: смена `JWT_REFRESH_SECRET`
+   * немедленно делает недействительными все выданные refresh-токены, потому что
+   * сохранённые хеши перестают совпадать. Это и есть штатная реакция на кражу
+   * базы или компрометацию сессий — раньше такого рычага не было вовсе.
+   *
+   * ## Цена решения
+   *
+   * Смена секрета разлогинивает всех, и это НАМЕРЕННО, а не побочный эффект:
+   * секрет, смена которого ничего не завершает, бесполезен как средство
+   * реагирования. Плата — повторный вход сотрудников; взамен появляется
+   * действие, которым можно остановить продолжающуюся компрометацию.
+   *
+   * ## Почему не `argon2`
+   *
+   * Токен — 48 случайных байт (`randomBytes(48)`), а не пароль: перебирать его
+   * бессмысленно, поэтому медленная функция здесь только добавила бы задержку
+   * на каждом обновлении сессии.
+   */
+  private refreshHash(refreshToken: string): string {
+    return createHmac('sha256', this.config.getOrThrow<string>('JWT_REFRESH_SECRET'))
+      .update(refreshToken)
+      .digest('hex');
+  }
 
   /**
    * Список сотрудников для выпадающего списка на экране входа.
@@ -257,7 +298,7 @@ export class AuthService {
 
     // Refresh-токен — случайная строка, в БД лежит только её хеш.
     const refreshToken = randomBytes(48).toString('base64url');
-    const refreshHash = createHash('sha256').update(refreshToken).digest('hex');
+    const refreshHash = this.refreshHash(refreshToken);
 
     const refreshTtlDays = this.parseTtlDays(process.env.JWT_REFRESH_TTL ?? '30d');
 
@@ -283,7 +324,7 @@ export class AuthService {
     refreshToken: string,
     meta: { ip?: string; userAgent?: string },
   ): Promise<AuthResult> {
-    const refreshHash = createHash('sha256').update(refreshToken).digest('hex');
+    const refreshHash = this.refreshHash(refreshToken);
 
     const session = await this.prisma.userSession.findUnique({
       where: { refreshHash },
@@ -327,7 +368,7 @@ export class AuthService {
 
   async logout(refreshToken: string | undefined): Promise<void> {
     if (!refreshToken) return;
-    const refreshHash = createHash('sha256').update(refreshToken).digest('hex');
+    const refreshHash = this.refreshHash(refreshToken);
     await this.prisma.userSession.updateMany({
       where: { refreshHash, revokedAt: null },
       data: { revokedAt: new Date() },
