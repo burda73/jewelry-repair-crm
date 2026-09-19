@@ -41,7 +41,9 @@ import {
   calcOrderTotal,
   resolveItemPrice,
   detectMetalKind,
+  metalOptionValue,
   METAL_LABELS,
+  METAL_OPTIONS,
 } from '@app/shared';
 import type { CustomerSearchItem, PriceListItemOption } from '@/lib/api-types';
 
@@ -325,6 +327,21 @@ export default function NewOrderPage(): ReactNode {
    * ставку по умолчанию и предупреждаем приёмщика ниже.
    */
   const detectedMetal = useMemo(() => detectMetalKind(item.metal), [item.metal]);
+
+  /*
+   * Значение для выпадающего списка металла и «хвост» старых черновиков.
+   *
+   * Металл раньше вводился свободным текстом и лежит в сохранённых черновиках
+   * именно так («Золото 585»). Подставить такой текст в `<select>` нельзя:
+   * браузер не найдёт подходящий пункт, покажет ПУСТОЙ выбор, и при сохранении
+   * изделие потеряло бы металл — молча, а цена посчиталась бы по умолчанию.
+   * Поэтому нераспознанный текст не выбрасываем, а показываем отдельным пунктом.
+   */
+  const metalValue = useMemo(() => metalOptionValue(item.metal), [item.metal]);
+  const unrecognizedMetal = useMemo(
+    () => (item.metal.trim() !== '' && metalValue === '' ? item.metal.trim() : null),
+    [item.metal, metalValue],
+  );
 
   /*
    * Цены работ не хранятся в состоянии, а ВЫВОДЯТСЯ из металла и позиции
@@ -961,28 +978,50 @@ export default function NewOrderPage(): ReactNode {
             </Field>
 
             <div className="grid gap-3 sm:grid-cols-3">
-              <Field label="Металл" htmlFor="item-metal">
-                <Input
-                  id="item-metal"
-                  value={item.metal}
-                  onChange={(event) => setItem({ ...item, metal: event.target.value })}
-                  placeholder="Золото 585"
-                  maxLength={50}
-                />
+              <Field
+                label="Металл"
+                htmlFor="item-metal"
+                hint="Определяет колонку прейскуранта: цены по золоту и серебру разные"
+              >
                 {/*
-                  Металл определяет цену работ: прейскурант задаёт отдельные
-                  цены по золоту и серебру. Показываем распознанный металл,
-                  чтобы приёмщик видел, по какой колонке считается заказ.
+                  Список, а не свободный ввод. Прейскурант задаёт отдельные цены по
+                  золоту и серебру, и промах в написании металла означал бы счёт по
+                  чужой колонке — ошибку в деньгах клиента примерно вдвое. Значением
+                  пункта служит код (`GOLD`/`SILVER`), который понимает и сервер, и
+                  калькулятор, без обратного разбора на каждом расчёте.
                 */}
+                {/*
+                  Значение — «хвост» старого текста, если он есть: иначе <select>
+                  с value="" выбрал бы «Не выбрано», а не добавленный пункт с
+                  исходным металлом, и приёмщик не увидел бы, что записано в изделии.
+                */}
+                <Select
+                  id="item-metal"
+                  value={unrecognizedMetal ?? metalValue}
+                  onChange={(event) => {
+                    setItem({ ...item, metal: event.target.value });
+                    setError(null);
+                  }}
+                >
+                  <option value="">Не выбрано</option>
+                  {METAL_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                  {unrecognizedMetal !== null ? (
+                    <option value={unrecognizedMetal}>{unrecognizedMetal} (не распознан)</option>
+                  ) : null}
+                </Select>
                 {detectedMetal !== null ? (
                   <p className="mt-1 text-xs text-slate-500">
                     Цены по прейскуранту:{' '}
                     <span className="font-medium">{METAL_LABELS[detectedMetal]}</span>
                   </p>
-                ) : item.metal.trim() !== '' ? (
+                ) : unrecognizedMetal !== null ? (
                   <p className="mt-1 text-xs text-amber-600">
-                    Металл не распознан — работы считаются по цене золота. Укажите «Золото» или
-                    «Серебро».
+                    Металл не распознан — работы считаются по цене по умолчанию. Выберите «Золото»
+                    или «Серебро».
                   </p>
                 ) : null}
               </Field>

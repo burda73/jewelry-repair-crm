@@ -35,6 +35,19 @@ export interface LoginResponse {
   user: AuthenticatedUser;
 }
 
+/**
+ * Сотрудник для выпадающего списка на экране входа (`GET /auth/login-options`).
+ *
+ * Полей ровно два, и это не упрощение, а требование безопасности: маршрут
+ * доступен ДО аутентификации. Почта, роли и телефоны здесь были бы перечнем
+ * персональных данных и адресов для фишинга, а для выбора сотрудника по имени они
+ * не нужны. Вход из списка идёт по `id`, поэтому почта не покидает сервер.
+ */
+export interface LoginOption {
+  id: string;
+  fullName: string;
+}
+
 export interface OrderCustomer {
   id?: string;
   fullName: string;

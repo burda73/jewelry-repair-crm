@@ -43,6 +43,25 @@ const baseCookieOptions = {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  /**
+   * Сотрудники для выпадающего списка на экране входа.
+   *
+   * Доступен без аутентификации — иначе список нельзя было бы получить до входа,
+   * ради чего он и существует. Отдаются только идентификатор и ФИО активных
+   * записей (объяснение выбора полей — в `AuthService.loginOptions`).
+   *
+   * Свой лимит частоты: 30 запросов за 15 минут с одного адреса. Экран входа
+   * запрашивает список один раз при открытии, поэтому обычная работа в него не
+   * упирается, а сплошной обход списка сотрудников с одного адреса — упирается.
+   */
+  @Public()
+  @Get('login-options')
+  @Throttle({ short: { limit: 30, ttl: 900_000 } })
+  @ApiOperation({ summary: 'Сотрудники для выбора на экране входа' })
+  async loginOptions(): Promise<{ id: string; fullName: string }[]> {
+    return this.authService.loginOptions();
+  }
+
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)

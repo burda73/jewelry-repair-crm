@@ -37,6 +37,7 @@ import type {
   BatchDetail,
   WorkCategoryOption,
   WorkshopOption,
+  LoginOption,
   RolesCatalog,
   UserCreateInput,
   UserDetail,
@@ -657,6 +658,10 @@ export const userKeys = {
   list: (filters: UserFilters) => ['users', 'list', filters] as const,
   detail: (id: string) => ['users', 'detail', id] as const,
   rolesCatalog: ['users', 'roles-catalog'] as const,
+  /** Сотрудники для экрана входа. Отдельный ключ: список зависит не от фильтров,
+   *  а от состояния учётных записей, и общий ключ с `users/list` приводил бы к
+   *  лишним перезапросам. */
+  loginOptions: ['auth', 'login-options'] as const,
 };
 
 /** Список учётных записей с фильтрами (`GET /users`). */
@@ -687,6 +692,28 @@ export function useUser(id: string | null): UseQueryResult<UserDetail> {
  * `staleTime` бесконечный: матрица прав задана в коде доменного пакета и не
  * меняется во время работы приложения, поэтому перезапрашивать её незачем.
  */
+/**
+ * Сотрудники для выпадающего списка на экране входа (`GET /auth/login-options`).
+ *
+ * `retry: false` и `staleTime: Infinity` здесь не случайны:
+ *  * повторять запрос при отказе незачем — это запрос к публичному маршруту без
+ *    параметров, и повтор вернёт тот же результат, только с задержкой;
+ *  * список меняется только администратором, а экран входа открывается заново
+ *    при каждой загрузке страницы, поэтому кэш живёт до перезагрузки.
+ *
+ * Отказ НЕ блокирует вход: экран входа при недоступном списке показывает обычное
+ * поле почты, чтобы сбой одного запроса не запрещал войти всем.
+ */
+export function useLoginOptions(): UseQueryResult<LoginOption[]> {
+  return useQuery<LoginOption[], Error>({
+    queryKey: userKeys.loginOptions,
+    queryFn: () => api.get<LoginOption[]>('/auth/login-options', { noRedirect: true }),
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+/** Справочник ролей и областей видимости. */
 export function useRolesCatalog(): UseQueryResult<RolesCatalog> {
   return useQuery<RolesCatalog, Error>({
     queryKey: userKeys.rolesCatalog,

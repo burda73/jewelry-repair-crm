@@ -20,7 +20,22 @@ interface AuthContextValue {
   user: AuthenticatedUser | null;
   /** true, пока идёт первичная проверка сессии — иначе был бы «мигающий» вход. */
   loading: boolean;
+  /**
+   * Вход по адресу почты.
+   *
+   * Оставлен для сценариев, где почта известна заранее. Экран входа
+   * предпочитает `loginAs` — см. ниже.
+   */
   login: (email: string, password: string) => Promise<void>;
+  /**
+   * Вход по идентификатору сотрудника из выпадающего списка.
+   *
+   * Идентификатор, а не почта: список на экране входа доступен до
+   * аутентификации, поэтому почта в него не отдаётся — иначе она была бы готовым
+   * перечнем адресов для фишинга. Сотрудник выбирает себя по имени, а сервер сам
+   * находит учётную запись.
+   */
+  loginAs: (userId: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Проверка права: UI скрывает недоступное, сервер всё равно проверит. */
   can: (permission: string) => boolean;
@@ -73,11 +88,17 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
     };
   }, []);
 
-  const login = useCallback(
-    async (email: string, password: string) => {
+  /*
+   * Общая часть обоих видов входа: различается только поле идентификатора.
+   * Вынесена, чтобы установка пользователя, очистка кэша и переход не
+   * расходились между двумя путями — расхождение здесь означало бы, что после
+   * входа одним способом в кэше остаются данные прошлого пользователя.
+   */
+  const establishSession = useCallback(
+    async (credentials: { email: string } | { userId: string }, password: string) => {
       const result = await api.post<LoginResponse>(
         '/auth/login',
-        { email, password },
+        { ...credentials, password },
         { skipRefresh: true },
       );
       setUser(result.user);
@@ -86,6 +107,16 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
       router.push('/dashboard');
     },
     [queryClient, router],
+  );
+
+  const login = useCallback(
+    (email: string, password: string) => establishSession({ email }, password),
+    [establishSession],
+  );
+
+  const loginAs = useCallback(
+    (userId: string, password: string) => establishSession({ userId }, password),
+    [establishSession],
   );
 
   const logout = useCallback(async () => {
@@ -114,11 +145,12 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
       user,
       loading,
       login,
+      loginAs,
       logout,
       can: (permission: string) => user?.permissions.includes(permission) ?? false,
       hasRole: (role: string) => user?.roles.includes(role) ?? false,
     }),
-    [user, loading, login, logout],
+    [user, loading, login, loginAs, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
