@@ -207,6 +207,14 @@ export const envSchema = z
     SMS_SENDER: z.string().optional(),
 
     UNCLAIMED_AFTER_DAYS: z.coerce.number().int().positive().default(30),
+    /*
+     * Срок рассмотрения рекламации в РАБОЧИХ днях (задача 6.1).
+     *
+     * Без комментария значение «10» легко прочитать как календарные дни, а это
+     * разница почти в полторы недели. Применяется только к НОВЫМ рекламациям:
+     * `dueAt` сохраняется при открытии, потому что это обязательство, названное
+     * клиенту, и меняться задним числом оно не должно.
+     */
     CLAIM_REVIEW_WORKDAYS: z.coerce.number().int().positive().default(10),
     WARRANTY_MONTHS_DEFAULT: z.coerce.number().int().positive().default(6),
     WARRANTY_MONTHS_SETTING: z.coerce.number().int().positive().default(3),

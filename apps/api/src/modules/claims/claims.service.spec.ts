@@ -92,8 +92,15 @@ function createPrismaMock() {
 function createService(prisma: ReturnType<typeof createPrismaMock>) {
   const workflow = { loadCalendar: vi.fn(async () => CALENDAR) };
   const cache = { invalidate: vi.fn(() => 0) };
-  const service = new ClaimsService(prisma as never, workflow as never, cache as never);
-  return { service, workflow, cache };
+  const values: Record<string, unknown> = { CLAIM_REVIEW_WORKDAYS: 10 };
+  const config = { get: (key: string) => values[key] };
+  const service = new ClaimsService(
+    prisma as never,
+    workflow as never,
+    cache as never,
+    config as never,
+  );
+  return { service, workflow, cache, values };
 }
 
 describe('Открытие рекламации', () => {
@@ -460,6 +467,80 @@ describe('Сброс кэша отчётов (дефект, найденный �
     // Отклонённый переход ничего не изменил: сброс заставлял бы считать отчёт
     // заново без причины.
     expect(cache.invalidate).not.toHaveBeenCalled();
+  });
+});
+
+describe('Настройка срока рассмотрения CLAIM_REVIEW_WORKDAYS', () => {
+  let prisma: ReturnType<typeof createPrismaMock>;
+
+  beforeEach(() => {
+    // Срок считается от момента открытия, поэтому часы фиксируются: иначе
+    // ожидаемая дата зависела бы от дня прогона.
+    vi.useFakeTimers();
+    vi.setSystemTime(MONDAY);
+    prisma = createPrismaMock();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function openMocks(): void {
+    prisma.order.findUnique.mockResolvedValue({
+      id: ORDER_ID,
+      orderNo: 'MSK1-2509-000001',
+      status: 'COMPLETED',
+    });
+    prisma.__tx.counter.upsert.mockResolvedValue({ scope: 'CLAIM:2025', value: 1 });
+    prisma.__tx.warrantyClaim.create.mockImplementation(async (args: never) => {
+      const data = (args as { data: { dueAt: Date } }).data;
+      return claimRow({ dueAt: data.dueAt });
+    });
+  }
+
+  it('срок по умолчанию — 10 рабочих дней', async () => {
+    openMocks();
+    const { service } = createService(prisma);
+
+    await service.open({ orderId: ORDER_ID, reason: 'Разошёлся шов' }, ACTOR);
+
+    /*
+     * Понедельник 15.09 + 10 рабочих дней = понедельник 29.09: считаются только
+     * будни, поэтому две недели календаря дают ровно 10 рабочих дней. Это же
+     * значение даёт константа домена.
+     */
+    const data = prisma.__tx.warrantyClaim.create.mock.calls[0]![0].data;
+    expect(data.dueAt.toISOString().slice(0, 10)).toBe('2025-09-29');
+  });
+
+  it('срок из настройки действительно применяется', async () => {
+    openMocks();
+    const { service, values } = createService(prisma);
+    values.CLAIM_REVIEW_WORKDAYS = 5;
+
+    await service.open({ orderId: ORDER_ID, reason: 'Разошёлся шов' }, ACTOR);
+
+    /*
+     * Настройка объявлена в схеме окружения с самого начала, но не читалась
+     * нигде: изменение «10» ничего не меняло. Без этого теста дефект вернулся
+     * бы молча — код выглядел бы настраиваемым.
+     */
+    // +5 рабочих дней от понедельника 15.09 = понедельник 22.09.
+    const data = prisma.__tx.warrantyClaim.create.mock.calls[0]![0].data;
+    expect(data.dueAt.toISOString().slice(0, 10)).toBe('2025-09-22');
+  });
+
+  it('испорченное значение настройки не сокращает срок до нуля', async () => {
+    openMocks();
+    const { service, values } = createService(prisma);
+    values.CLAIM_REVIEW_WORKDAYS = 0;
+
+    await service.open({ orderId: ORDER_ID, reason: 'Разошёлся шов' }, ACTOR);
+
+    // «0 рабочих дней» означал бы срок, истёкший в момент открытия, то есть
+    // просроченную рекламацию сразу после заведения. Берётся значение по умолчанию.
+    const data = prisma.__tx.warrantyClaim.create.mock.calls[0]![0].data;
+    expect(data.dueAt.toISOString().slice(0, 10)).toBe('2025-09-29');
   });
 });
 

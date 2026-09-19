@@ -71,9 +71,24 @@ export const CLAIM_REVIEW_WORKING_DAYS = 10;
  */
 export const CLAIM_WARNING_WORKING_DAYS = 3;
 
-/** Срок рассмотрения рекламации: `openedAt` плюс 10 рабочих дней. */
-export function computeClaimDueAt(openedAt: Date, calendar: WorkingCalendar): Date {
-  return addWorkingDays(openedAt, CLAIM_REVIEW_WORKING_DAYS, calendar);
+/**
+ * Срок рассмотрения рекламации: `openedAt` плюс `workingDays` рабочих дней.
+ *
+ * Срок — параметр, а не константа: значение приходит из настройки
+ * `CLAIM_REVIEW_WORKDAYS`. Настройка объявлена с самого начала, но до этапа 6
+ * не читалась нигде, то есть изменение «10» в конфигурации ничего не меняло —
+ * тот же класс дефекта, что у флагов каналов (docs/15 «Дефект 41»).
+ *
+ * На уже открытые рекламации смена настройки не влияет: `dueAt` сохранён при
+ * открытии. Это и есть смысл хранения — обязательство, названное клиенту, не
+ * должно меняться задним числом.
+ */
+export function computeClaimDueAt(
+  openedAt: Date,
+  calendar: WorkingCalendar,
+  workingDays: number = CLAIM_REVIEW_WORKING_DAYS,
+): Date {
+  return addWorkingDays(openedAt, workingDays, calendar);
 }
 
 /** Момент, с которого рекламацию пора предупреждать: `dueAt` минус 3 рабочих дня. */

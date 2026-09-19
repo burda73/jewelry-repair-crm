@@ -29,6 +29,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ReportsCacheService } from '../../common/cache/reports-cache.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
@@ -36,6 +37,7 @@ import { OrderWorkflowService } from '../../common/workflow/order-workflow.servi
 import {
   CLAIM_STATUS,
   CLAIM_RESOLUTION_LABELS,
+  CLAIM_REVIEW_WORKING_DAYS,
   CLAIM_STATUS_LABELS,
   CLAIM_TRANSITION_DENIED,
   ORDER_STATUS,
@@ -159,7 +161,24 @@ export class ClaimsService {
     private readonly prisma: PrismaService,
     private readonly workflow: OrderWorkflowService,
     private readonly cache: ReportsCacheService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Срок рассмотрения в рабочих днях.
+   *
+   * Читается из настройки `CLAIM_REVIEW_WORKDAYS`, а не берётся константой:
+   * настройка объявлена с самого начала, но до этапа 6 не читалась нигде, и
+   * изменение её значения ничего не меняло — тот же класс дефекта, что у флагов
+   * каналов уведомлений (docs/15 «Дефект 41»). Значение по умолчанию совпадает
+   * с константой домена, поэтому поведение без настройки прежнее.
+   */
+  private reviewWorkingDays(): number {
+    const value = this.config.get<number>('CLAIM_REVIEW_WORKDAYS');
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+      ? value
+      : CLAIM_REVIEW_WORKING_DAYS;
+  }
 
   /**
    * Открыть рекламацию по заказу.
@@ -204,7 +223,7 @@ export class ClaimsService {
 
     const calendar = await this.workflow.loadCalendar();
     const now = new Date();
-    const dueAt = computeClaimDueAt(now, calendar);
+    const dueAt = computeClaimDueAt(now, calendar, this.reviewWorkingDays());
 
     const created = await this.prisma.$transaction(async (tx) => {
       const counter = await tx.counter.upsert({
