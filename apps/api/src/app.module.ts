@@ -24,6 +24,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { EscalationsModule } from './modules/escalations/escalations.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { NotificationDispatchModule } from './integrations/notifications/notification-dispatch.module';
 import { ReportsCacheModule } from './common/cache/reports-cache.module';
 
 /**
@@ -108,6 +109,7 @@ function resolveEnvPaths(): string[] {
     ReportsCacheModule,
     ReportsModule,
     DashboardModule,
+    NotificationDispatchModule,
   ],
   providers: [
     // Rate limit применяется глобально; отдельные эндпоинты переопределяют лимиты.

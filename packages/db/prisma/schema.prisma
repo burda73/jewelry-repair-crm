@@ -1137,7 +1137,7 @@ enum NotificationChannelType {
 
 model NotificationTemplate {
   id        String    @id @default(cuid())
-  code      String    @unique // ORDER_OVERDUE, PREPAYMENT_RECEIVED, READY_FOR_PICKUP ...
+  code      String // ORDER_OVERDUE, PREPAYMENT_RECEIVED, READY_FOR_PICKUP ...
   channel   NotificationChannelType
   subject   String?
   body      String // шаблон с {{переменными}}
@@ -1145,6 +1145,16 @@ model NotificationTemplate {
   isActive  Boolean   @default(true)
   updatedAt DateTime  @updatedAt
 
+  /// Уникальность по ПАРЕ «код + канал», а не по одному коду.
+  ///
+  /// ЗАЧЕМ. Текст для письма и текст «в приложении» — разные: письму нужна тема
+  /// и оно может быть длинным, сообщение в интерфейсе короткое, а SMS ограничено
+  /// 70 символами. Пока уникальным был только код, у одного кода мог быть ровно
+  /// один шаблон: все они создавались с каналом `IN_APP`, и уведомление на почту
+  /// НЕ НАХОДИЛО шаблона вовсе — уходил запасной текст вида «Событие:
+  /// ORDER_OVERDUE». Ошибка не видна в интерфейсе (там `IN_APP`-запись выглядит
+  /// правильно) и обнаруживается только в полученном письме.
+  @@unique([code, channel])
   @@map("notification_template")
 }
 
@@ -1163,7 +1173,14 @@ model Notification {
   readAt     DateTime?
   error      String?
   attempts   Int       @default(0)
+  /// Момент последней попытки отправки — по нему считается задержка повтора.
+  /// Отдельное поле нужно потому, что `updatedAt` здесь создать нельзя (его нет
+  /// в модели), а `sentAt` заполняется только при успехе: по нему нельзя понять,
+  /// когда упала неудачная попытка, и задержка повтора не вычислялась бы.
+  lastAttemptAt DateTime?
   createdAt  DateTime  @default(now())
+
+  @@index([userId, status, lastAttemptAt])
 
   user User? @relation(fields: [userId], references: [id])
 

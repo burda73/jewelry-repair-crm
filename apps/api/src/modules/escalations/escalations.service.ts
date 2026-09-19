@@ -102,8 +102,13 @@ export class EscalationsService {
         createdStoreId: true,
         // Имя ответственного нужно для текста письма руководителю
         // (`{{responsible}}`): без него шаблон подставил бы пустоту.
-        createdBy: { select: { fullName: true } },
-        productionManager: { select: { fullName: true } },
+        /*
+         * Почта берётся вместе с именем: уведомление сотруднику уходит по двум
+         * каналам (задача 5.9), и адрес нужен для письма. Отдельный запрос за ним
+         * был бы лишним обращением к базе на каждый просроченный заказ.
+         */
+        createdBy: { select: { fullName: true, email: true } },
+        productionManager: { select: { fullName: true, email: true } },
       },
       /*
        * Ограничение прогона: если просроченных заказов аномально много (сбой
@@ -198,7 +203,7 @@ export class EscalationsService {
    * оповещения.
    */
   private async notify(
-    recipients: Array<{ id: string }>,
+    recipients: Array<{ id: string; email: string }>,
     order: { id: string; orderNo: string; status: string },
     overdueWorkingHours: number,
     isManagerLevel: boolean,
@@ -207,13 +212,19 @@ export class EscalationsService {
     let created = 0;
     for (const recipient of recipients) {
       try {
-        const notification = await this.notifications.notifyByTemplate({
+        /*
+         * Оба канала: сообщение в интерфейсе и письмо (задача 5.9). Сотрудник
+         * может не открыть систему сегодня, и тогда единственным способом узнать
+         * о просрочке остаётся почта. Раньше почта не использовалась нигде:
+         * уведомление появлялось в интерфейсе, а письмо не уходило.
+         */
+        const { inApp: notification } = await this.notifications.notifyStaff({
           // У руководителя СВОЙ шаблон: текст другой (нужно вмешательство, а не
           // напоминание) и переменная `responsible` вместо `stage`.
           code: isManagerLevel ? TEMPLATE_CODE.ESCALATION_MANAGER : TEMPLATE_CODE.ORDER_OVERDUE,
           userId: recipient.id,
+          email: recipient.email,
           orderId: order.id,
-          recipient: recipient.id,
           values: {
             orderNo: order.orderNo,
             // Просрочка показывается в рабочих днях (9 часов = день): «1,3 дня»
@@ -257,9 +268,10 @@ export class EscalationsService {
       createdById: string;
       productionManagerId: string | null;
       createdStoreId: string;
+      productionManager: { email: string } | null;
     },
     level: EscalationLevel,
-  ): Promise<Array<{ id: string }>> {
+  ): Promise<Array<{ id: string; email: string }>> {
     if (level >= ESCALATION_LEVEL.MANAGER) {
       /*
        * Руководитель — ОТДЕЛЬНАЯ ветка, а не «ответственный плюс руководитель»:
@@ -274,7 +286,16 @@ export class EscalationsService {
     if (stage === NORM_STAGE.PRODUCTION) {
       // Назначенный менеджер производства отвечает за конкретный заказ.
       if (order.productionManagerId !== null) {
-        return [{ id: order.productionManagerId }];
+        /*
+         * Назначенный менеджер уже загружен вместе с заказом — вместе с именем и
+         * адресом. Отдельный запрос к базе здесь не нужен.
+         */
+        return [
+          {
+            id: order.productionManagerId,
+            email: order.productionManager?.email ?? '',
+          },
+        ];
       }
       // Резерв: назначенного нет — берём менеджеров производства.
       return this.findByRole('PRODUCTION_MANAGER');
@@ -295,7 +316,7 @@ export class EscalationsService {
      */
     const author = await this.prisma.user.findFirst({
       where: { id: order.createdById, isActive: true },
-      select: { id: true },
+      select: { id: true, email: true },
     });
     if (author !== null) return [author];
 
@@ -304,7 +325,7 @@ export class EscalationsService {
         isActive: true,
         roles: { some: { role: 'RECEIVER' as never, storeId: order.createdStoreId } },
       },
-      select: { id: true },
+      select: { id: true, email: true },
       take: 5,
     });
   }
@@ -316,10 +337,15 @@ export class EscalationsService {
    * несколько), поэтому фильтр идёт по связи `roles.some`. Ограничение в пять
    * человек — чтобы не разослать уведомление всему штату.
    */
-  private async findByRole(role: string): Promise<Array<{ id: string }>> {
+  private async findByRole(role: string): Promise<Array<{ id: string; email: string }>> {
     return this.prisma.user.findMany({
       where: { isActive: true, roles: { some: { role: role as never } } },
-      select: { id: true },
+      /*
+       * Почта берётся здесь же: уведомление сотруднику уходит по ДВУМ каналам
+       * (задача 5.9), а отдельный запрос за адресом был бы лишним обращением к
+       * базе на каждого получателя.
+       */
+      select: { id: true, email: true },
       take: 5,
     });
   }

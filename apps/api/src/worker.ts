@@ -23,6 +23,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { EscalationsService } from './modules/escalations/escalations.service';
 import { UnclaimedService } from './modules/escalations/unclaimed.service';
+import { NotificationSenderService } from './integrations/notifications/notification-sender.service';
 
 interface WorkerDefinition {
   name: string;
@@ -50,11 +51,22 @@ const ESCALATION_INTERVAL_MS = 15 * 60_000;
  */
 const UNCLAIMED_INTERVAL_MS = 24 * 60 * 60_000;
 
+/**
+ * Периодичность отправки уведомлений.
+ *
+ * Тридцать секунд. Быстрее бессмысленно: минимальная задержка между попытками —
+ * минута, и более частый прогон лишь повторно выбирал бы те же записи. Медленнее
+ * — клиент узнавал бы, что заказ готов, с заметной задержкой, а повторы
+ * растянулись бы вдвое против задуманного.
+ */
+const NOTIFICATION_INTERVAL_MS = 30_000;
+
 const registeredWorkers: WorkerDefinition[] = [];
 
 /** Контейнер Nest: воркеры работают через те же сервисы, что и API. */
 let escalations: EscalationsService | null = null;
 let unclaimed: UnclaimedService | null = null;
+let notificationSender: NotificationSenderService | null = null;
 
 const timers: NodeJS.Timeout[] = [];
 let shuttingDown = false;
@@ -126,6 +138,7 @@ async function bootstrap(): Promise<void> {
   await app.init();
   escalations = app.get(EscalationsService);
   unclaimed = app.get(UnclaimedService);
+  notificationSender = app.get(NotificationSenderService);
 
   registeredWorkers.push({
     name: 'escalations',
@@ -161,6 +174,28 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  registeredWorkers.push({
+    name: 'notifications',
+    intervalMs: NOTIFICATION_INTERVAL_MS,
+    run: async () => {
+      if (notificationSender === null) return 0;
+      const result = await notificationSender.run();
+      /*
+       * «Пропущено» тоже пишется в журнал: без него прогон, в котором всё ждёт
+       * задержки, выглядел бы как «обработано 0» каждые полминуты, и понять,
+       * работает ли воркер, было бы нельзя.
+       */
+      if (result.scanned > 0 || result.skipped > 0 || result.exhausted > 0) {
+        log(
+          `notifications: готово ${result.scanned}, отправлено ${result.sent}, ` +
+            `с ошибкой ${result.failed}, исчерпано ${result.exhausted}, ` +
+            `отложено ${result.skipped}`,
+        );
+      }
+      return result.sent;
+    },
+  });
+
   for (const worker of registeredWorkers) {
     scheduleWorker(worker);
   }
@@ -175,6 +210,7 @@ function shutdown(signal: string): void {
   log(`Получен сигнал ${signal}, останавливаю воркеры...`);
   escalations = null;
   unclaimed = null;
+  notificationSender = null;
 
   for (const timer of timers) {
     clearInterval(timer);

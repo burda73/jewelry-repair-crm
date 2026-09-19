@@ -60,7 +60,11 @@ function makeService(prisma: Record<string, unknown> = {}) {
     ...prisma,
   };
   const workflow = { transition: vi.fn(async () => ({ id: ORDER_ID })) };
-  const notifications = { notifyByTemplate: vi.fn(async () => ({ id: 'n-1' })) };
+  // Уведомление уходит по двум каналам (задача 5.9): форма ответа — как у
+  // настоящего метода, иначе тест проверял бы несуществующий контракт.
+  const notifications = {
+    notifyStaff: vi.fn(async () => ({ inApp: { id: 'n-1' }, email: { id: 'n-2' } })),
+  };
   const service = new UnclaimedService(client as never, workflow as never, notifications as never);
   return { service, client, workflow, notifications };
 }
@@ -141,8 +145,8 @@ describe('Невостребовано: перевод (задача 2.10)', () 
     // ТЗ п. 2.8: уведомление приёмщику, а не «всем».
     await ctx.service.run(NOW);
 
-    expect(ctx.notifications.notifyByTemplate).toHaveBeenCalledTimes(1);
-    const call = ctx.notifications.notifyByTemplate.mock.calls[0][0] as {
+    expect(ctx.notifications.notifyStaff).toHaveBeenCalledTimes(1);
+    const call = ctx.notifications.notifyStaff.mock.calls[0][0] as {
       code: string;
       userId: string;
     };
@@ -224,7 +228,7 @@ describe('Невостребовано: перевод (задача 2.10)', () 
 
   it('сбой уведомления не отменяет перевод', async () => {
     // Статус уже изменён, и откатывать его из-за недоступной почты нельзя.
-    ctx.notifications.notifyByTemplate.mockRejectedValue(new Error('SMTP timeout'));
+    ctx.notifications.notifyStaff.mockRejectedValue(new Error('SMTP timeout'));
 
     const result = await ctx.service.run(NOW);
 

@@ -201,6 +201,20 @@
 | 3 | Интеграция с 1С | `docs/05` §1 | `AccountingPort`, outbox | этап 3 |
 | 3 | Интеграция с IP-АТС | `docs/05` §2 | `TelephonyPort` | этап 4 |
 | 3 | СМС/мессенджеры (опционально) | `docs/05` §3 | `NotificationPort`, `NotificationTemplate` | этап 5 |
+| 3 | Уведомление сотрудника в интерфейсе и на почте | `docs/05` §3 | `NotificationsService.notifyStaff` | `notifications.service.spec.ts` (10 тестов) |
+| 3 | Адресат каналов: `userId` для ленты, адрес для письма | `docs/05` §3 | `notifyStaff` | `notifications.service.spec.ts` |
+| 3 | Ключ шаблона — пара «код + канал» (дефект) | `docs/05` §3 | `@@unique([code, channel])` | `notification-templates.spec.ts` |
+| 3 | Почтовые тексты существуют для 5 событий | `docs/05` §3 | `TEMPLATE_CHANNEL.EMAIL` | `notification-templates.spec.ts` |
+| 3 | Временная и постоянная ошибка различаются | `docs/05` §6.3 | `isRetryableByCode()` | `notification.port.spec.ts` |
+| 3 | Постоянная ошибка не повторяется (дефект) | `docs/05` §6.3 | `attempts` сразу в предел | `notification-sender.service.spec.ts` |
+| 3 | Три попытки, задержка 1/5/25 мин от последней попытки | `docs/05` §6.3 | `isRetryDue()`, `lastAttemptAt` | `notification.port.spec.ts`, `notification-sender.service.spec.ts` |
+| 3 | Порт не бросает исключений | `docs/05` §6.3 | `SendResult` | `notification-adapters.spec.ts` |
+| 3 | Неизвестный канал — постоянная ошибка, не исключение | `docs/05` §6.3 | `NotificationDispatcher.dispatch` | `notification-adapters.spec.ts` |
+| 3 | Без `SMTP_HOST` канал не настроен, приложение работает | `docs/05` §3 | `readSmtpSettings()` | `notification-adapters.spec.ts` (7 тестов) |
+| 3 | Шифрование SMTP не выводится из номера порта | `docs/05` §3 | `SMTP_SECURE` | `notification-adapters.spec.ts` |
+| 3 | Прочитанные уведомления не отправляются повторно | `docs/05` §6.3 | фильтр статусов воркера | `notification-sender.service.spec.ts` |
+| 3 | Ошибка одного уведомления не мешает остальным | `docs/05` §6.3 | цикл воркера | `notification-sender.service.spec.ts` |
+| 3 | Сбой уведомления не отменяет приёмку партии | `docs/05` §3 | `notifyBatchReceived` вне транзакции | `batches.service.spec.ts` |
 | 4 | Ролевая модель доступа | `docs/02` §4 | `RolesGuard`, `ScopeGuard` | `docs-sync.spec.ts` |
 | 4 | Журнал действий пользователей | `docs/10` §4 | `AuditLog` (append-only) | миграция + права БД |
 | 4 | Резервное копирование **файлов** (фото, записи, PDF) | `docs/10` §5.2 | `infra/backup/backup.sh` (файлы + конфигурация) | `restore-drill.sh` |

@@ -12,13 +12,69 @@ import { describe, expect, it } from 'vitest';
 import { NOTIFICATION_TEMPLATES } from './notification-templates.js';
 
 describe('Шаблоны уведомлений: состав', () => {
-  it('коды не повторяются', () => {
+  it('пары «код + канал» не повторяются', () => {
     /*
-     * Повтор кода означает, что один шаблон затрёт другой при синхронизации
-     * (`upsert` по коду), и часть уведомлений останется без текста.
+     * Ключ шаблона — пара, а не один код: у одного события два текста, для
+     * интерфейса и для почты. Повтор пары означал бы, что один шаблон затрёт
+     * другой при синхронизации, и часть каналов останется без текста.
+     *
+     * Проверять уникальность ОДНИХ кодов теперь нельзя: она более не требуется и
+     * как раз мешала почтовым текстам существовать.
      */
-    const codes = NOTIFICATION_TEMPLATES.map((template) => template.code);
-    expect(new Set(codes).size).toBe(codes.length);
+    const keys = NOTIFICATION_TEMPLATES.map((template) => `${template.code}|${template.channel}`);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('для почтовых уведомлений сотрудника есть тексты', () => {
+    /*
+     * РЕАЛЬНЫЙ ДЕФЕКТ, найденный в задаче 5.9. Все шаблоны имели канал `IN_APP`,
+     * а уникальным был один `code` — поэтому строки с каналом `EMAIL` не могли
+     * существовать вовсе. Сервис ищет шаблон по паре «код + канал», не находил
+     * его и отправлял запасной текст вида «Событие: ORDER_OVERDUE». В интерфейсе
+     * при этом всё выглядело правильно, и заметить можно было только в письме.
+     *
+     * Проверяются именно те события, которые идут сотрудникам по двум каналам.
+     */
+    const emailCodes = new Set(
+      NOTIFICATION_TEMPLATES.filter((t) => t.channel === 'EMAIL').map((t) => t.code),
+    );
+    for (const code of [
+      'ORDER_OVERDUE',
+      'ESCALATION_MANAGER',
+      'ORDER_UNCLAIMED',
+      'BATCH_RECEIVED',
+      'BATCH_TRANSIT_LATE',
+    ]) {
+      expect(emailCodes.has(code), `нет почтового текста для ${code}`).toBe(true);
+    }
+  });
+
+  it('тексты для интерфейса и для почты различаются', () => {
+    /*
+     * Если бы содержимое совпадало, отдельные записи были бы не нужны. Письмо
+     * требует темы, понятной в списке входящих, и может быть подробнее: его
+     * читают с экрана, а не в узкой панели уведомлений.
+     */
+    const inApp = NOTIFICATION_TEMPLATES.filter((t) => t.channel === 'IN_APP');
+    for (const template of inApp) {
+      const email = NOTIFICATION_TEMPLATES.find(
+        (t) => t.channel === 'EMAIL' && t.code === template.code,
+      );
+      if (email === undefined) continue;
+      expect(email.body, `${template.code}: текст письма совпал с интерфейсным`).not.toBe(
+        template.body,
+      );
+    }
+  });
+
+  it('у каждого шаблона указан канал', () => {
+    // Канал входит в ключ поиска: шаблон без канала не найдётся никогда.
+    for (const template of NOTIFICATION_TEMPLATES) {
+      expect(
+        ['IN_APP', 'EMAIL', 'SMS', 'MESSENGER'],
+        `${template.code}: неизвестный канал ${template.channel}`,
+      ).toContain(template.channel);
+    }
   });
 
   it('у каждого шаблона есть тема и текст', () => {

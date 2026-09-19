@@ -1,4 +1,5 @@
 import {
+  Logger,
   BadRequestException,
   ConflictException,
   Injectable,
@@ -159,6 +160,8 @@ const DEFAULT_MAX_ITEMS: number | null = null;
 
 @Injectable()
 export class BatchesService {
+  private readonly logger = new Logger(BatchesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
@@ -1152,7 +1155,18 @@ export class BatchesService {
       // `createdById` — скалярное поле партии, оно уже прочитано вместе с
       // партией: отдельный запрос к `user` был бы лишним кругом к базе.
       await this.notifyBatchReceived(batch.createdById, batch.batchNo, actor).catch(
-        () => undefined,
+        (error: unknown) => {
+          /*
+           * Ошибка уведомления НЕ отменяет приёмку — партия уже принята
+           * физически. Но и полностью молчать нельзя: без записи в журнал
+           * «отправитель не узнал о приёмке» обнаруживается только тогда, когда
+           * он позвонит и спросит. Пустой `catch` скрывал бы отказ канала
+           * навсегда.
+           */
+          this.logger.warn(
+            `Партия ${batch.batchNo}: уведомление отправителю не отправлено — ${String(error)}`,
+          );
+        },
       );
     }
 
@@ -1692,10 +1706,23 @@ export class BatchesService {
   ): Promise<void> {
     if (senderId === null) return;
 
-    await this.notifications.notifyByTemplate({
+    /*
+     * Адрес отправителя читается здесь же. Скалярного `createdById` из партии
+     * недостаточно: уведомление уходит по ДВУМ каналам (задача 5.9), а для письма
+     * нужен адрес. Отправитель может не открыть систему, и тогда единственным
+     * способом узнать о приёмке остаётся почта.
+     *
+     * Отсутствие адреса не мешает: сообщение в интерфейсе всё равно создаётся.
+     */
+    const sender = await this.prisma.user.findUnique({
+      where: { id: senderId },
+      select: { email: true },
+    });
+
+    await this.notifications.notifyStaff({
       code: TEMPLATE_CODE.BATCH_RECEIVED,
       userId: senderId,
-      recipient: senderId,
+      email: sender?.email ?? null,
       values: { batchNo, receivedBy: actor.email },
       fallbackSubject: `Партия ${batchNo} принята`,
       fallbackBody: `Партия ${batchNo} принята получателем.`,

@@ -15,10 +15,34 @@
  * сообщение приёмщику о том, что изделие переведено в «Невостребовано».
  */
 
+/**
+ * Канал шаблона.
+ *
+ * Тексты для разных каналов отличаются НАМЕРЕННО, а не дублируются. Письмо
+ * содержит тему и может быть длинным; сообщение в интерфейсе короткое, потому
+ * что его читают урывками между клиентами; SMS ограничено примерно 70 символами,
+ * и всё, что длиннее, приходит двумя сообщениями с лишней оплатой.
+ */
+export const TEMPLATE_CHANNEL = {
+  IN_APP: 'IN_APP',
+  EMAIL: 'EMAIL',
+  SMS: 'SMS',
+  MESSENGER: 'MESSENGER',
+} as const;
+
+export type TemplateChannel = (typeof TEMPLATE_CHANNEL)[keyof typeof TEMPLATE_CHANNEL];
+
 /** Один шаблон уведомления. */
 export interface NotificationTemplateSeed {
   /** Код из `TEMPLATE_CODE`; по нему шаблон ищется при отправке. */
   code: string;
+  /**
+   * Канал, которому принадлежит текст.
+   *
+   * Шаблон ищется по паре «код + канал»: для письма и для сообщения в интерфейсе
+   * это разные записи с разным текстом.
+   */
+  channel: TemplateChannel;
   /** Тема сообщения; подстановка — `{{переменная}}`. */
   subject: string;
   /** Текст сообщения. */
@@ -35,32 +59,38 @@ export interface NotificationTemplateSeed {
  */
 export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateSeed[] = [
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     code: 'ORDER_ACCEPTED',
     subject: 'Заказ принят',
     body: 'Заказ {{orderNo}} принят в работу. Плановая готовность: {{dueDate}}.',
   },
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     code: 'APPROVAL_REQUEST',
     subject: 'Требуется согласование',
     body: 'Согласуйте стоимость ремонта по заказу {{orderNo}}: {{amount}}.',
   },
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     code: 'PREPAYMENT_RECEIVED',
     subject: 'Предоплата получена',
     body: 'Предоплата по заказу {{orderNo}} получена. Работы начаты.',
   },
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     code: 'READY_FOR_PICKUP',
     subject: 'Заказ готов',
     body: 'Заказ {{orderNo}} готов к выдаче в {{storeName}}.',
   },
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     // Письмо КЛИЕНТУ: напоминание забрать заказ.
     code: 'UNCLAIMED_REMINDER',
     subject: 'Напоминание о заказе',
     body: 'Заказ {{orderNo}} ожидает вас более 30 дней.',
   },
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     // Обращение к ПРИЁМЩИКУ, а не к клиенту: `UNCLAIMED_REMINDER` выше — это
     // письмо клиенту («ожидает вас»), а здесь приёмщик должен понять, что
     // изделие лежит на хранении и с ним надо что-то решать.
@@ -69,21 +99,25 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateSeed[] = [
     body: 'Заказ {{orderNo}} не получен клиентом более 30 дней — переведён в «Невостребовано».',
   },
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     code: 'WARRANTY_ISSUED',
     subject: 'Гарантия оформлена',
     body: 'Гарантия по заказу {{orderNo}} действует до {{warrantyUntil}}.',
   },
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     code: 'ORDER_OVERDUE',
     subject: 'Просрочка по заказу',
     body: 'Заказ {{orderNo}} просрочен на {{overdueDays}} дн. Этап: {{stage}}.',
   },
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     code: 'ESCALATION_MANAGER',
     subject: 'Эскалация: просрочка более 1 дня',
     body: 'Заказ {{orderNo}} просрочен более чем на рабочий день. Ответственный: {{responsible}}.',
   },
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     code: 'CLAIM_DEADLINE',
     subject: 'Срок рекламации',
     body: 'По рекламации {{claimNo}} истекает срок рассмотрения {{dueDate}}.',
@@ -93,13 +127,80 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateSeed[] = [
    * узнаёт о приёмке, а логист — о задержке доставки.
    */
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     code: 'BATCH_RECEIVED',
     subject: 'Партия {{batchNo}} принята',
     body: 'Партия {{batchNo}} принята получателем. Принял: {{receivedBy}}.',
   },
   {
+    channel: TEMPLATE_CHANNEL.IN_APP,
     code: 'BATCH_TRANSIT_LATE',
     subject: 'Партия {{batchNo}} задерживается',
     body: 'Партия {{batchNo}} в пути дольше норматива: {{elapsed}} при норме {{norm}}.',
+  },
+
+  /*
+   * ---------------------------------------------------------------------------
+   * Тексты для ПОЧТЫ (задача 5.9).
+   *
+   * ЗАЧЕМ ОТДЕЛЬНЫЕ ЗАПИСИ, А НЕ ОБЩИЕ С `IN_APP`. Канал входит в ключ поиска
+   * шаблона, и это не формальность: письмо читают не так, как сообщение в
+   * интерфейсе. У письма есть тема в списке входящих — она должна быть понятна
+   * без открытия, поэтому в неё вынесен номер заказа. Тело письма может быть
+   * длиннее: человек читает его с экрана или телефона, а не в узкой панели
+   * уведомлений. Сотрудник, который видит сообщение в интерфейсе, уже знает
+   * контекст; тому, кто читает почту, нужно больше подробностей.
+   *
+   * Эти шаблоны адресованы СОТРУДНИКАМ (docs/05 §3: события для сотрудников идут
+   * `IN_APP` + `EMAIL`). Шаблоны для клиентов появятся вместе с SMS-каналом
+   * (задача 5.10), где ограничение длины диктует совсем другой текст.
+   * ---------------------------------------------------------------------------
+   */
+  {
+    channel: TEMPLATE_CHANNEL.EMAIL,
+    code: 'ORDER_OVERDUE',
+    subject: 'Просрочка по заказу {{orderNo}}',
+    body:
+      'Заказ {{orderNo}} просрочен на {{overdueDays}} дн.\n' +
+      'Текущий этап: {{stage}}.\n\n' +
+      'Откройте заказ в системе, чтобы назначить нового ответственного или ' +
+      'уточнить срок у клиента.',
+  },
+  {
+    channel: TEMPLATE_CHANNEL.EMAIL,
+    code: 'ESCALATION_MANAGER',
+    subject: 'Эскалация: заказ {{orderNo}} просрочен более рабочего дня',
+    body:
+      'Заказ {{orderNo}} просрочен более чем на рабочий день.\n' +
+      'Ответственный: {{responsible}}.\n\n' +
+      'Требуется вмешательство: сроки нарушены, и клиент об этом ещё не уведомлён.',
+  },
+  {
+    channel: TEMPLATE_CHANNEL.EMAIL,
+    code: 'ORDER_UNCLAIMED',
+    subject: 'Заказ {{orderNo}} не получен клиентом',
+    body:
+      'Заказ {{orderNo}} не получен клиентом более 30 дней и переведён в ' +
+      '«Невостребовано».\n\n' +
+      'Свяжитесь с клиентом: изделие занимает место в хранилище, и по нему нужно ' +
+      'принять решение.',
+  },
+  {
+    channel: TEMPLATE_CHANNEL.EMAIL,
+    code: 'BATCH_RECEIVED',
+    subject: 'Партия {{batchNo}} принята',
+    body:
+      'Партия {{batchNo}} принята получателем. Принял: {{receivedBy}}.\n\n' +
+      'Изделия из этой партии переведены на следующий этап. Отдельное действие ' +
+      'не требуется — письмо для сведения.',
+  },
+  {
+    channel: TEMPLATE_CHANNEL.EMAIL,
+    code: 'BATCH_TRANSIT_LATE',
+    subject: 'Партия {{batchNo}} задерживается в пути',
+    body:
+      'Партия {{batchNo}} в пути дольше норматива: {{elapsed}} при норме {{norm}}.\n\n' +
+      'Проверьте, доехала ли партия: если получатель не подтвердил приёмку, ' +
+      'свяжитесь с ним.',
   },
 ];

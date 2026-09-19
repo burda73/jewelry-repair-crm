@@ -77,14 +77,27 @@ function makeService(prisma: Record<string, unknown> = {}) {
       ...(prisma.order as object),
     },
     user: {
-      findFirst: vi.fn(async () => ({ id: AUTHOR_ID })),
-      findMany: vi.fn(async () => [{ id: AUTHOR_ID }]),
+      /*
+       * `email` присутствует намеренно: эскалация уведомляет сотрудника по двум
+       * каналам (задача 5.9), и адрес нужен для письма. Двойник без адреса
+       * проверял бы только канал «в приложении», то есть половину поведения.
+       */
+      findFirst: vi.fn(async () => ({ id: AUTHOR_ID, email: 'author@remixgold.ru' })),
+      findMany: vi.fn(async () => [{ id: AUTHOR_ID, email: 'author@remixgold.ru' }]),
+      findUnique: vi.fn(async () => ({ id: AUTHOR_ID, email: 'author@remixgold.ru' })),
       ...(prisma.user as object),
     },
     ...prisma,
   };
   const workflow = { loadCalendar: vi.fn(async () => ({ overrides: new Map(), defaultHours: 9 })) };
-  const notifications = { notifyByTemplate: vi.fn(async () => ({ id: 'n-1' })) };
+  /*
+   * Двойник отдаёт ОБА канала: эскалация уведомляет сотрудника и в интерфейсе, и
+   * письмом (задача 5.9). Возвращается та же форма, что у настоящего метода, —
+   * иначе тест проверял бы несуществующий контракт.
+   */
+  const notifications = {
+    notifyStaff: vi.fn(async () => ({ inApp: { id: 'n-1' }, email: { id: 'n-2' } })),
+  };
   const service = new EscalationsService(
     client as never,
     workflow as never,
@@ -155,7 +168,7 @@ describe('Воркер эскалаций: уровни (задача 2.8)', () 
     const result = await ctx.service.run(NOW);
 
     expect(result.notified).toBe(0);
-    expect(ctx.notifications.notifyByTemplate).not.toHaveBeenCalled();
+    expect(ctx.notifications.notifyStaff).not.toHaveBeenCalled();
     expect(ctx.client.order.update).not.toHaveBeenCalled();
   });
 
@@ -170,7 +183,7 @@ describe('Воркер эскалаций: уровни (задача 2.8)', () 
     const result = await ctx.service.run(NOW);
 
     expect(result.notified).toBe(0);
-    expect(ctx.notifications.notifyByTemplate).not.toHaveBeenCalled();
+    expect(ctx.notifications.notifyStaff).not.toHaveBeenCalled();
   });
 
   it('просрочка больше рабочего дня поднимает уровень до руководителя', async () => {
@@ -213,7 +226,7 @@ describe('Воркер эскалаций: адресаты (задача 2.8)',
 
     await service.run(NOW);
 
-    const call = notifications.notifyByTemplate.mock.calls[0][0] as { userId: string };
+    const call = notifications.notifyStaff.mock.calls[0][0] as { userId: string };
     expect(call.userId).toBe(PROD_MANAGER_ID);
     // Назначенный менеджер берётся из поля заказа: искать его среди пользователей
     // не нужно, и лишний запрос к базе здесь не выполняется.
@@ -234,7 +247,7 @@ describe('Воркер эскалаций: адресаты (задача 2.8)',
     expect(client.user.findMany.mock.calls[0][0].where.roles).toEqual({
       some: { role: 'PRODUCTION_MANAGER' },
     });
-    expect(notifications.notifyByTemplate).toHaveBeenCalledTimes(1);
+    expect(notifications.notifyStaff).toHaveBeenCalledTimes(1);
   });
 
   it('на логистике отвечает логист', async () => {
@@ -247,7 +260,7 @@ describe('Воркер эскалаций: адресаты (задача 2.8)',
     expect(client.user.findMany.mock.calls[0][0].where.roles).toEqual({
       some: { role: 'LOGISTICIAN' },
     });
-    const call = notifications.notifyByTemplate.mock.calls[0][0] as { userId: string };
+    const call = notifications.notifyStaff.mock.calls[0][0] as { userId: string };
     expect(call.userId).toBe(LOGIST_ID);
   });
 
@@ -258,7 +271,7 @@ describe('Воркер эскалаций: адресаты (задача 2.8)',
 
     await service.run(NOW);
 
-    const call = notifications.notifyByTemplate.mock.calls[0][0] as { userId: string };
+    const call = notifications.notifyStaff.mock.calls[0][0] as { userId: string };
     expect(call.userId).toBe(AUTHOR_ID);
   });
 
@@ -274,7 +287,7 @@ describe('Воркер эскалаций: адресаты (задача 2.8)',
 
     const where = client.user.findMany.mock.calls[0][0].where;
     expect(where.roles).toEqual({ some: { role: 'RECEIVER', storeId: STORE_ID } });
-    expect(notifications.notifyByTemplate).toHaveBeenCalledTimes(1);
+    expect(notifications.notifyStaff).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -300,7 +313,7 @@ describe('Воркер эскалаций: отказы (задача 2.8)', () 
     // Заказ не должен считаться оповещённым, если сообщение не ушло.
     const { service, client, notifications } = makeService();
     client.order.findMany.mockResolvedValue([orderRow()]);
-    notifications.notifyByTemplate.mockRejectedValue(new Error('SMTP timeout'));
+    notifications.notifyStaff.mockRejectedValue(new Error('SMTP timeout'));
 
     const result = await service.run(NOW);
 
@@ -318,13 +331,13 @@ describe('Воркер эскалаций: отказы (задача 2.8)', () 
     client.order.findMany.mockResolvedValue([orderRow({ status: 'READY_FOR_PICKUP' })]);
     client.user.findFirst.mockResolvedValue(null);
     client.user.findMany.mockResolvedValue([{ id: 'receiver-1' }, { id: 'receiver-2' }]);
-    notifications.notifyByTemplate
+    notifications.notifyStaff
       .mockRejectedValueOnce(new Error('первый получатель недоступен'))
       .mockResolvedValueOnce({ id: 'n-2' });
 
     const result = await service.run(NOW);
 
-    expect(notifications.notifyByTemplate).toHaveBeenCalledTimes(2);
+    expect(notifications.notifyStaff).toHaveBeenCalledTimes(2);
     expect(result.notified).toBe(1);
     expect(result.escalated).toBe(1);
   });
@@ -338,7 +351,7 @@ describe('Воркер эскалаций: отказы (задача 2.8)', () 
     ]);
     client.user.findFirst.mockResolvedValue(null);
     client.user.findMany.mockResolvedValue([{ id: 'receiver-1' }]);
-    notifications.notifyByTemplate
+    notifications.notifyStaff
       .mockRejectedValueOnce(new Error('сбой'))
       .mockResolvedValueOnce({ id: 'n-2' });
 
@@ -361,7 +374,7 @@ describe('Воркер эскалаций: шаблоны (задача 2.8)', (
 
     await service.run(NOW);
 
-    const call = notifications.notifyByTemplate.mock.calls[0][0] as { code: string };
+    const call = notifications.notifyStaff.mock.calls[0][0] as { code: string };
     expect(call.code).toBe('ESCALATION_MANAGER');
   });
 
@@ -371,7 +384,7 @@ describe('Воркер эскалаций: шаблоны (задача 2.8)', (
 
     await service.run(NOW);
 
-    const call = notifications.notifyByTemplate.mock.calls[0][0] as { code: string };
+    const call = notifications.notifyStaff.mock.calls[0][0] as { code: string };
     expect(call.code).toBe('ORDER_OVERDUE');
   });
 
@@ -383,7 +396,7 @@ describe('Воркер эскалаций: шаблоны (задача 2.8)', (
 
     await service.run(NOW);
 
-    const call = notifications.notifyByTemplate.mock.calls[0][0] as {
+    const call = notifications.notifyStaff.mock.calls[0][0] as {
       values: { overdueDays: number };
     };
     // 10 рабочих часов при девятичасовом дне — это один полный день.
@@ -405,7 +418,7 @@ describe('Воркер эскалаций: имя ответственного (
 
     await service.run(NOW);
 
-    const call = notifications.notifyByTemplate.mock.calls[0][0] as {
+    const call = notifications.notifyStaff.mock.calls[0][0] as {
       values: { responsible: string };
     };
     expect(call.values.responsible).toBe('Мастеров Иван');
@@ -426,7 +439,7 @@ describe('Воркер эскалаций: имя ответственного (
 
     await service.run(NOW);
 
-    const call = notifications.notifyByTemplate.mock.calls[0][0] as {
+    const call = notifications.notifyStaff.mock.calls[0][0] as {
       values: { responsible: string };
     };
     expect(call.values.responsible).toBe('Приёмщиков Пётр');

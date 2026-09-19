@@ -80,14 +80,20 @@ function initialise() {
 
   // Локаль ru_RU.UTF-8, как требует infra/db/README.md §1.1: иначе русские ФИО
   // сортируются неверно — расхождение с продакшном скрыло бы ошибки поиска.
-  const result = pg('initdb', [
-    '-D', DATA_DIR,
-    '-U', DB.user,
-    '--auth=scram-sha-256',
-    '--pwfile=/dev/stdin',
-    '--encoding=UTF8',
-    `--locale=ru_RU.UTF-8`,
-  ], { input: `${DB.password}\n` });
+  const result = pg(
+    'initdb',
+    [
+      '-D',
+      DATA_DIR,
+      '-U',
+      DB.user,
+      '--auth=scram-sha-256',
+      '--pwfile=/dev/stdin',
+      '--encoding=UTF8',
+      `--locale=ru_RU.UTF-8`,
+    ],
+    { input: `${DB.password}\n` },
+  );
 
   if (result.status !== 0) {
     fail(`initdb завершился с ошибкой:\n${result.stderr || result.stdout}`);
@@ -109,10 +115,15 @@ async function start() {
   // -l: лог сервера в файл. Без него pg_ctl молча теряет вывод postgres.
   const result = pg('pg_ctl', [
     'start',
-    '-D', DATA_DIR,
-    '-l', LOG_FILE,
-    '-o', `-p ${DB.port} -c listen_addresses=localhost`,
-    '-w', '-t', '60',
+    '-D',
+    DATA_DIR,
+    '-l',
+    LOG_FILE,
+    '-o',
+    `-p ${DB.port} -c listen_addresses=localhost`,
+    '-w',
+    '-t',
+    '60',
   ]);
 
   if (result.status !== 0) {
@@ -180,7 +191,9 @@ function status() {
       const state = JSON.parse(readFileSync(STATE_FILE, 'utf8'));
       if (state.port) log(`порт: ${state.port}`);
       log(`данные: ${DATA_DIR}`);
-    } catch { /* повреждённый файл состояния не критичен */ }
+    } catch {
+      /* повреждённый файл состояния не критичен */
+    }
   }
   if (!running) process.exitCode = 1;
 }
@@ -197,7 +210,9 @@ async function reset() {
 function printConnection() {
   console.log('');
   console.log('  DATABASE_URL:');
-  console.log(`  postgresql://${DB.user}:${DB.password}@localhost:${DB.port}/${DB.name}?schema=public`);
+  console.log(
+    `  postgresql://${DB.user}:${DB.password}@localhost:${DB.port}/${DB.name}?schema=public`,
+  );
   console.log('');
   console.log('  Данные: .local/postgres (в .gitignore)');
   console.log('  Лог:    .local/postgres.log');
@@ -207,20 +222,33 @@ function printConnection() {
 const command = process.argv[2] ?? 'start';
 
 switch (command) {
-  case 'start': await start(); break;
-  case 'stop': stop(); break;
-  case 'status': status(); break;
-  case 'reset': await reset(); break;
+  case 'start':
+    await start();
+    break;
+  case 'stop':
+    stop();
+    break;
+  case 'status':
+    status();
+    break;
+  case 'reset':
+    await reset();
+    break;
   case 'psql': {
     // Бинарника psql в npm-пакете нет, поэтому подключаемся через pg-клиент.
     if (!isRunning()) fail('PostgreSQL не запущен. Сначала: node scripts/local-db.mjs start');
     const { Client } = await import('pg');
     const client = new Client({
-      host: 'localhost', port: DB.port,
-      user: DB.user, password: DB.password, database: DB.name,
+      host: 'localhost',
+      port: DB.port,
+      user: DB.user,
+      password: DB.password,
+      database: DB.name,
     });
     await client.connect();
-    console.log(`Подключено к ${DB.name}@localhost:${DB.port}. Введите SQL, пустая строка — выход.`);
+    console.log(
+      `Подключено к ${DB.name}@localhost:${DB.port}. Введите SQL, пустая строка — выход.`,
+    );
     const { createInterface } = await import('node:readline/promises');
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     for (;;) {

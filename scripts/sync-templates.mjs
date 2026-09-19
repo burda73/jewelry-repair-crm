@@ -30,20 +30,28 @@ const prisma = new PrismaClient();
 
 async function main() {
   const existing = await prisma.notificationTemplate.findMany({
-    select: { code: true, subject: true, body: true, isActive: true },
+    select: { code: true, channel: true, subject: true, body: true, isActive: true },
   });
-  const byCode = new Map(existing.map((template) => [template.code, template]));
+  /*
+   * Ключ — ПАРА «код + канал», а не один код. У одного кода два текста: короткий
+   * для интерфейса и подробный для почты. Поиск по коду находил бы первый
+   * попавшийся, считал его «существующим» и не создавал второй шаблон — почта
+   * молча уходила бы по запасному тексту.
+   */
+  const byKey = new Map(
+    existing.map((template) => [`${template.code}|${template.channel}`, template]),
+  );
 
   let created = 0;
   let updated = 0;
   const drifted = [];
 
   for (const template of NOTIFICATION_TEMPLATES) {
-    const current = byCode.get(template.code);
+    const current = byKey.get(`${template.code}|${template.channel}`);
 
     if (current === undefined) {
       await prisma.notificationTemplate.create({
-        data: { ...template, channel: 'IN_APP', locale: 'ru', isActive: true },
+        data: { ...template, locale: 'ru', isActive: true },
       });
       created += 1;
       continue;
@@ -53,14 +61,14 @@ async function main() {
 
     if (updateTexts) {
       await prisma.notificationTemplate.update({
-        where: { code: template.code },
+        where: { code_channel: { code: template.code, channel: template.channel } },
         data: { subject: template.subject, body: template.body },
       });
       updated += 1;
       continue;
     }
 
-    drifted.push(template.code);
+    drifted.push(`${template.code} (${template.channel})`);
   }
 
   console.log(`Шаблонов в справочнике: ${NOTIFICATION_TEMPLATES.length}`);

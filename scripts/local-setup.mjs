@@ -69,7 +69,10 @@ if (existsSync(envPath)) {
   template = template
     .replace(/^DATABASE_URL=.*$/m, `DATABASE_URL="${LOCAL_DATABASE_URL}"`)
     .replace(/^JWT_ACCESS_SECRET=.*$/m, `JWT_ACCESS_SECRET="${randomBytes(48).toString('base64')}"`)
-    .replace(/^JWT_REFRESH_SECRET=.*$/m, `JWT_REFRESH_SECRET="${randomBytes(48).toString('base64')}"`)
+    .replace(
+      /^JWT_REFRESH_SECRET=.*$/m,
+      `JWT_REFRESH_SECRET="${randomBytes(48).toString('base64')}"`,
+    )
     .replace(/^CSRF_SECRET=.*$/m, `CSRF_SECRET="${randomBytes(24).toString('base64')}"`);
   writeFileSync(envPath, template);
   console.log('  .env создан: локальная БД + сгенерированные секреты');
@@ -85,11 +88,10 @@ const databaseUrl = dotenv?.[1] ?? LOCAL_DATABASE_URL;
 const prismaBin = join(ROOT, 'node_modules', '.bin', 'prisma');
 const schemaPath = join(ROOT, 'packages', 'db', 'prisma', 'schema.prisma');
 
-const migrateStatus = run(
-  prismaBin,
-  ['migrate', 'deploy', '--schema', schemaPath],
-  { env: { DATABASE_URL: databaseUrl }, allowFailure: true },
-);
+const migrateStatus = run(prismaBin, ['migrate', 'deploy', '--schema', schemaPath], {
+  env: { DATABASE_URL: databaseUrl },
+  allowFailure: true,
+});
 
 if (migrateStatus !== 0) {
   fail(

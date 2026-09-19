@@ -136,16 +136,22 @@ export class UnclaimedService {
     try {
       const receivers = await this.prisma.user.findMany({
         where: { isActive: true, roles: { some: { role: 'RECEIVER', storeId } } },
-        select: { id: true },
+        // Почта нужна для второго канала: приёмщик может не зайти в систему.
+        select: { id: true, email: true },
         take: 5,
       });
 
       for (const receiver of receivers) {
-        await this.notifications.notifyByTemplate({
+        /*
+         * Оба канала: сообщение в интерфейсе и письмо (задача 5.9). Приёмщик,
+         * который не открыл систему, иначе не узнал бы, что изделие переведено в
+         * «Невостребовано».
+         */
+        await this.notifications.notifyStaff({
           code: TEMPLATE_CODE.ORDER_UNCLAIMED,
           userId: receiver.id,
+          email: receiver.email,
           orderId,
-          recipient: receiver.id,
           values: { orderNo },
           fallbackSubject: `Заказ ${orderNo} невостребован`,
           fallbackBody: `Заказ ${orderNo} ожидает клиента более ${DEFAULT_UNCLAIMED_AFTER_DAYS} дней.`,

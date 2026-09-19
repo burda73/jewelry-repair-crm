@@ -158,7 +158,11 @@ function createPrismaMock() {
     counter: { upsert: vi.fn(async () => ({ value: 4 })) },
     setting: { findUnique: vi.fn(async () => null) },
     auditLog: { create: vi.fn() },
-    user: { findMany: vi.fn(async () => []) },
+    user: {
+      findMany: vi.fn(async () => []),
+      // Адрес отправителя нужен для второго канала уведомления (задача 5.9).
+      findUnique: vi.fn(async () => ({ email: 'sender@remixgold.ru' })),
+    },
     // Идентификатор намеренно ОТЛИЧАЕТСЯ от `fileObject.id`: `pdfFileId`
     // ссылается на `Document`, и если подставить туда идентификатор файла,
     // тест обязан упасть.
@@ -188,6 +192,12 @@ function createPrismaMock() {
       delete: vi.fn(async () => ({ id: 'photo-1' })),
     },
     order: { findMany: vi.fn(async () => []) },
+    /*
+     * Верхнеуровневый `user` нужен уведомлению о приёмке: адрес отправителя
+     * читается ДО входа в транзакцию (задача 5.9). В `tx` он тоже есть — там
+     * адреса не требуется, но двойник должен повторять форму настоящего клиента.
+     */
+    user: { findUnique: vi.fn(async () => ({ email: 'sender@remixgold.ru' })) },
     setting: { findUnique: vi.fn(async () => null) },
     runInTransaction: vi.fn(async (callback: (t: typeof tx) => Promise<unknown>) => callback(tx)),
     _tx: tx,
@@ -223,7 +233,11 @@ const workflowMock = {
  * `notifications.service.spec.ts`.
  */
 const notificationsMock = {
-  notifyByTemplate: vi.fn(async () => null),
+  /*
+   * Уведомление уходит по двум каналам (задача 5.9): форма ответа совпадает с
+   * настоящим методом, иначе тест проверял бы несуществующий контракт.
+   */
+  notifyStaff: vi.fn(async () => ({ inApp: { id: 'n-1' }, email: { id: 'n-2' } })),
 };
 
 /** Хранилище подменяется: проверяются правила сервиса, а не запись на диск. */
@@ -1908,8 +1922,8 @@ describe('BatchesService: уведомление о приёмке (задача
 
     await makeService(prisma).receive(BATCH_ID, LOGIST);
 
-    expect(notificationsMock.notifyByTemplate).toHaveBeenCalledTimes(1);
-    const call = notificationsMock.notifyByTemplate.mock.calls[0]?.[0] as {
+    expect(notificationsMock.notifyStaff).toHaveBeenCalledTimes(1);
+    const call = notificationsMock.notifyStaff.mock.calls[0]?.[0] as {
       code: string;
       userId: string;
     };
@@ -1925,7 +1939,7 @@ describe('BatchesService: уведомление о приёмке (задача
 
     await makeService(prisma).dispatch(BATCH_ID, LOGIST);
 
-    expect(notificationsMock.notifyByTemplate).not.toHaveBeenCalled();
+    expect(notificationsMock.notifyStaff).not.toHaveBeenCalled();
   });
 
   it('без известного отправителя уведомление не создаётся', async () => {
@@ -1935,7 +1949,7 @@ describe('BatchesService: уведомление о приёмке (задача
 
     await makeService(prisma).receive(BATCH_ID, LOGIST);
 
-    expect(notificationsMock.notifyByTemplate).not.toHaveBeenCalled();
+    expect(notificationsMock.notifyStaff).not.toHaveBeenCalled();
   });
 
   it('сбой уведомления НЕ отменяет приёмку', async () => {
@@ -1946,7 +1960,7 @@ describe('BatchesService: уведомление о приёмке (задача
      */
     const prisma = createPrismaMock();
     prisma.batch.findFirst.mockResolvedValue(receivable(LOGIST_ID));
-    notificationsMock.notifyByTemplate.mockRejectedValueOnce(new Error('SMTP timeout'));
+    notificationsMock.notifyStaff.mockRejectedValueOnce(new Error('SMTP timeout'));
 
     await expect(makeService(prisma).receive(BATCH_ID, LOGIST)).resolves.toBeDefined();
   });

@@ -152,6 +152,69 @@ export class NotificationsService {
   }
 
   /**
+   * Уведомить СОТРУДНИКА по обоим каналам: в интерфейсе и на почте (задача 5.9).
+   *
+   * ЗАЧЕМ ДВА УВЕДОМЛЕНИЯ, А НЕ ОДНО С ДВУМЯ АДРЕСАМИ. Записи разные по смыслу:
+   * сообщение в интерфейсе человек прочитает, когда откроет систему (и оно
+   * помечается прочитанным), а письмо должно уйти сразу, потому что сотрудник
+   * может в систему сегодня не зайти. У них разные статусы, разные тексты (из
+   * шаблонов разных каналов) и разные адресаты — идентификатор пользователя и
+   * почтовый адрес.
+   *
+   * ЗАЧЕМ ЭТО ЗДЕСЬ, А НЕ В ВЫЗЫВАЮЩЕМ КОДЕ. Раньше каждая рассылка сама решала,
+   * какие каналы использовать, и ни одна не использовала почту: в интерфейсе
+   * уведомление появлялось, а письмо не уходило — то есть сотрудник, не открывший
+   * систему, не узнавал о просрочке. Общий метод делает набор каналов единым
+   * решением, а не повторяющимся в четырёх местах.
+   *
+   * Почта отправляется ТОЛЬКО если у сотрудника есть адрес: у приёмщика он есть
+   * всегда (это учётная запись), но метод не должен падать, если адрес не задан.
+   * Отсутствие адреса — не ошибка: сообщение в интерфейсе всё равно создаётся.
+   */
+  async notifyStaff(params: {
+    code: TemplateCode | (string & {});
+    userId: string;
+    email: string | null;
+    orderId?: string | null;
+    values?: Record<string, string | number | null | undefined>;
+    fallbackSubject?: string;
+    fallbackBody?: string;
+  }): Promise<{ inApp: NotificationDto | null; email: NotificationDto | null }> {
+    const inApp = await this.notifyByTemplate({
+      code: params.code,
+      userId: params.userId,
+      orderId: params.orderId ?? null,
+      recipient: params.userId,
+      channel: NOTIFICATION_CHANNEL.IN_APP,
+      ...(params.values === undefined ? {} : { values: params.values }),
+      ...(params.fallbackSubject === undefined ? {} : { fallbackSubject: params.fallbackSubject }),
+      ...(params.fallbackBody === undefined ? {} : { fallbackBody: params.fallbackBody }),
+    });
+
+    /*
+     * Почта создаётся ВТОРОЙ и не отменяет первую: если у сотрудника нет адреса,
+     * уведомление в интерфейсе уже создано и терять его нельзя.
+     */
+    let email: NotificationDto | null = null;
+    if (params.email !== null && params.email.trim() !== '') {
+      email = await this.notifyByTemplate({
+        code: params.code,
+        userId: params.userId,
+        orderId: params.orderId ?? null,
+        recipient: params.email.trim(),
+        channel: NOTIFICATION_CHANNEL.EMAIL,
+        ...(params.values === undefined ? {} : { values: params.values }),
+        ...(params.fallbackSubject === undefined
+          ? {}
+          : { fallbackSubject: params.fallbackSubject }),
+        ...(params.fallbackBody === undefined ? {} : { fallbackBody: params.fallbackBody }),
+      });
+    }
+
+    return { inApp, email };
+  }
+
+  /**
    * Уведомления текущего пользователя.
    *
    * Только свои: чужую ленту видеть нельзя, даже с правами на заказы — это

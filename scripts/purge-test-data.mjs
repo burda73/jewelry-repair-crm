@@ -162,8 +162,12 @@ async function assertCoversSchema(client) {
     console.error('Обнаружены таблицы, не отнесённые ни к тестовым, ни к настроечным:');
     for (const name of unknown) console.error(`  - ${name}`);
     console.error('');
-    console.error('Добавьте их в TRANSACTIONAL_TABLES или PRESERVED_TABLES в scripts/purge-test-data.mjs.');
-    console.error('Очистка остановлена: молча пропустить эти данные нельзя — они попадут в продакшн.');
+    console.error(
+      'Добавьте их в TRANSACTIONAL_TABLES или PRESERVED_TABLES в scripts/purge-test-data.mjs.',
+    );
+    console.error(
+      'Очистка остановлена: молча пропустить эти данные нельзя — они попадут в продакшн.',
+    );
     process.exit(1);
   }
 }
@@ -224,7 +228,9 @@ async function main() {
     console.error('Отказ: флаг --users требует --keep-admin=<email>.');
     console.error('');
     console.error('Укажите учётную запись администратора, которая должна остаться рабочей:');
-    console.error('  node scripts/purge-test-data.mjs --apply --users --keep-admin=director@remixgold.ru');
+    console.error(
+      '  node scripts/purge-test-data.mjs --apply --users --keep-admin=director@remixgold.ru',
+    );
     console.error('');
     console.error('Без этого удаление демонстрационных записей оставило бы систему без входа.');
     await client.end();
@@ -259,7 +265,9 @@ async function main() {
     console.log('которая должна остаться рабочей.');
   } else {
     console.log('');
-    console.log(`Будут удалены ВСЕ демонстрационные учётные записи, кроме: ${KEEP_ADMINS.join(', ')}`);
+    console.log(
+      `Будут удалены ВСЕ демонстрационные учётные записи, кроме: ${KEEP_ADMINS.join(', ')}`,
+    );
   }
 
   if (!APPLY) {
@@ -323,7 +331,9 @@ async function main() {
       }
 
       await client.query('DELETE FROM "user_role" WHERE "userId" <> ALL($1::text[])', [[...found]]);
-      await client.query('DELETE FROM "user_store" WHERE "userId" <> ALL($1::text[])', [[...found]]);
+      await client.query('DELETE FROM "user_store" WHERE "userId" <> ALL($1::text[])', [
+        [...found],
+      ]);
       const removed = await client.query('DELETE FROM "user" WHERE id <> ALL($1::text[])', [
         [...found],
       ]);

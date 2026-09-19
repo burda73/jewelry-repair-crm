@@ -521,10 +521,15 @@ async function seedNotificationTemplates() {
   const templates = NOTIFICATION_TEMPLATES;
 
   for (const template of templates) {
+    /*
+     * Ключ — ПАРА «код + канал»: один и тот же код имеет разные тексты для
+     * интерфейса и для почты. Поиск по одному коду затирал бы второй шаблон, и
+     * письма уходили бы с текстом сообщения в интерфейсе — или вовсе без текста.
+     */
     await prisma.notificationTemplate.upsert({
-      where: { code: template.code },
+      where: { code_channel: { code: template.code, channel: template.channel } },
       update: {},
-      create: { ...template, channel: 'IN_APP', locale: 'ru', isActive: true },
+      create: { ...template, locale: 'ru', isActive: true },
     });
   }
   console.log(`  Шаблонов уведомлений: ${templates.length}`);

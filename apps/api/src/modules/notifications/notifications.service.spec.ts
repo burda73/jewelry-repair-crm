@@ -216,6 +216,210 @@ describe('Создание уведомления по шаблону (зада�
   });
 });
 
+describe('Уведомление сотрудника по двум каналам (задача 5.9)', () => {
+  /*
+   * ЗАЧЕМ ЭТИ ТЕСТЫ. Раньше к почте не обращался НИ ОДИН вызов: уведомление
+   * появлялось в интерфейсе, а письмо не уходило. Сотрудник, не открывший
+   * систему, о просрочке не узнавал — и обнаруживалось это только тогда, когда
+   * он случайно заходил сам.
+   */
+
+  it('создаются оба уведомления: в интерфейсе и на почте', async () => {
+    const ctx = makeService();
+
+    const result = await ctx.service.notifyStaff({
+      code: TEMPLATE_CODE.ORDER_OVERDUE,
+      userId: USER_ID,
+      email: 'receiver@remixgold.ru',
+      orderId: 'order-1',
+      values: { orderNo: 'MSK1-2509-000001' },
+    });
+
+    expect(result.inApp).not.toBeNull();
+    expect(result.email).not.toBeNull();
+
+    const channels = ctx.client.notification.create.mock.calls.map((call) => call[0].data.channel);
+    expect(channels).toContain(NOTIFICATION_CHANNEL.IN_APP);
+    expect(channels).toContain(NOTIFICATION_CHANNEL.EMAIL);
+  });
+
+  it('адресат каждого канала — свой', async () => {
+    /*
+     * Сообщение в интерфейсе адресуется идентификатору пользователя (по нему
+     * строится лента), письмо — почтовому адресу. Перепутать их означает либо
+     * письмо на «идентификатор», либо ленту, в которую уведомление не попало.
+     */
+    const ctx = makeService();
+
+    await ctx.service.notifyStaff({
+      code: TEMPLATE_CODE.ORDER_OVERDUE,
+      userId: USER_ID,
+      email: 'receiver@remixgold.ru',
+    });
+
+    const calls = ctx.client.notification.create.mock.calls.map((call) => call[0].data);
+    const inApp = calls.find((data) => data.channel === NOTIFICATION_CHANNEL.IN_APP);
+    const email = calls.find((data) => data.channel === NOTIFICATION_CHANNEL.EMAIL);
+
+    expect(inApp.recipient).toBe(USER_ID);
+    expect(email.recipient).toBe('receiver@remixgold.ru');
+  });
+
+  it('оба канала адресованы одному сотруднику', async () => {
+    // Разные `userId` означали бы, что письмо ушло одному, а лента показала
+    // другому.
+    const ctx = makeService();
+
+    await ctx.service.notifyStaff({
+      code: TEMPLATE_CODE.ESCALATION_MANAGER,
+      userId: USER_ID,
+      email: 'receiver@remixgold.ru',
+    });
+
+    for (const call of ctx.client.notification.create.mock.calls) {
+      expect(call[0].data.userId).toBe(USER_ID);
+    }
+  });
+
+  it('без адреса письмо не создаётся, но уведомление в интерфейсе остаётся', async () => {
+    /*
+     * У сотрудника может не быть адреса. Терять из-за этого уведомление нельзя:
+     * оно уже создано и видно в ленте.
+     */
+    const ctx = makeService();
+
+    const result = await ctx.service.notifyStaff({
+      code: TEMPLATE_CODE.ORDER_OVERDUE,
+      userId: USER_ID,
+      email: null,
+    });
+
+    expect(result.inApp).not.toBeNull();
+    expect(result.email).toBeNull();
+    expect(ctx.client.notification.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('пустой адрес не создаёт письмо «в никуда»', async () => {
+    // Пустая строка в `recipient` дала бы запись, которую невозможно отправить,
+    // и она навсегда осталась бы в очереди с ошибкой.
+    const ctx = makeService();
+
+    const result = await ctx.service.notifyStaff({
+      code: TEMPLATE_CODE.ORDER_OVERDUE,
+      userId: USER_ID,
+      email: '   ',
+    });
+
+    expect(result.email).toBeNull();
+    expect(ctx.client.notification.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('адрес обрезается от пробелов', async () => {
+    /*
+     * Адрес из карточки сотрудника мог быть сохранён с пробелом по краям.
+     * Пробел в `recipient` — это неверный адрес: почтовый сервер отвергнет
+     * письмо, и оно навсегда останется в очереди с постоянной ошибкой.
+     */
+    const ctx = makeService();
+
+    await ctx.service.notifyStaff({
+      code: TEMPLATE_CODE.ORDER_OVERDUE,
+      userId: USER_ID,
+      email: '  receiver@remixgold.ru  ',
+    });
+
+    const email = ctx.client.notification.create.mock.calls
+      .map((call) => call[0].data)
+      .find((data) => data.channel === NOTIFICATION_CHANNEL.EMAIL);
+    expect(email.recipient).toBe('receiver@remixgold.ru');
+  });
+
+  it('заказ передаётся в оба канала', async () => {
+    /*
+     * `orderId` связывает уведомление с заказом: по нему лента и карточка заказа
+     * показывают, о чём речь. Потеря его в письме означала бы, что переход к
+     * заказу из письма невозможен, а в интерфейсе он был бы.
+     */
+    const ctx = makeService();
+
+    await ctx.service.notifyStaff({
+      code: TEMPLATE_CODE.ORDER_OVERDUE,
+      userId: USER_ID,
+      email: 'receiver@remixgold.ru',
+      orderId: 'order-42',
+    });
+
+    for (const call of ctx.client.notification.create.mock.calls) {
+      expect(call[0].data.orderId).toBe('order-42');
+    }
+  });
+
+  it('канал письма — EMAIL, а не IN_APP', async () => {
+    /*
+     * Если бы оба уведомления создавались с каналом `IN_APP`, письмо не ушло бы
+     * вовсе: воркер отправки берёт из очереди только записи с поддержанным
+     * каналом, и `IN_APP`-запись он считает уже доставленной.
+     */
+    const ctx = makeService();
+
+    await ctx.service.notifyStaff({
+      code: TEMPLATE_CODE.ORDER_OVERDUE,
+      userId: USER_ID,
+      email: 'receiver@remixgold.ru',
+    });
+
+    const channels = ctx.client.notification.create.mock.calls.map((c) => c[0].data.channel);
+    expect(channels).toEqual([NOTIFICATION_CHANNEL.IN_APP, NOTIFICATION_CHANNEL.EMAIL]);
+  });
+
+  it('шаблоны ищутся по своему каналу', async () => {
+    /*
+     * Ключ поиска — пара «код + канал» (уникальный индекс изменён в задаче 5.9).
+     * Пока уникальным был один код, у шаблонов стоял канал `IN_APP`, и письмо НЕ
+     * НАХОДИЛО текста вовсе: уходил запасной «Событие: ORDER_OVERDUE».
+     */
+    const ctx = makeService();
+
+    await ctx.service.notifyStaff({
+      code: TEMPLATE_CODE.ORDER_OVERDUE,
+      userId: USER_ID,
+      email: 'receiver@remixgold.ru',
+    });
+
+    const channelsQueried = ctx.client.notificationTemplate.findFirst.mock.calls.map(
+      (call) => call[0].where.channel,
+    );
+    expect(channelsQueried).toContain(NOTIFICATION_CHANNEL.IN_APP);
+    expect(channelsQueried).toContain(NOTIFICATION_CHANNEL.EMAIL);
+  });
+
+  it('значения подставляются в оба канала', async () => {
+    // Номер заказа должен попасть и в письмо, и в сообщение в интерфейсе: иначе
+    // получатель прочитает «Заказ  просрочен» без номера.
+    const ctx = makeService({
+      notificationTemplate: {
+        findFirst: vi.fn(async () => ({
+          code: TEMPLATE_CODE.ORDER_OVERDUE,
+          subject: 'Просрочка {{orderNo}}',
+          body: 'Заказ {{orderNo}} просрочен',
+          isActive: true,
+        })),
+      },
+    });
+
+    await ctx.service.notifyStaff({
+      code: TEMPLATE_CODE.ORDER_OVERDUE,
+      userId: USER_ID,
+      email: 'receiver@remixgold.ru',
+      values: { orderNo: 'MSK1-2509-000001' },
+    });
+
+    for (const call of ctx.client.notification.create.mock.calls) {
+      expect(call[0].data.body).toContain('MSK1-2509-000001');
+    }
+  });
+});
+
 describe('Лента уведомлений (задача 2.6)', () => {
   it('показываются только уведомления самого пользователя', async () => {
     /*
