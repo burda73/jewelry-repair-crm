@@ -244,9 +244,7 @@ export const ROLE_PERMISSIONS: Record<RoleCode, readonly Permission[]> = {
    * настройку системы и правку прейскуранта. Изъято ровно одно право — то,
    * которое по смыслу должно принадлежать другому человеку.
    */
-  [ROLE.ADMIN]: [
-    ...Object.values(P).filter((permission) => permission !== P.PRICELIST_APPROVE),
-  ],
+  [ROLE.ADMIN]: [...Object.values(P).filter((permission) => permission !== P.PRICELIST_APPROVE)],
   [ROLE.AUDITOR]: [
     P.ORDER_READ,
     P.ORDER_SEARCH_GLOBAL,

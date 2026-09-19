@@ -1,7 +1,18 @@
 'use client';
 
 import { useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, Archive, Check, Copy, Loader2, Pencil, Plus, RotateCcw, Send, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Archive,
+  Check,
+  Copy,
+  Loader2,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Send,
+  X,
+} from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import {
   useCreatePriceListItem,
@@ -218,7 +229,9 @@ function VersionRow({
         </span>
         <StatusBadge status={status} />
         <span className="text-sm text-slate-600">
-          {version.store === null ? t.priceList.networkWide : `${version.store.code} — ${version.store.name}`}
+          {version.store === null
+            ? t.priceList.networkWide
+            : `${version.store.code} — ${version.store.name}`}
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -377,9 +390,7 @@ function VersionCard({
           <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             <span>
-              {PRICE_LIST_STATUS_LABELS[status] === undefined
-                ? ''
-                : `${t.priceList.readOnly} `}
+              {PRICE_LIST_STATUS_LABELS[status] === undefined ? '' : `${t.priceList.readOnly} `}
               {t.priceList.readOnlyHint}
             </span>
           </div>
@@ -733,7 +744,9 @@ function ItemDialog({
           </Field>
 
           <fieldset className="space-y-2">
-            <legend className="text-sm font-medium text-slate-700">{t.priceList.ratesByMetal}</legend>
+            <legend className="text-sm font-medium text-slate-700">
+              {t.priceList.ratesByMetal}
+            </legend>
             <p className="text-xs text-slate-500">{t.priceList.ratesHint}</p>
             <div className="grid gap-3 sm:grid-cols-2">
               {METAL_OPTIONS.map((option) => (
