@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { connectionLimit } from '../src/connection-limit.js';
+import { connectionLimit } from './connection-limit.js';
 
 const URL_BASE = 'postgresql://repair_app:secret@10.10.0.119:5432/repair';
 

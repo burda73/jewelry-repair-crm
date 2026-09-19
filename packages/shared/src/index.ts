@@ -25,4 +25,5 @@ export * from './utils/money.js';
 export * from './utils/price-by-metal.js';
 export * from './utils/dates.js';
 export * from './utils/password.js';
+export * from './utils/connection-limit.js';
 export * from './validation/schemas.js';

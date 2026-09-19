@@ -1,6 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit, Logger } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
-import { connectionLimit } from '@app/db';
+import { connectionLimit } from '@app/shared';
 
 /**
  * Обёртка над Prisma Client с управлением жизненным циклом.

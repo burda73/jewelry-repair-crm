@@ -6,9 +6,7 @@
 import { PrismaClient } from '@prisma/client';
 // `Prisma` нужен только для типов (Prisma.TransactionClient и др.).
 import type { Prisma } from '@prisma/client';
-import { connectionLimit } from './connection-limit.js';
-
-export { connectionLimit } from './connection-limit.js';
+import { connectionLimit } from '@app/shared';
 
 /** Настройки логирования: в dev полезны запросы, в prod — только ошибки. */
 const logLevels =
