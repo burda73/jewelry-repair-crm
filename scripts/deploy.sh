@@ -178,12 +178,34 @@ ssh "$SERVER" 'systemctl is-active --quiet repair-api' || { echo "repair-api н�
 ssh "$SERVER" 'systemctl is-active --quiet repair-web' || { echo "repair-web не запустился" >&2; exit 1; }
 ok "repair-api и repair-web активны"
 
-# Воркер включается отдельно: на первом развёртывании он ещё не был `enabled`.
-# `enable --now` идемпотентен, поэтому повторный запуск ничего не ломает.
-step "Включение воркера"
-ssh "$SERVER" 'systemctl enable --now repair-worker >/dev/null 2>&1 || true'
+# Воркер перезапускается отдельно: на первом развёртывании он ещё не был
+# `enabled`, поэтому нужен и `enable`.
+#
+# ЗАЧЕМ ИМЕННО `restart`, А НЕ `enable --now`. `enable --now` запускает юнит,
+# только если тот ОСТАНОВЛЕН; для уже работающего воркера это пустая операция.
+# Воркер при этом продолжает крутиться со СТАРЫМ кодом из памяти: новый
+# воркер (`claim-deadlines`, задача 6.6) не появлялся вовсе, а изменения в
+# существующих не вступали в силу до ручного перезапуска — и заметить это
+# нельзя, потому что API отвечает 200, а страницы открываются.
+# Реальный дефект, найденный при развёртывании этапа 6: в журнале воркера
+# после трёх развёртываний оставался запуск шестичасовой давности.
+step "Включение и перезапуск воркера"
+ssh "$SERVER" 'systemctl enable repair-worker >/dev/null 2>&1 || true'
+ssh "$SERVER" 'systemctl restart repair-worker'
 sleep 3
 ssh "$SERVER" 'systemctl is-active --quiet repair-worker' || { echo "repair-worker не запустился — плановые задачи работать не будут" >&2; exit 1; }
+
+# Проверяется, что воркер запустил ИМЕННО текущий набор задач, а не остался на
+# прежнем коде. `systemctl is-active` этого не показывает: процесс может быть
+# активен, но работать со старым кодом из памяти. Сверяется отметка о запуске
+# после рестарта и наличие каждой задачи в журнале.
+LAST_START=$(ssh "$SERVER" "systemctl show repair-worker -p ExecMainStartTimestamp --value")
+if ssh "$SERVER" "awk -v t='$LAST_START' '\$0 ~ /Запуск фоновых воркеров/ { found=1 } END { exit found?0:1 }' /opt/repair/logs/worker.log"; then
+  ok "воркер запускал задачи после перезапуска"
+else
+  echo "ВНИМАНИЕ: в журнале воркера нет записи о запуске после $LAST_START" >&2
+  echo "Проверьте /opt/repair/logs/worker.log: возможно, воркер работает со старым кодом" >&2
+fi
 ok "repair-worker активен"
 
 # --- 9. Дымовые проверки ---------------------------------------------------
