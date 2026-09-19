@@ -325,7 +325,10 @@ export class UsersService {
           data: {
             ...(email !== undefined ? { email } : {}),
             ...(data.fullName !== undefined ? { fullName: data.fullName.trim() } : {}),
-            ...(data.phone !== undefined ? { phone: data.phone } : {}),
+            // Пустая строка означает «удалить телефон», поэтому в базу пишется
+            // `null`, а не пустая строка: иначе в интерфейсе и в поиске по
+            // телефону появилось бы значение, которого нет ни у одного клиента.
+            ...(data.phone !== undefined ? { phone: normalizePhoneOrNull(data.phone) } : {}),
             ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
             ...(data.storeIds !== undefined
               ? {
@@ -677,6 +680,19 @@ export class UsersService {
 
 function isRoleCode(value: string): value is RoleCode {
   return (Object.values(ROLE) as string[]).includes(value);
+}
+
+/**
+ * Телефон для записи в базу: пустое значение превращается в `null`.
+ *
+ * `""` и `null` означают одно и то же — «телефона нет». Разные представления
+ * одного состояния заставляли бы каждую проверку на наличие телефона учитывать
+ * оба варианта, и рано или поздно один из них был бы забыт.
+ */
+function normalizePhoneOrNull(phone: string | null): string | null {
+  if (phone === null) return null;
+  const trimmed = phone.trim();
+  return trimmed === '' ? null : trimmed;
 }
 
 /** Роли, которым нужен магазин: без него область видимости не построить. */

@@ -36,6 +36,12 @@ import { Input, Select } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast';
 import { t } from '@/lib/i18n';
 import {
+  buildPriceListPeriodInput,
+  describePriceListPeriodError,
+  isoToDateInput,
+  type PriceListPeriodPayload,
+} from '@/lib/price-list-period';
+import {
   PRICE_LIST_ACTION_LABELS,
   PRICE_LIST_STATUS,
   PRICE_LIST_STATUS_LABELS,
@@ -403,20 +409,20 @@ function VersionCard({
         ) : null}
 
         {canEdit ? (
-          <Field label={t.priceList.comment} htmlFor={`comment-${version.id}`}>
-            <Input
-              id={`comment-${version.id}`}
-              defaultValue={version.comment ?? ''}
-              disabled={!editable || updateVersion.isPending}
-              onBlur={(event) => {
-                if (event.target.value === (version.comment ?? '')) return;
-                updateVersion.mutate(
-                  { id: version.id, input: { comment: event.target.value } },
-                  { onSuccess: () => onDone(t.priceList.commentSaved), onError },
-                );
-              }}
-            />
-          </Field>
+          <PriceListPeriodEditor
+            version={version}
+            editable={editable}
+            submitting={updateVersion.isPending}
+            onSave={(input) =>
+              updateVersion.mutate(
+                // Хук принимает `Record<string, unknown>`: полезная нагрузка уже
+                // собрана типизированно в `PriceListPeriodEditor`, и здесь она
+                // только передаётся на сервер.
+                { id: version.id, input: { ...input } },
+                { onSuccess: () => onDone(t.priceList.periodSaved), onError },
+              )
+            }
+          />
         ) : null}
 
         <div className="flex items-center justify-between gap-3">
@@ -511,6 +517,108 @@ function VersionCard({
 /** Русское название металла по коду. `@app/shared` отдаёт подписи вместе с кодами. */
 function metalLabel(metal: string): string {
   return METAL_OPTIONS.find((option) => option.value === metal)?.label ?? metal;
+}
+
+/**
+ * Срок действия, комментарий и кнопка сохранения версии.
+ *
+ * ДО ЭТОЙ ПРАВКИ даты версии только показывались, а комментарий сохранялся
+ * неявно — по потере фокуса. Администратор не видел ни кнопки сохранения, ни
+ * подтверждения, и правка дат была невозможна вовсе, хотя сервер её принимает.
+ */
+function PriceListPeriodEditor({
+  version,
+  editable,
+  submitting,
+  onSave,
+}: {
+  version: PriceListVersionItem;
+  editable: boolean;
+  submitting: boolean;
+  onSave: (input: PriceListPeriodPayload) => void;
+}): ReactNode {
+  const [from, setFrom] = useState(() => isoToDateInput(version.effectiveFrom));
+  const [to, setTo] = useState(() =>
+    version.effectiveTo === null ? '' : isoToDateInput(version.effectiveTo),
+  );
+  const [comment, setComment] = useState(version.comment ?? '');
+  const [error, setError] = useState<string | null>(null);
+
+  const original = {
+    effectiveFrom: version.effectiveFrom,
+    effectiveTo: version.effectiveTo,
+  };
+  const draft = { effectiveFrom: from, effectiveTo: to === '' ? null : to };
+
+  const periodInput = buildPriceListPeriodInput(original, draft) ?? {};
+  const commentChanged = comment !== (version.comment ?? '');
+  const changed = Object.keys(periodInput).length > 0 || commentChanged;
+  const disabled = !editable || submitting;
+
+  const handleSave = (): void => {
+    setError(null);
+
+    const periodError = describePriceListPeriodError(draft);
+    if (periodError !== null) {
+      setError(periodError);
+      return;
+    }
+
+    // В одном запросе: сервер применяет частичное изменение, и два отдельных
+    // PATCH ради одной кнопки оставили бы версию в промежуточном состоянии,
+    // если второй запрос не прошёл.
+    onSave({ ...periodInput, ...(commentChanged ? { comment: comment.trim() } : {}) });
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label={t.priceList.effectiveFrom} htmlFor={`pl-from-${version.id}`} required>
+          <Input
+            id={`pl-from-${version.id}`}
+            type="date"
+            value={from}
+            disabled={disabled}
+            onChange={(event) => setFrom(event.target.value)}
+          />
+        </Field>
+        <Field
+          label={t.priceList.effectiveTo}
+          htmlFor={`pl-to-${version.id}`}
+          hint={t.priceList.effectiveToHint}
+        >
+          <Input
+            id={`pl-to-${version.id}`}
+            type="date"
+            value={to}
+            disabled={disabled}
+            onChange={(event) => setTo(event.target.value)}
+          />
+        </Field>
+      </div>
+
+      <Field label={t.priceList.comment} htmlFor={`comment-${version.id}`}>
+        <Input
+          id={`comment-${version.id}`}
+          value={comment}
+          maxLength={1000}
+          disabled={disabled}
+          onChange={(event) => setComment(event.target.value)}
+        />
+      </Field>
+
+      {error !== null ? <FormError>{error}</FormError> : null}
+
+      <div className="flex items-center justify-end gap-3">
+        <p className="text-xs text-slate-500">
+          {changed ? t.users.unsavedHint : t.users.noChangesHint}
+        </p>
+        <Button size="sm" onClick={handleSave} loading={submitting} disabled={disabled || !changed}>
+          {submitting ? t.common.saving : t.common.save}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /** Создание новой версии с нуля. */

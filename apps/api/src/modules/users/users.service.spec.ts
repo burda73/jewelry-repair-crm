@@ -305,6 +305,60 @@ describe('UsersService: правка', () => {
     expect(audit.data.before.fullName).toBe('Иванова Мария Сергеевна');
     expect(audit.data.after.fullName).toBe('Новое Имя');
   });
+
+  it('пустая строка в телефоне стирает номер, а не сохраняет пустоту', async () => {
+    const prisma = createPrismaMock();
+    prisma.user.findUnique.mockResolvedValue(userRow({ phone: '+79000000008' }));
+    prisma._tx.user.update.mockResolvedValue(userRow({ phone: null }));
+
+    await makeService(prisma).update(USER_ID, { phone: '' }, ADMIN);
+
+    // `null`, а не `''`: пустая строка в базе — это «телефон есть, но пустой»,
+    // и её пришлось бы отдельно учитывать во всех проверках на наличие номера.
+    expect(prisma._tx.user.update.mock.calls[0][0].data).toEqual({ phone: null });
+  });
+
+  it('null в телефоне тоже стирает номер', async () => {
+    const prisma = createPrismaMock();
+    prisma.user.findUnique.mockResolvedValue(userRow({ phone: '+79000000008' }));
+    prisma._tx.user.update.mockResolvedValue(userRow({ phone: null }));
+
+    await makeService(prisma).update(USER_ID, { phone: null }, ADMIN);
+
+    expect(prisma._tx.user.update.mock.calls[0][0].data).toEqual({ phone: null });
+  });
+
+  it('телефон из пробелов считается пустым', async () => {
+    const prisma = createPrismaMock();
+    prisma.user.findUnique.mockResolvedValue(userRow({ phone: '+79000000008' }));
+    prisma._tx.user.update.mockResolvedValue(userRow({ phone: null }));
+
+    await makeService(prisma).update(USER_ID, { phone: '   ' }, ADMIN);
+
+    expect(prisma._tx.user.update.mock.calls[0][0].data).toEqual({ phone: null });
+  });
+
+  it('заполненный телефон сохраняется как введён', async () => {
+    const prisma = createPrismaMock();
+    prisma.user.findUnique.mockResolvedValue(userRow());
+    prisma._tx.user.update.mockResolvedValue(userRow({ phone: '+79000000009' }));
+
+    await makeService(prisma).update(USER_ID, { phone: '+79000000009' }, ADMIN);
+
+    expect(prisma._tx.user.update.mock.calls[0][0].data).toEqual({ phone: '+79000000009' });
+  });
+
+  it('отсутствие телефона в запросе не стирает сохранённый номер', async () => {
+    const prisma = createPrismaMock();
+    prisma.user.findUnique.mockResolvedValue(userRow({ phone: '+79000000008' }));
+    prisma._tx.user.update.mockResolvedValue(userRow());
+
+    // Правка другого поля не должна задевать телефон: администратор его не
+    // касался, и молчаливое стирание было бы потерей данных.
+    await makeService(prisma).update(USER_ID, { fullName: 'Новое Имя' }, ADMIN);
+
+    expect(prisma._tx.user.update.mock.calls[0][0].data).not.toHaveProperty('phone');
+  });
 });
 
 describe('UsersService: роли', () => {

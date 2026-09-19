@@ -27,7 +27,16 @@ import { Input, Select } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast';
 import { t } from '@/lib/i18n';
 import type { UserFilters, UserListItem } from '@/lib/api-types';
-import { generatePassword, isStrongEnoughPassword } from '@app/shared';
+import { generatePassword } from '@app/shared';
+import {
+  buildUserUpdateInput,
+  describeUserDraftError,
+  isPasswordReady,
+  passwordPolicyViolations,
+  shouldExplainPassword,
+  userEditDraft,
+  type UserEditDraft,
+} from '@/lib/user-edit';
 
 /** Право, без которого экран недоступен (совпадает с серверным `user:manage`). */
 const USER_MANAGE = 'user:manage';
@@ -463,8 +472,71 @@ function UserDetailDialog({
   const [newRole, setNewRole] = useState('');
   const [newRoleStore, setNewRoleStore] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [draft, setDraft] = useState<UserEditDraft | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const needsStore = ROLES_NEEDING_STORE.includes(newRole);
+
+  /**
+   * Исходные значения полей карточки.
+   *
+   * Черновик инициализируется по ним один раз и дальше живёт своей жизнью:
+   * если бы поля читались прямо из `user`, очередной ответ сервера затирал бы
+   * уже введённый текст.
+   */
+  const original =
+    user === undefined
+      ? null
+      : {
+          fullName: user.fullName,
+          email: user.email,
+          phone: user.phone,
+          isActive: user.isActive,
+          storeIds: user.stores.map((store) => store.id),
+        };
+
+  const value = draft ?? (original === null ? null : userEditDraft(original));
+  const changed =
+    original !== null && value !== null && buildUserUpdateInput(original, value) !== null;
+
+  const handleResetPassword = (): void => {
+    if (!isPasswordReady(newPassword)) {
+      showError(t.users.passwordPolicy);
+      return;
+    }
+    onResetPassword(userId, newPassword);
+    setNewPassword('');
+  };
+
+  const handleSave = (): void => {
+    if (original === null || value === null) return;
+    setFormError(null);
+
+    const draftError = describeUserDraftError(value);
+    if (draftError !== null) {
+      setFormError(draftError);
+      return;
+    }
+
+    const payload = buildUserUpdateInput(original, value);
+    if (payload === null) {
+      // Изменений нет: закрываем карточку без запроса. Пустой `PATCH` вернул бы
+      // `200`, но записал бы в журнал аудита правку, которой не было.
+      onClose();
+      return;
+    }
+
+    updateUser.mutate(
+      { id: userId, input: payload },
+      {
+        onSuccess: () => {
+          showSuccess(t.users.updated);
+          onClose();
+        },
+        onError: (error) => setFormError(describeApiError(error)),
+      },
+    );
+  };
 
   const handleAssign = (): void => {
     if (newRole === '') return;
@@ -503,17 +575,56 @@ function UserDetailDialog({
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogContent title={user?.fullName ?? t.common.loading}>
-        {isLoading || user === undefined ? (
+        {isLoading || user === undefined || original === null || value === null ? (
           <p className="py-6 text-center text-sm text-slate-500">
             <Loader2 className="inline h-4 w-4 animate-spin" aria-hidden="true" />{' '}
             {t.common.loading}
           </p>
         ) : (
           <div className="space-y-4">
-            <div className="text-sm text-slate-600">
-              <p>{user.email}</p>
-              {user.phone === null ? null : <p>{user.phone}</p>}
-              <p className="mt-1 text-xs text-slate-500">
+            <div className="space-y-3">
+              <Field label={t.users.fullName} htmlFor="ud-name" required>
+                <Input
+                  id="ud-name"
+                  value={value.fullName}
+                  onChange={(event) => setDraft({ ...value, fullName: event.target.value })}
+                  disabled={updateUser.isPending}
+                  maxLength={200}
+                />
+              </Field>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label={t.users.email} htmlFor="ud-email" required>
+                  <Input
+                    id="ud-email"
+                    type="email"
+                    value={value.email}
+                    onChange={(event) => setDraft({ ...value, email: event.target.value })}
+                    disabled={updateUser.isPending}
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field label={t.users.phone} htmlFor="ud-phone" hint={t.users.phoneHint}>
+                  <Input
+                    id="ud-phone"
+                    value={value.phone}
+                    onChange={(event) => setDraft({ ...value, phone: event.target.value })}
+                    disabled={updateUser.isPending}
+                    maxLength={25}
+                    autoComplete="off"
+                  />
+                </Field>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={value.isActive}
+                  onChange={(event) => setDraft({ ...value, isActive: event.target.checked })}
+                  disabled={updateUser.isPending}
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                {t.users.active}
+              </label>
+              <p className="text-xs text-slate-500">
                 {t.users.lastLogin}:{' '}
                 {user.lastLoginAt === null ? t.users.never : formatDate(user.lastLoginAt)} ·{' '}
                 {t.users.sessions}: {user.activeSessions}
@@ -598,25 +709,41 @@ function UserDetailDialog({
                 {t.users.resetPassword}
               </p>
               <p className="mb-2 text-xs text-slate-500">{t.users.resetHint}</p>
-              <div className="flex flex-wrap gap-2">
-                <Input
-                  type="text"
-                  aria-label={t.users.password}
-                  value={newPassword}
-                  onChange={(event) => setNewPassword(event.target.value)}
-                  className="max-w-xs"
-                  autoComplete="new-password"
-                />
-                <Button variant="secondary" onClick={() => setNewPassword(generatePassword())}>
+              <div className="flex flex-wrap items-start gap-2">
+                <div className="space-y-1">
+                  <Input
+                    type="text"
+                    aria-label={t.users.password}
+                    placeholder={t.users.password}
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    className="max-w-xs"
+                    autoComplete="new-password"
+                  />
+                  {/* Причина неактивности называется явно: кнопка без объяснения
+                      читается как отсутствующая возможность. */}
+                  {shouldExplainPassword(newPassword) ? (
+                    <p className="text-xs text-amber-700">
+                      {t.users.passwordPolicy}:{' '}
+                      {passwordPolicyViolations(newPassword)
+                        .map((code) => t.users.passwordRules[code])
+                        .join(', ')}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-slate-500">{t.users.passwordHint}</p>
+                  )}
+                </div>
+                <Button
+                  variant="secondary"
+                  onClick={() => setNewPassword(generatePassword())}
+                  disabled={updateUser.isPending}
+                >
                   {t.common.refresh}
                 </Button>
                 <Button
                   variant="danger"
-                  disabled={!isStrongEnoughPassword(newPassword)}
-                  onClick={() => {
-                    onResetPassword(userId, newPassword);
-                    setNewPassword('');
-                  }}
+                  disabled={!isPasswordReady(newPassword) || updateUser.isPending}
+                  onClick={handleResetPassword}
                 >
                   {t.users.resetPassword}
                 </Button>
@@ -641,27 +768,26 @@ function UserDetailDialog({
               )}
             </div>
 
-            <div className="flex flex-wrap justify-between gap-2">
-              <div className="flex gap-2">
-                <Button
-                  variant={user.isActive ? 'danger' : 'secondary'}
-                  disabled={updateUser.isPending}
-                  onClick={() =>
-                    updateUser.mutate(
-                      { id: userId, input: { isActive: !user.isActive } },
-                      {
-                        onSuccess: () => showSuccess(t.users.updated),
-                        onError: (error) => showError(describeApiError(error)),
-                      },
-                    )
-                  }
-                >
-                  {user.isActive ? t.users.disabled : t.users.enabled}
+            {formError !== null ? <FormError>{formError}</FormError> : null}
+
+            {/*
+              Отключение учётной записи раньше было отдельной кнопкой с
+              немедленным действием. Теперь это флажок «Активна» выше: два
+              способа сделать одно и то же различались бы только тем, что один
+              из них срабатывает до нажатия «Сохранить».
+            */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+              <p className="text-xs text-slate-500">
+                {changed ? t.users.unsavedHint : t.users.noChangesHint}
+              </p>
+              <div className="flex shrink-0 gap-2">
+                <Button variant="secondary" onClick={onClose} disabled={updateUser.isPending}>
+                  {t.common.cancel}
+                </Button>
+                <Button onClick={handleSave} loading={updateUser.isPending} disabled={!changed}>
+                  {updateUser.isPending ? t.common.saving : t.common.save}
                 </Button>
               </div>
-              <Button variant="secondary" onClick={onClose}>
-                {t.common.close}
-              </Button>
             </div>
           </div>
         )}
