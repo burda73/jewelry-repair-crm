@@ -20,6 +20,7 @@ import {
   canRetry,
   isRetryDue,
   isRetryableByCode,
+  isRetryableHttpStatus,
   retryDelayMs,
 } from './notification.port.js';
 
@@ -151,5 +152,60 @@ describe('Готовность к повторной попытке (задач�
 
     const afterSecondDelay = new Date(now.getTime() - retryDelayMs(2));
     expect(isRetryDue(2, afterSecondDelay, now)).toBe(true);
+  });
+});
+
+describe('Временность ошибки по HTTP-статусу (задача 5.10)', () => {
+  it('4xx — постоянная ошибка', () => {
+    /*
+     * Обратная трактовка по сравнению с SMTP. Неверный номер или отклонённый
+     * ключ доступа не исправятся повтором, а очередь будет расти с каждой
+     * попыткой и мешать видеть новые ошибки.
+     */
+    expect(isRetryableHttpStatus(400)).toBe(false);
+    expect(isRetryableHttpStatus(401)).toBe(false);
+    expect(isRetryableHttpStatus(403)).toBe(false);
+    expect(isRetryableHttpStatus(404)).toBe(false);
+  });
+
+  it('5xx — временная ошибка', () => {
+    // Сбой на стороне шлюза обычно проходит между попытками.
+    expect(isRetryableHttpStatus(500)).toBe(true);
+    expect(isRetryableHttpStatus(502)).toBe(true);
+    expect(isRetryableHttpStatus(503)).toBe(true);
+  });
+
+  it('408 и 429 временные, несмотря на 4xx', () => {
+    /*
+     * Сервер просит повторить позже. Отнести их к постоянным значило бы терять
+     * уведомления именно тогда, когда шлюз перегружен.
+     */
+    expect(isRetryableHttpStatus(408)).toBe(true);
+    expect(isRetryableHttpStatus(429)).toBe(true);
+  });
+
+  it('трактовка диапазонов противоположна SMTP', () => {
+    /*
+     * ГЛАВНАЯ ПРОВЕРКА ВСЕЙ ФУНКЦИИ. Именно совпадение трактовок было бы ошибкой:
+     * общая функция на два протокола дала бы одному из каналов обратную политику
+     * повторов.
+     */
+    expect(isRetryableByCode(500)).toBe(false);
+    expect(isRetryableHttpStatus(500)).toBe(true);
+
+    expect(isRetryableByCode(450)).toBe(true);
+    expect(isRetryableHttpStatus(450)).toBe(false);
+  });
+
+  it('отсутствие статуса считается временным', () => {
+    // Ошибка сети: сервер мог быть недоступен минуту.
+    expect(isRetryableHttpStatus(null)).toBe(true);
+    expect(isRetryableHttpStatus(undefined)).toBe(true);
+  });
+
+  it('статус вне известных диапазонов считается временным', () => {
+    // Неизвестную ошибку безопаснее повторить, чем потерять уведомление.
+    expect(isRetryableHttpStatus(200)).toBe(true);
+    expect(isRetryableHttpStatus(600)).toBe(true);
   });
 });

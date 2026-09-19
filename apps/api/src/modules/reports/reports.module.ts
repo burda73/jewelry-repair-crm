@@ -4,6 +4,7 @@ import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
 import { ReportsExportService } from './reports-export.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 /**
  * Отчёты (задача 5.1, ТЗ п. 2.11).
@@ -13,6 +14,8 @@ import { OrderWorkflowService } from '../../common/workflow/order-workflow.servi
  * константа «9 часов» разошлась бы с расчётом сроков.
  */
 @Module({
+  // `OrderWorkflowService` создаёт уведомления клиенту (задача 5.10).
+  imports: [NotificationsModule],
   controllers: [ReportsController],
   providers: [ReportsService, ReportsExportService, OrderWorkflowService],
   exports: [ReportsService, ReportsExportService],

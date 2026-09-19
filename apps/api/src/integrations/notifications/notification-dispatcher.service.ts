@@ -12,6 +12,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   NOTIFICATION_CHANNEL,
   type NotificationChannel,
@@ -22,6 +23,7 @@ import {
 
 import { InAppNotificationAdapter } from './in-app-notification.adapter';
 import { EmailNotificationAdapter } from './email-notification.adapter';
+import { GatewayNotificationAdapter } from './sms-notification.adapter';
 
 @Injectable()
 export class NotificationDispatcher {
@@ -31,11 +33,26 @@ export class NotificationDispatcher {
   constructor(
     private readonly inApp: InAppNotificationAdapter,
     private readonly email: EmailNotificationAdapter,
+    private readonly config: ConfigService,
   ) {
     this.adapters = new Map<string, NotificationPort>([
       [inApp.channel, inApp],
       [email.channel, email],
     ]);
+
+    /*
+     * Внешние каналы подключаются ТОЛЬКО когда настроены (задача 5.10). Адаптер
+     * выключенного канала не попадает в таблицу, и воркер не берёт из базы
+     * уведомления такого канала: иначе он каждые полминуты пытался бы отправить
+     * сообщения, которые отправить нечем, и очередь росла бы без пользы.
+     *
+     * Адаптер всё равно создаётся: он сообщает в журнал, что канал выключен, — это
+     * и есть ответ на вопрос «почему клиент не получил SMS».
+     */
+    for (const prefix of ['SMS', 'MESSENGER'] as const) {
+      const gateway = new GatewayNotificationAdapter(config, prefix);
+      if (gateway.isConfigured()) this.adapters.set(gateway.channel, gateway);
+    }
   }
 
   /** Есть ли адаптер для канала. */
@@ -95,11 +112,34 @@ export class NotificationDispatcher {
     }
   }
 
-  /** Состояние каналов — для проверки интеграции администратором. */
-  channelsState(): { channel: string; configured: boolean }[] {
+  /**
+   * Состояние каналов — для проверки интеграции администратором.
+   *
+   * Показываются ВСЕ каналы, включая выключенные: вопрос «почему клиент не
+   * получил SMS» имеет ответ «канал выключен», и он должен быть виден, а не
+   * отсутствовать в списке.
+   */
+  channelsState(): { channel: string; configured: boolean; reason: string }[] {
+    const sms = new GatewayNotificationAdapter(this.config, 'SMS');
+    const messenger = new GatewayNotificationAdapter(this.config, 'MESSENGER');
+
     return [
-      { channel: NOTIFICATION_CHANNEL.IN_APP, configured: true },
-      { channel: NOTIFICATION_CHANNEL.EMAIL, configured: this.email.isConfigured() },
+      { channel: NOTIFICATION_CHANNEL.IN_APP, configured: true, reason: 'канал в приложении' },
+      {
+        channel: NOTIFICATION_CHANNEL.EMAIL,
+        configured: this.email.isConfigured(),
+        reason: this.email.isConfigured() ? 'SMTP настроен' : 'не задан SMTP_HOST',
+      },
+      {
+        channel: NOTIFICATION_CHANNEL.SMS,
+        configured: sms.isConfigured(),
+        reason: sms.isConfigured() ? 'шлюз настроен' : 'выключен настройкой',
+      },
+      {
+        channel: NOTIFICATION_CHANNEL.MESSENGER,
+        configured: messenger.isConfigured(),
+        reason: messenger.isConfigured() ? 'шлюз настроен' : 'выключен настройкой',
+      },
     ];
   }
 }

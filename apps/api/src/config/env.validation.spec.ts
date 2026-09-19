@@ -110,3 +110,78 @@ describe('Разбор окружения: SMTP (задача 5.9)', () => {
     expect(envSchema.parse(base({ SMTP_HOST: 'm', SMTP_PORT: ' 587 ' })).SMTP_PORT).toBe(587);
   });
 });
+
+describe('Разбор окружения: SMS и мессенджер (задача 5.10)', () => {
+  it('каналы выключены по умолчанию', () => {
+    /*
+     * ГЛАВНАЯ ЗАЩИТА ОТ РАСХОДОВ. SMS — платная внешняя отправка, и включённый
+     * по умолчанию канал отправил бы первое же событие реальному клиенту и
+     * тарифицировался бы. Проверка фиксирует именно умолчание.
+     */
+    const parsed = envSchema.safeParse(base());
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.NOTIFICATIONS_SMS_ENABLED).toBe(false);
+      expect(parsed.data.NOTIFICATIONS_MESSENGER_ENABLED).toBe(false);
+    }
+  });
+
+  it('документированный пример окружения разбирается', () => {
+    /*
+     * `.env.example` — это инструкция, по которой настраивают продакшн. Если
+     * указанные в нём значения не проходят схему, приложение не запустится у
+     * того, кто следовал документации.
+     *
+     * Пустой адрес шлюза здесь ОБЯЗАТЕЛЕН к проверке: `.env` записывает
+     * «не задано» как пустую строку, и требование непустого значения сломало бы
+     * документированный способ выключить канал.
+     */
+    const parsed = envSchema.safeParse(
+      base({
+        NOTIFICATIONS_SMS_ENABLED: 'false',
+        NOTIFICATIONS_MESSENGER_ENABLED: 'false',
+        SMS_GATEWAY_URL: '',
+        MESSENGER_GATEWAY_URL: '',
+        SMS_HTTP_METHOD: 'POST',
+        SMS_HTTP_BODY: 'JSON',
+        SMS_PHONE_PARAM: 'phone',
+        SMS_TEXT_PARAM: 'text',
+        SMS_API_KEY_HEADER: 'Authorization',
+        SMS_TIMEOUT_MS: '10000',
+      }),
+    );
+
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+  });
+
+  it('пустой адрес шлюза не ломает запуск', () => {
+    // Именно так .env записывает «не задано». Требование непустой строки
+    // остановило бы всё приложение из-за необязательной настройки.
+    const parsed = envSchema.safeParse(base({ SMS_GATEWAY_URL: '', MESSENGER_GATEWAY_URL: '  ' }));
+    expect(parsed.success).toBe(true);
+  });
+
+  it('недопустимый HTTP-метод отклоняется', () => {
+    /*
+     * Опечатка в методе (`PUT`, `FETCH`) превратилась бы в непредсказуемый
+     * запрос к шлюзу. Лучше отказать при разборе окружения, чем выяснять это по
+     * журналу отправки.
+     */
+    const parsed = envSchema.safeParse(base({ SMS_HTTP_METHOD: 'PUT' }));
+    expect(parsed.success).toBe(false);
+  });
+
+  it('бессмысленный таймаут отклоняется', () => {
+    // Нулевой таймаут обрывал бы запрос мгновенно, и ни одно SMS не ушло бы.
+    const parsed = envSchema.safeParse(base({ SMS_TIMEOUT_MS: '0' }));
+    expect(parsed.success).toBe(false);
+  });
+
+  it('таймаут задаётся числом, а не строкой', () => {
+    // Схема приводит значение; строка в настройках привела бы к сравнению
+    // «'10000' > 0» и к неожиданному поведению таймаута.
+    const parsed = envSchema.safeParse(base({ SMS_TIMEOUT_MS: '15000' }));
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.SMS_TIMEOUT_MS).toBe(15_000);
+  });
+});

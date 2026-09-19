@@ -180,7 +180,28 @@ export const envSchema = z
     INTEGRATION_PBX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),
     CALL_RECORDING_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
 
+    /*
+     * SMS-канал (задача 5.10).
+     *
+     * ВЫКЛЮЧЕН ПО УМОЛЧАНИЮ намеренно: SMS — платная внешняя отправка, и
+     * включённый по умолчанию канал означал бы, что первое же событие уходит
+     * реальному клиенту и тарифицируется. Провайдер ещё не выбран, а у
+     * продакшн-контура нет выхода в интернет: шлюз будет во внутренней сети
+     * заказчика.
+     *
+     * Включение требует ОБОИХ условий: флага и адреса шлюза. Флаг без адреса дал
+     * бы попытку отправки «в никуда», адрес без флага — отправку, которую никто
+     * не планировал.
+     */
     NOTIFICATIONS_SMS_ENABLED: z.coerce.boolean().default(false),
+    NOTIFICATIONS_MESSENGER_ENABLED: z.coerce.boolean().default(false),
+    SMS_GATEWAY_URL: z.string().optional(),
+    SMS_HTTP_METHOD: z.enum(['GET', 'POST']).default('POST'),
+    SMS_HTTP_BODY: z.enum(['QUERY', 'JSON']).default('JSON'),
+    SMS_PHONE_PARAM: z.string().default('phone'),
+    SMS_TEXT_PARAM: z.string().default('text'),
+    SMS_API_KEY_HEADER: z.string().default('Authorization'),
+    SMS_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
     SMS_PROVIDER: z.string().optional(),
     SMS_API_KEY: z.string().optional(),
     SMS_SENDER: z.string().optional(),

@@ -19,6 +19,8 @@
  */
 
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { channelsFor } from '@app/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 
@@ -94,7 +96,16 @@ export function renderTemplate(
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    /*
+     * Настройки нужны, чтобы решить, какие внешние каналы использовать
+     * (задача 5.10). Решение принимается здесь, но НЕ здесь проверяется, доступен
+     * ли шлюз: отправку выполняет воркер, и канал может быть выключен после
+     * создания уведомления — тогда запись останется с понятной причиной отказа.
+     */
+    private readonly config: ConfigService,
+  ) {}
 
   /**
    * Создать уведомление по шаблону.
@@ -212,6 +223,76 @@ export class NotificationsService {
     }
 
     return { inApp, email };
+  }
+
+  /**
+   * Уведомить КЛИЕНТА (задача 5.10).
+   *
+   * ОТЛИЧИЕ ОТ `notifyStaff` ПРИНЦИПИАЛЬНОЕ. У клиента нет учётной записи, поэтому
+   * `IN_APP`-записи ему не создать: единственный способ что-то сообщить — внешний
+   * канал. Если канал выключен, уведомление НЕ создаётся вовсе, и это осознанное
+   * решение.
+   *
+   * ПОЧЕМУ НЕ СОЗДАВАТЬ ЗАПИСЬ ПРО ЗАПАС. Запись без получателя и без канала
+   * навсегда осталась бы в статусе `FAILED` и копилась бы в списке «требует
+   * вмешательства» — то есть превратилась бы в постоянный шум, на который
+   * перестают смотреть. Отсутствие SMS-канала — это настройка, а не сбой
+   * доставки, и место для неё — журнал воркера, а не очередь ошибок.
+   *
+   * ВАЖНО: уведомление СОЗДАЁТСЯ, а не отправляется. Отправка — дело воркера, в
+   * отдельной транзакции. Иначе недоступный SMS-шлюз откатывал бы выдачу заказа.
+   */
+  async notifyCustomer(params: {
+    code: TemplateCode | (string & {});
+    customerId: string | null;
+    orderId?: string | null;
+    /** Телефон в любом формате: нормализация выполняется перед отправкой. */
+    phone: string | null;
+    values?: Record<string, string | number | null | undefined>;
+  }): Promise<NotificationDto[]> {
+    const phone = params.phone?.trim() ?? '';
+    if (phone === '') return [];
+
+    /*
+     * Какие каналы реально будут использованы, решает домен
+     * (`channelsFor`): там же учтено, включён ли канал настройкой. Здесь
+     * остаётся только создать по уведомлению на каждый канал.
+     */
+    const channels = channelsFor(params.code, {
+      smsEnabled: this.smsEnabled(),
+      messengerEnabled: this.messengerEnabled(),
+      hasPhone: true,
+    });
+
+    const created: NotificationDto[] = [];
+    for (const channel of channels) {
+      if (channel !== NOTIFICATION_CHANNEL.SMS && channel !== NOTIFICATION_CHANNEL.MESSENGER) {
+        continue;
+      }
+
+      const notification = await this.notifyByTemplate({
+        code: params.code,
+        customerId: params.customerId,
+        orderId: params.orderId ?? null,
+        recipient: phone,
+        channel,
+        ...(params.values === undefined ? {} : { values: params.values }),
+      });
+
+      if (notification !== null) created.push(notification);
+    }
+
+    return created;
+  }
+
+  /** Включён ли SMS-канал. */
+  private smsEnabled(): boolean {
+    return this.config.get<string>('NOTIFICATIONS_SMS_ENABLED') === 'true';
+  }
+
+  /** Включён ли канал мессенджера. */
+  private messengerEnabled(): boolean {
+    return this.config.get<string>('NOTIFICATIONS_MESSENGER_ENABLED') === 'true';
   }
 
   /**

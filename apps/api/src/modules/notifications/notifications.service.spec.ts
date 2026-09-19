@@ -64,7 +64,14 @@ function row(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeService(prisma: Record<string, unknown> = {}) {
+function makeService(
+  prisma: Record<string, unknown> = {},
+  /*
+   * Настройки внешних каналов. По умолчанию оба выключены — это состояние
+   * продакшна: SMS-провайдер ещё не подключён (задача 5.10).
+   */
+  env: Record<string, string> = {},
+) {
   const client = {
     notificationTemplate: {
       findFirst: vi.fn(async () => null),
@@ -83,7 +90,8 @@ function makeService(prisma: Record<string, unknown> = {}) {
     },
     ...prisma,
   };
-  const service = new NotificationsService(client as never);
+  const config = { get: (key: string) => env[key] } as never;
+  const service = new NotificationsService(client as never, config);
   return { service, client };
 }
 
@@ -544,5 +552,147 @@ describe('Отправка и повтор (задача 2.6)', () => {
     await service.markFailed(NOTIFICATION_ID, 'x'.repeat(5000));
 
     expect((client.notification.update.mock.calls[0][0].data.error as string).length).toBe(500);
+  });
+});
+
+describe('Уведомление клиента (задача 5.10)', () => {
+  const SMS_ON = { NOTIFICATIONS_SMS_ENABLED: 'true' };
+
+  it('при выключенном канале уведомление не создаётся', async () => {
+    /*
+     * ГЛАВНАЯ ПРОВЕРКА ЗАДАЧИ. Запись без получателя и без канала навсегда
+     * осталась бы в статусе `FAILED` и копилась бы в списке «требует
+     * вмешательства», то есть превратилась бы в постоянный шум. Отсутствие
+     * SMS-канала — это настройка, а не сбой доставки.
+     */
+    const { service, client } = makeService();
+    const created = await service.notifyCustomer({
+      code: 'READY_FOR_PICKUP',
+      customerId: 'c-1',
+      phone: '+79161234567',
+    });
+
+    expect(created).toEqual([]);
+    expect(client.notification.create).not.toHaveBeenCalled();
+  });
+
+  it('при включённом канале уведомление создаётся с каналом SMS', async () => {
+    // Обратная проверка: включение канала обязано работать, иначе задача
+    // «включение по настройке» не выполнена.
+    const { service, client } = makeService({}, SMS_ON);
+    const created = await service.notifyCustomer({
+      code: 'READY_FOR_PICKUP',
+      customerId: 'c-1',
+      phone: '+79161234567',
+    });
+
+    expect(created).toHaveLength(1);
+    const data = client.notification.create.mock.calls[0][0].data;
+    expect(data.channel).toBe('SMS');
+    expect(data.recipient).toBe('+79161234567');
+    // Уведомление СОЗДАЁТСЯ, а не отправляется: отправка — дело воркера, в
+    // отдельной транзакции. Иначе недоступный шлюз откатывал бы выдачу заказа.
+    expect(data.status).toBe('PENDING');
+  });
+
+  it('без телефона уведомление не создаётся', async () => {
+    // Отправлять некуда: запись осталась бы висеть в очереди без получателя.
+    const { service, client } = makeService({}, SMS_ON);
+    const created = await service.notifyCustomer({
+      code: 'READY_FOR_PICKUP',
+      customerId: 'c-1',
+      phone: null,
+    });
+
+    expect(created).toEqual([]);
+    expect(client.notification.create).not.toHaveBeenCalled();
+  });
+
+  it('пустой телефон не считается заполненным', async () => {
+    // Пробелы в поле телефона — частая ошибка ввода; создавать запись с
+    // получателем «   » бессмысленно.
+    const { service, client } = makeService({}, SMS_ON);
+    const created = await service.notifyCustomer({
+      code: 'READY_FOR_PICKUP',
+      customerId: 'c-1',
+      phone: '   ',
+    });
+
+    expect(created).toEqual([]);
+    expect(client.notification.create).not.toHaveBeenCalled();
+  });
+
+  it('включение SMS не включает мессенджер', async () => {
+    /*
+     * Разные провайдеры и разные деньги. Общий флаг создал бы два уведомления,
+     * и клиент получил бы одно и то же дважды.
+     */
+    const { service, client } = makeService({}, SMS_ON);
+    await service.notifyCustomer({
+      code: 'READY_FOR_PICKUP',
+      customerId: 'c-1',
+      phone: '+79161234567',
+    });
+
+    expect(client.notification.create).toHaveBeenCalledTimes(1);
+    expect(client.notification.create.mock.calls[0][0].data.channel).toBe('SMS');
+  });
+
+  it('оба канала создают по уведомлению', async () => {
+    // Клиент получает сообщение там, где ему удобно; записи разные, потому что
+    // отслеживаются отдельно.
+    const { service, client } = makeService(
+      {},
+      { NOTIFICATIONS_SMS_ENABLED: 'true', NOTIFICATIONS_MESSENGER_ENABLED: 'true' },
+    );
+    const created = await service.notifyCustomer({
+      code: 'READY_FOR_PICKUP',
+      customerId: 'c-1',
+      phone: '+79161234567',
+    });
+
+    expect(created).toHaveLength(2);
+    const channels = client.notification.create.mock.calls.map(
+      (call: { 0: { data: { channel: string } } }[]) => call[0].data.channel,
+    );
+    expect(channels).toContain('SMS');
+    expect(channels).toContain('MESSENGER');
+  });
+
+  it('внутренний канал клиенту не создаётся', async () => {
+    /*
+     * У клиента нет учётной записи: `IN_APP`-запись ему не создать. Если бы
+     * канал попал в набор, он молча копился бы в базе и никогда не был бы
+     * прочитан.
+     */
+    const { service, client } = makeService(
+      {},
+      { NOTIFICATIONS_SMS_ENABLED: 'true', NOTIFICATIONS_MESSENGER_ENABLED: 'true' },
+    );
+    await service.notifyCustomer({
+      code: 'READY_FOR_PICKUP',
+      customerId: 'c-1',
+      phone: '+79161234567',
+    });
+
+    const channels = client.notification.create.mock.calls.map(
+      (call: { 0: { data: { channel: string } } }[]) => call[0].data.channel,
+    );
+    expect(channels).not.toContain('IN_APP');
+    expect(channels).not.toContain('EMAIL');
+  });
+
+  it('событие без правила каналов не создаёт уведомлений', async () => {
+    // Опечатка в коде шаблона не должна превращаться в отправку «чего-то» по
+    // каналам, которые никто не выбирал.
+    const { service, client } = makeService({}, SMS_ON);
+    const created = await service.notifyCustomer({
+      code: 'ОПЕЧАТКА',
+      customerId: 'c-1',
+      phone: '+79161234567',
+    });
+
+    expect(created).toEqual([]);
+    expect(client.notification.create).not.toHaveBeenCalled();
   });
 });

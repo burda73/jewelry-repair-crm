@@ -123,10 +123,11 @@ describe('Почтовый адаптер (задача 5.9)', () => {
 });
 
 describe('Диспетчер каналов (задача 5.9)', () => {
-  function makeDispatcher() {
+  function makeDispatcher(values: Record<string, string> = {}) {
+    const cfg = config(values);
     const inApp = new InAppNotificationAdapter();
-    const email = new EmailNotificationAdapter(config({}));
-    return new NotificationDispatcher(inApp, email);
+    const email = new EmailNotificationAdapter(cfg);
+    return new NotificationDispatcher(inApp, email, cfg);
   }
 
   it('неизвестный канал — постоянная ошибка, а не исключение', async () => {
@@ -170,6 +171,7 @@ describe('Диспетчер каналов (задача 5.9)', () => {
     const dispatcher = new NotificationDispatcher(
       new InAppNotificationAdapter(),
       new EmailNotificationAdapter(config({})),
+      config({}),
     );
     // Подменяем таблицу адаптеров, чтобы добраться до сломанного.
     (dispatcher as unknown as { adapters: Map<string, unknown> }).adapters.set('SMS', broken);

@@ -13,6 +13,7 @@ export * from './domain/notification-templates.js';
 export * from './domain/reports.js';
 export * from './domain/dashboard.js';
 export * from './ports/notification.port.js';
+export * from './domain/notification-policy.js';
 export * from './domain/receipt.js';
 export * from './domain/metal-kind.js';
 export * from './domain/roles.js';

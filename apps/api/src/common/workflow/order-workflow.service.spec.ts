@@ -35,13 +35,39 @@ import {
   toDateKey,
   type WorkingCalendar,
 } from '@app/shared';
-import { ORDER_TRANSITIONS, REPORT_NAME } from '@app/shared';
+import { customerEventForTransition, ORDER_TRANSITIONS, REPORT_NAME } from '@app/shared';
 
 /** Календарь без исключений: будни рабочие, праздники — по ТК РФ. */
 const CALENDAR: WorkingCalendar = { overrides: new Map(), defaultHours: 8 };
 
 /** Сентябрь 2027: 17-е — пятница, 18–19 — выходные, 20 — понедельник. */
 const FRIDAY = new Date('2027-09-17T12:00:00Z');
+
+/**
+ * Заглушка сервиса уведомлений (задача 5.10).
+ *
+ * По умолчанию НИЧЕГО НЕ СОЗДАЁТ и записывает вызовы: большинство тестов
+ * перехода проверяют сам переход, и без этой заглушки конструктор сервиса
+ * требовал бы настоящий модуль уведомлений.
+ */
+function notificationsStub() {
+  const calls: { code: string; phone: string | null; orderId: string | null }[] = [];
+  return {
+    calls,
+    notifyCustomer: async (params: {
+      code: string;
+      phone: string | null;
+      orderId?: string | null;
+    }) => {
+      calls.push({
+        code: params.code,
+        phone: params.phone,
+        orderId: params.orderId ?? null,
+      });
+      return [];
+    },
+  };
+}
 
 describe('stageForStatus: этап по статусу', () => {
   it('сопоставляет статус с этапом справочника', () => {
@@ -254,7 +280,11 @@ describe('Системный переход: actorId обязателен как
    * переходов с актором `'SYSTEM'` несколько, и каждый новый вызывающий мог бы
    * повторить ту же ошибку.
    */
-  const service = new OrderWorkflowService({} as never, new ReportsCacheService());
+  const service = new OrderWorkflowService(
+    {} as never,
+    new ReportsCacheService(),
+    notificationsStub() as never,
+  );
 
   it('системный переход со строкой вместо null отклоняется', async () => {
     await expect(
@@ -307,7 +337,7 @@ describe('Сброс кэша отчётов при переходе (задач
       order: { findFirst: async () => order },
       workingCalendar: { findMany: async () => [] },
     };
-    const service = new OrderWorkflowService(prisma as never, cache);
+    const service = new OrderWorkflowService(prisma as never, cache, notificationsStub() as never);
     return { service, cache };
   }
 
@@ -414,7 +444,7 @@ describe('Сброс кэша отчётов при переходе (задач
       runInTransaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
     };
 
-    const service = new OrderWorkflowService(prisma as never, cache);
+    const service = new OrderWorkflowService(prisma as never, cache, notificationsStub() as never);
 
     await service.transition({
       orderId: 'o-1',
@@ -442,5 +472,224 @@ describe('Сброс кэша отчётов при переходе (задач
     shared.set(`${REPORT_NAME.REVENUE}|x`, reportStub(), 60_000);
     expect(shared.invalidate()).toBe(1);
     expect(shared.size()).toBe(0);
+  });
+});
+
+describe('Уведомление клиента при переходе (задача 5.10)', () => {
+  /**
+   * Собрать сервис с заказом, переходящим в «Готов к выдаче».
+   *
+   * `READY_FOR_PICKUP` выбран потому, что это САМОЕ ЗНАЧИМОЕ для клиента
+   * событие: без него изделие лежит в магазине, а клиент не знает, что его
+   * можно забрать.
+   */
+  function makeService(options: {
+    phoneNormalized?: string;
+    customer?: Record<string, unknown> | null;
+    orderRow?: Record<string, unknown> | null;
+    withEffect?: boolean;
+  }) {
+    const order = {
+      id: 'o-1',
+      orderNo: 'MSK1-2509-000001',
+      status: 'IN_TRANSIT_TO_STORE',
+      version: 1,
+      storeId: 's-1',
+      complexity: 'SIMPLE',
+      dueAt: new Date('2026-09-25T00:00:00.000Z'),
+      readyAt: null,
+      items: [{ id: 'i-1' }],
+      works: [{ id: 'w-1', warrantyMonths: 12 }],
+      approvals: [],
+      refusalAct: null,
+      claims: [],
+      batchItems: [{ batch: { id: 'b-1', status: 'RECEIVED', acts: [{ id: 'act-1' }] } }],
+      assignments: [],
+      customer: { id: 'c-1', consentCallRecording: true, phoneNormalized: '+79161234567' },
+      ...(options.customer === undefined ? {} : { customer: options.customer }),
+      ...(options.orderRow ?? {}),
+    };
+
+    const tx = {
+      order: {
+        updateMany: async () => ({ count: 1 }),
+        findUniqueOrThrow: async () => ({
+          ...order,
+          status: 'READY_FOR_PICKUP',
+          statusHistory: [],
+        }),
+      },
+      orderStatusHistory: {
+        findFirst: async () => null,
+        create: async () => ({ id: 'h-1' }),
+      },
+      auditLog: { create: async () => ({ id: 'a-1' }) },
+    };
+
+    const prisma = {
+      buildOrderScopeFilter: () => ({}),
+      order: {
+        findFirst: async () => order,
+        // Заказ читается ЗАНОВО для уведомления: результат перехода не содержит
+        // ни клиента, ни сумм.
+        findUnique: async () => ({
+          id: 'o-1',
+          orderNo: 'MSK1-2509-000001',
+          dueAt: order.dueAt,
+          warrantyUntil: null,
+          totalAmountMinor: 120_000,
+          customer: { id: 'c-1', phoneNormalized: options.phoneNormalized ?? '+79161234567' },
+        }),
+      },
+      stageNorm: { findMany: async () => [] },
+      workingCalendar: { findMany: async () => [] },
+      runInTransaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+    };
+
+    const notifications = notificationsStub();
+    const service = new OrderWorkflowService(
+      prisma as never,
+      new ReportsCacheService(),
+      notifications as never,
+    );
+    return { service, notifications };
+  }
+
+  async function transition(service: OrderWorkflowService) {
+    return await service.transition({
+      orderId: 'o-1',
+      to: ORDER_STATUS.READY_FOR_PICKUP,
+      actorId: 'u-1',
+      actorRole: 'LOGISTICIAN',
+      version: 1,
+      scope: 'ALL_STORES',
+      storeIds: [],
+    });
+  }
+
+  it('переход в «Готов к выдаче» создаёт уведомление клиенту', async () => {
+    /*
+     * ГЛАВНАЯ ПРОВЕРКА ЗАДАЧИ. Эффект `NOTIFY_CUSTOMER` есть в таблице переходов,
+     * но раньше не обрабатывался ВООБЩЕ: клиент не получал ничего, хотя система
+     * считала, что уведомила его. Дефект не проявлялся как ошибка — просто
+     * клиент не знал, что заказ готов, и изделие лежало в магазине.
+     */
+    const { service, notifications } = makeService({});
+    await transition(service);
+
+    expect(notifications.calls).toHaveLength(1);
+    expect(notifications.calls[0].code).toBe('READY_FOR_PICKUP');
+    expect(notifications.calls[0].phone).toBe('+79161234567');
+    expect(notifications.calls[0].orderId).toBe('o-1');
+  });
+
+  it('без телефона уведомление не создаётся, но переход выполняется', async () => {
+    /*
+     * Телефон записан не у всех клиентов. Переход обязан состояться: изделие
+     * физически готово, и отказ в переводе из-за пустого поля оставил бы заказ в
+     * статусе «в пути» навсегда.
+     */
+    const { service, notifications } = makeService({ phoneNormalized: '' });
+    const result = await transition(service);
+
+    expect(result).toBeDefined();
+    expect(notifications.calls).toHaveLength(0);
+  });
+
+  it('нормализованный телефон передаётся шлюзу, а не «как ввёл пользователь»', async () => {
+    /*
+     * В поле «как ввёл пользователь» могут быть скобки и дефисы — шлюз такую
+     * строку отклонит. Отправляется E.164.
+     */
+    const { service, notifications } = makeService({ phoneNormalized: '+79035554433' });
+    await transition(service);
+
+    /*
+     * Значение НЕ совпадает с тем, что стоит по умолчанию в двойнике: иначе
+     * проверка прошла бы и при подстановке константы вместо поля клиента, то
+     * есть ничего бы не доказывала.
+     */
+    expect(notifications.calls[0].phone).toBe('+79035554433');
+  });
+
+  it('пустой телефон не создаёт уведомление с пустым получателем', async () => {
+    /*
+     * `Order.customerId` в схеме ОБЯЗАТЕЛЕН, поэтому клиента без связи не
+     * бывает, а вот телефон у него может быть не заполнен. Запись с пустым
+     * получателем навсегда осталась бы в очереди и копилась бы в списке
+     * «требует вмешательства».
+     */
+    const { service, notifications } = makeService({ phoneNormalized: '' });
+    await transition(service);
+
+    expect(notifications.calls).toHaveLength(0);
+  });
+
+  it('переходы, не касающиеся клиента, события не имеют', () => {
+    /*
+     * НЕ КАЖДЫЙ ПЕРЕХОД ТРЕБУЕТ СООБЩЕНИЯ КЛИЕНТУ. Перевод на очередь
+     * производства, в путь или между цехами клиента не касается, и писать ему на
+     * каждый шаг было бы навязчиво.
+     */
+    const silent: [string, string][] = [
+      ['ACCEPTED', 'QUEUED_FOR_DISPATCH'],
+      ['QUEUED_FOR_DISPATCH', 'IN_TRANSIT_TO_WORKSHOP'],
+      ['IN_TRANSIT_TO_WORKSHOP', 'IN_PRODUCTION'],
+      ['IN_PRODUCTION', 'PRODUCTION_FINISHED'],
+    ];
+
+    for (const [from, to] of silent) {
+      expect(
+        customerEventForTransition(from, to),
+        `${from}->${to}: клиенту не о чем сообщать`,
+      ).toBeNull();
+    }
+  });
+
+  it('важные для клиента переходы влекут клиентское событие', () => {
+    /*
+     * Обратная проверка: событие не должно ПРОПАСТЬ из таблицы. Пропажа
+     * «готов к выдаче» означала бы, что изделие лежит в магазине, а клиент об
+     * этом не знает, — ровно тот дефект, который закрывает задача.
+     */
+    expect(customerEventForTransition('IN_TRANSIT_TO_STORE', 'READY_FOR_PICKUP')).toBe(
+      'READY_FOR_PICKUP',
+    );
+    expect(customerEventForTransition('DRAFT', 'ACCEPTED')).toBe('ORDER_ACCEPTED');
+    expect(customerEventForTransition('READY_FOR_PICKUP', 'COMPLETED')).toBe('WARRANTY_ISSUED');
+  });
+
+  it('один целевой статус даёт разные события для разных переходов', () => {
+    /*
+     * ДЕФЕКТ ПЕРВОЙ ВЕРСИИ, найденный при разборе таблицы переходов. Статус
+     * `ACCEPTED` достигается двумя переходами: из `DRAFT` («заказ принят») и из
+     * `AWAITING_PREPAYMENT` («предоплата получена»). Таблица, ключёванная
+     * ЦЕЛЕВЫМ СТАТУСОМ, смогла бы выразить только один смысл — и клиент либо не
+     * узнал бы, что заказ принят, либо получил бы «оплата получена», ничего не
+     * заплатив.
+     *
+     * Ключ по паре «откуда→куда» это различает.
+     */
+    const fromDraft = customerEventForTransition('DRAFT', 'ACCEPTED');
+    const fromPrepayment = customerEventForTransition('AWAITING_PREPAYMENT', 'ACCEPTED');
+
+    expect(fromDraft).toBe('ORDER_ACCEPTED');
+    // Предоплата — событие ПЛАТЕЖА: создаётся тем, кто принимает деньги.
+    expect(fromPrepayment).toBeNull();
+  });
+
+  it('ошибка уведомления не отменяет переход', async () => {
+    /*
+     * Уведомление — СЛЕДСТВИЕ перехода, а не его условие. Исключение здесь
+     * вернуло бы сотруднику ошибку при фактически выполненной операции и
+     * заставило бы повторить переход, который уже состоялся.
+     */
+    const { service, notifications } = makeService({});
+    notifications.notifyCustomer = async () => {
+      throw new Error('шлюз недоступен');
+    };
+
+    const result = await transition(service);
+    expect(result).toBeDefined();
   });
 });

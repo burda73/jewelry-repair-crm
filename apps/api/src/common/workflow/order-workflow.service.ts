@@ -18,6 +18,9 @@ import {
   isPaidInFull,
   stageForStatus,
   pickStageNorm,
+  formatMoney,
+  formatDate,
+  customerEventForTransition,
   type OrderStatus,
   type GuardCode,
   type EffectCode,
@@ -28,6 +31,7 @@ import {
 import type { Prisma, StageNorm } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ReportsCacheService } from '../../common/cache/reports-cache.service';
+import { NotificationsService } from '../../modules/notifications/notifications.service';
 
 /**
  * Результат перехода: заказ вместе с последней записью истории статусов.
@@ -122,6 +126,13 @@ export class OrderWorkflowService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: ReportsCacheService,
+    /*
+     * Уведомления клиенту (задача 5.10). Переходы содержат эффект
+     * `NOTIFY_CUSTOMER`, и именно здесь известно, ЧТО сообщить клиенту.
+     * Раньше этот эффект не обрабатывался вовсе: таблица переходов требовала
+     * уведомления, а клиент не получал ничего.
+     */
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -218,7 +229,91 @@ export class OrderWorkflowService {
      */
     this.cache.invalidate();
 
+    /*
+     * Уведомление клиенту (задача 5.10). Выполняется ПОСЛЕ фиксации транзакции:
+     * уведомление лишь СОЗДАЁТСЯ здесь, а отправляет его отдельный воркер, и
+     * недоступный SMS-шлюз не должен откатывать переход — иначе выдача заказа
+     * зависела бы от связи с провайдером.
+     */
+    if (check.rule.effects.includes('NOTIFY_CUSTOMER')) {
+      await this.notifyCustomerOfTransition(result, order.status, ctx.to);
+    }
+
     return result;
+  }
+
+  /**
+   * Создать клиентское уведомление о переходе.
+   *
+   * ОШИБКИ ГЛОТАЮТСЯ СООБЩЕНИЕМ В ЖУРНАЛ: уведомление — следствие перехода, а не
+   * его условие. Исключение здесь вернуло бы сотруднику ошибку при фактически
+   * выполненной операции и заставило бы повторить переход.
+   */
+  private async notifyCustomerOfTransition(
+    result: TransitionResult,
+    from: OrderStatus,
+    to: OrderStatus,
+  ): Promise<void> {
+    /*
+     * Повод определяется ПЕРЕХОДОМ, а не целевым статусом: статус `ACCEPTED`
+     * достигается и приёмом заказа, и поступлением предоплаты, и это разные
+     * сообщения клиенту. Таблица по статусу смогла бы выразить только одно из
+     * них, и второй смысл молча пропал бы.
+     */
+    const code = customerEventForTransition(from, to);
+    // Не каждый переход требует сообщения клиенту: перевод в производство или в
+    // путь клиента не касается.
+    if (code === null) return;
+
+    /*
+     * Заказ читается ЗАНОВО, а не берётся из результата перехода: результат
+     * возвращается с историей статусов, и в него не входят ни клиент, ни суммы.
+     * Расширять общий `include` ради одного уведомления значило бы тянуть
+     * связанные данные в каждый переход, включая массовые переводы партий.
+     */
+    const order = await this.prisma.order.findUnique({
+      where: { id: result.id },
+      select: {
+        id: true,
+        orderNo: true,
+        dueAt: true,
+        warrantyUntil: true,
+        totalAmountMinor: true,
+        customer: { select: { id: true, phoneNormalized: true } },
+      },
+    });
+
+    const customer = order?.customer ?? null;
+    /*
+     * Телефон записан не у всех клиентов, и это не ошибка операции. Проверка
+     * обязательна: запись с пустым получателем навсегда осталась бы в очереди.
+     *
+     * Берётся нормализованный номер: он в формате E.164, который принимают
+     * шлюзы. «Как ввёл пользователь» содержало бы скобки и дефисы, и шлюз
+     * отклонил бы отправку.
+     */
+    if (order === null || customer === null || customer.phoneNormalized === '') return;
+
+    try {
+      await this.notifications.notifyCustomer({
+        code,
+        customerId: customer.id,
+        orderId: order.id,
+        phone: customer.phoneNormalized,
+        values: {
+          orderNo: order.orderNo,
+          dueAt: formatDate(order.dueAt),
+          warrantyUntil: formatDate(order.warrantyUntil),
+          amount: formatMoney(order.totalAmountMinor),
+        },
+      });
+    } catch (error: unknown) {
+      this.logger.warn(
+        `Уведомление клиента по заказу ${result.orderNo} не создано: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -255,7 +350,7 @@ export class OrderWorkflowService {
         },
         // Согласие на запись разговоров хранится у клиента (ТЗ п. 2.4),
         // а не у заказа — иначе его нельзя отозвать централизованно.
-        customer: { select: { consentCallRecording: true } },
+        customer: { select: { id: true, consentCallRecording: true, phoneNormalized: true } },
       },
     });
 

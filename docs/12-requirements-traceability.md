@@ -200,7 +200,27 @@
 | 2.11 | Отчёт «Предоплаты» | `docs/06` §5 | `Payment.kind = PREPAYMENT` | этап 5 |
 | 3 | Интеграция с 1С | `docs/05` §1 | `AccountingPort`, outbox | этап 3 |
 | 3 | Интеграция с IP-АТС | `docs/05` §2 | `TelephonyPort` | этап 4 |
-| 3 | СМС/мессенджеры (опционально) | `docs/05` §3 | `NotificationPort`, `NotificationTemplate` | этап 5 |
+| 3 | СМС/мессенджеры (опционально) | `docs/05` §3, §3.1 | `NotificationPort`, адаптеры `SMS`/`MESSENGER`, `NotificationTemplate` | `sms-notification.adapter.spec.ts` (24 теста), `notification-policy.spec.ts` (19) |
+| 3 | Внешние каналы выключены по умолчанию | `docs/05` §3.2 | `NOTIFICATIONS_SMS_ENABLED`, `NOTIFICATIONS_MESSENGER_ENABLED` = `false` | `env.validation.spec.ts` (16 тестов) |
+| 3 | Канал требует флага И адреса шлюза | `docs/05` §3.2 | `readSmsSettings()` возвращает `null` при отсутствии любого из условий | `sms-notification.adapter.spec.ts` |
+| 3 | Выключенный канал не берётся воркером | `docs/05` §3.1 | `supportedChannels()` без выключенных каналов | `sms-notification.adapter.spec.ts` |
+| 3 | Причина выключения видна администратору | `docs/07` §14 | `channelsState()` возвращает `reason`, а не только флаг | `sms-notification.adapter.spec.ts` |
+| 3 | Номер приводится к E.164 перед отправкой | `docs/05` §6.3 | `normalizePhone()` в адаптере | `sms-notification.adapter.spec.ts` |
+| 3 | Неверный номер — постоянная ошибка без запроса к шлюзу | `docs/05` §6.3 | проверка до `fetch`, `retryable: false` | `sms-notification.adapter.spec.ts` |
+| 3 | Классификатор ошибки HTTP не переиспользует SMTP-логику | `docs/05` §3.1 | `isRetryableHttpStatus()` отдельно от `isRetryableByCode()` | `notification.port.spec.ts` (21 тест) |
+| 3 | `408`/`429` временные, остальные `4xx` постоянные | `docs/05` §3.1 | `isRetryableHttpStatus()` | `notification.port.spec.ts` |
+| 3 | Ошибка сети не выходит из адаптера | `docs/05` §6.3 | `try/catch` вокруг запроса | `sms-notification.adapter.spec.ts` |
+| 3 | Текст длиннее 70 символов не влезает в одно SMS | `docs/05` §6.3 | `fitsSingleSms()`, `SMS_SINGLE_LENGTH` | `notification-policy.spec.ts` |
+| 3 | Все SMS-шаблоны влезают в одно сообщение | `docs/05` §3.1 | подстановка значений и замер длины | `notification-templates.spec.ts` (15 тестов) |
+| 3 | У SMS и мессенджера нет темы | `docs/05` §3.1 | `subject: null` у этих каналов | `notification-templates.spec.ts` |
+| 3 | Тексты каналов различаются, клиентские не дублируют служебные | `docs/05` §3.1 | отдельные шаблоны по паре «код + канал» | `notification-templates.spec.ts` |
+| 3 | Клиентское уведомление не создаётся при выключенном канале | `docs/07` §14 | `notifyCustomer()` без `IN_APP`-записи | `notifications.service.spec.ts` (39 тестов) |
+| 3 | Клиенту не создаётся внутренний канал | `docs/07` §14 | проверка канала в `notifyCustomer()` | `notifications.service.spec.ts` |
+| 2.7 | Эффект `NOTIFY_CUSTOMER` действительно обрабатывается (дефект 35) | `docs/05` §3.1 | `notifyCustomerOfTransition()` в `OrderWorkflowService` | `order-workflow.service.spec.ts` (32 теста) |
+| 2.7 | Повод определяется переходом, а не целевым статусом | `docs/05` §3.1 | `customerEventForTransition(from, to)` | `order-workflow.service.spec.ts`, `notification-policy.spec.ts` |
+| 2.7 | Переход с `NOTIFY_CUSTOMER` обязан иметь событие, и наоборот | `docs/05` §3.1 | `transitionKeysWithCustomerEvent()` + проверка согласованности | `notification-policy.spec.ts` (2 теста) |
+| 2.7 | Ошибка уведомления не отменяет переход | `docs/05` §3.1 | `try/catch` с записью в журнал | `order-workflow.service.spec.ts` |
+| 3 | Событие «заказ принят» действительно возникает (дефект 35) | `docs/04` §2, `docs/05` §3 | `NOTIFY_CUSTOMER` в переходах `DRAFT->ACCEPTED`, `AWAITING_APPROVAL->ACCEPTED` | `notification-policy.spec.ts` |
 | 3 | Уведомление сотрудника в интерфейсе и на почте | `docs/05` §3 | `NotificationsService.notifyStaff` | `notifications.service.spec.ts` (10 тестов) |
 | 3 | Адресат каналов: `userId` для ленты, адрес для письма | `docs/05` §3 | `notifyStaff` | `notifications.service.spec.ts` |
 | 3 | Ключ шаблона — пара «код + канал» (дефект) | `docs/05` §3 | `@@unique([code, channel])` | `notification-templates.spec.ts` |

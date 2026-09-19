@@ -131,7 +131,12 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     // следующем этапе. Объявлять здесь SET_DUE_AT значило бы обещать, что срок
     // будет назначен, тогда как назначать его нечем, — и расчёт молча оставлял
     // бы поле пустым, что уже случалось.
-    effects: [EFFECT.RECALC_TOTALS, EFFECT.SET_ACCEPTED_AT],
+    /*
+     * `NOTIFY_CUSTOMER` — docs/05 §3 обещает клиенту событие «Заказ принят»
+     * (`ORDER_ACCEPTED`). Раньше эффекта здесь не было, и обещанное уведомление
+     * не создавалось ничем: шаблон существовал, а события не возникало.
+     */
+    effects: [EFFECT.RECALC_TOTALS, EFFECT.SET_ACCEPTED_AT, EFFECT.NOTIFY_CUSTOMER],
     requiresReason: false,
     label: 'Принять в работу',
   },
@@ -153,7 +158,8 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     guards: [GUARD.APPROVAL_EXISTS, GUARD.PREPAYMENT_NOT_REQUIRED],
     // Без SET_DUE_AT: ACCEPTED — этап INTAKE, норматива срока у него нет
     // (docs/04 §2). Срок назначит переход в QUEUED_FOR_DISPATCH.
-    effects: [EFFECT.SET_APPROVED_AT, EFFECT.SET_ACCEPTED_AT],
+    // Уведомление клиенту по той же причине: заказ согласован и принят в работу.
+    effects: [EFFECT.SET_APPROVED_AT, EFFECT.SET_ACCEPTED_AT, EFFECT.NOTIFY_CUSTOMER],
     requiresReason: false,
     label: 'Согласовано, принят в работу',
   },

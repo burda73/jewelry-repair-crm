@@ -77,11 +77,26 @@ describe('Шаблоны уведомлений: состав', () => {
     }
   });
 
-  it('у каждого шаблона есть тема и текст', () => {
-    // Пустая тема или текст превращает уведомление в безымянное сообщение.
+  it('у каждого шаблона есть текст', () => {
+    // Пустой текст превращает уведомление в бессмысленное сообщение.
     for (const template of NOTIFICATION_TEMPLATES) {
-      expect(template.subject.trim(), `${template.code}: пустая тема`).not.toBe('');
       expect(template.body.trim(), `${template.code}: пустой текст`).not.toBe('');
+    }
+  });
+
+  it('тема есть у каналов, где она существует', () => {
+    /*
+     * Тема нужна интерфейсу и почте. У SMS и мессенджера её НЕТ: сообщение
+     * доставляется одним текстом, и незаполненная тема попала бы в отправку как
+     * пустая строка. Прежняя проверка требовала тему у ВСЕХ шаблонов — с
+     * появлением SMS-канала (задача 5.10) это перестало быть верным.
+     */
+    for (const template of NOTIFICATION_TEMPLATES) {
+      if (template.channel === 'IN_APP' || template.channel === 'EMAIL') {
+        expect(template.subject?.trim(), `${template.code}: пустая тема`).not.toBe('');
+      } else {
+        expect(template.subject, `${template.code}: у этого канала нет темы`).toBeNull();
+      }
     }
   });
 
@@ -129,5 +144,100 @@ describe('Шаблоны уведомлений: состав', () => {
     expect(client).toBeDefined();
     expect(receiver).toBeDefined();
     expect(client?.body).not.toBe(receiver?.body);
+  });
+});
+
+describe('Клиентские шаблоны SMS и мессенджера (задача 5.10)', () => {
+  const customerCodes = [
+    'ORDER_ACCEPTED',
+    'APPROVAL_REQUEST',
+    'PREPAYMENT_RECEIVED',
+    'READY_FOR_PICKUP',
+    'UNCLAIMED_REMINDER',
+    'WARRANTY_ISSUED',
+  ];
+
+  it('каждое клиентское событие имеет текст для SMS', () => {
+    /*
+     * Без шаблона уведомление уйдёт запасным текстом «Событие: ORDER_ACCEPTED» —
+     * то есть клиент получит служебную строку вместо сообщения.
+     */
+    for (const code of customerCodes) {
+      const template = NOTIFICATION_TEMPLATES.find(
+        (item) => item.code === code && item.channel === 'SMS',
+      );
+      expect(template, `нет SMS-шаблона для ${code}`).toBeDefined();
+    }
+  });
+
+  it('каждое клиентское событие имеет текст для мессенджера', () => {
+    for (const code of customerCodes) {
+      const template = NOTIFICATION_TEMPLATES.find(
+        (item) => item.code === code && item.channel === 'MESSENGER',
+      );
+      expect(template, `нет шаблона мессенджера для ${code}`).toBeDefined();
+    }
+  });
+
+  it('SMS-тексты влезают в одно сообщение', () => {
+    /*
+     * ГЛАВНАЯ ПРОВЕРКА ЗАДАЧИ. Всё, что длиннее 70 символов кириллицы,
+     * разбивается на части, и КАЖДАЯ тарифицируется отдельно: «длинное SMS»
+     * стоит как два, а не как одно. Заметить это можно было бы только по счёту
+     * от провайдера, то есть слишком поздно.
+     *
+     * Проверяется текст с подставленными значениями: подстановка удлиняет
+     * строку, и шаблон, влезающий «в теории», может не влезть в жизни.
+     */
+    const sms = NOTIFICATION_TEMPLATES.filter((item) => item.channel === 'SMS');
+    expect(sms.length).toBeGreaterThan(0);
+
+    for (const template of sms) {
+      const rendered = template.body
+        .replace(/\{\{orderNo\}\}/g, 'MSK1-2509-000001')
+        .replace(/\{\{dueAt\}\}/g, '25.09.2026')
+        .replace(/\{\{amount\}\}/g, '1 200,00 ₽')
+        .replace(/\{\{warrantyUntil\}\}/g, '25.03.2027');
+
+      expect(
+        rendered.length,
+        `${template.code}: ${rendered.length} символов — это два SMS`,
+      ).toBeLessThanOrEqual(70);
+    }
+  });
+
+  it('SMS-тексты без темы', () => {
+    // У SMS темы нет: незаполненная тема попала бы в отправку как пустая строка.
+    for (const template of NOTIFICATION_TEMPLATES.filter((item) => item.channel === 'SMS')) {
+      expect(template.subject, `${template.code}`).toBeNull();
+    }
+  });
+
+  it('тексты SMS и мессенджера различаются', () => {
+    /*
+     * Одинаковый текст означал бы, что один из каналов получил чужой формат: либо
+     * клиент платит за лишние SMS, либо получает в мессенджер рубленую фразу.
+     */
+    for (const code of customerCodes) {
+      const sms = NOTIFICATION_TEMPLATES.find((i) => i.code === code && i.channel === 'SMS');
+      const messenger = NOTIFICATION_TEMPLATES.find(
+        (i) => i.code === code && i.channel === 'MESSENGER',
+      );
+      expect(sms?.body, `${code}: тексты совпадают`).not.toBe(messenger?.body);
+    }
+  });
+
+  it('тексты для клиента не дублируют тексты для сотрудника', () => {
+    /*
+     * Клиентские тексты короче и не содержат внутренних формулировок. Совпадение
+     * означало бы, что клиенту ушёл текст для сотрудника.
+     */
+    for (const code of customerCodes) {
+      const sms = NOTIFICATION_TEMPLATES.find((i) => i.code === code && i.channel === 'SMS');
+      const inApp = NOTIFICATION_TEMPLATES.find((i) => i.code === code && i.channel === 'IN_APP');
+      if (inApp !== undefined) {
+        expect(sms?.body, `${code}`).not.toBe(inApp.body);
+      }
+    }
   });
 });

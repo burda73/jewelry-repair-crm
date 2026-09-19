@@ -32,9 +32,9 @@
 |---|----|---|-----|-----------------|------------------|
 | 1 | — | `DRAFT` | RECEIVER, ADMIN | `consentCallRecording = true`; изделий ≥ 1 | Генерация `orderNo`, аудит |
 | 2 | `DRAFT` | `AWAITING_APPROVAL` | RECEIVER, ADMIN | Согласие на запись разговоров; калькуляция непуста | Расчёт `totalAmount`; `dueAt` по нормативу согласования |
-| 3 | `DRAFT` | `ACCEPTED` | RECEIVER, ADMIN | Калькуляция непуста; предоплата не требуется | `acceptedAt` |
+| 3 | `DRAFT` | `ACCEPTED` | RECEIVER, ADMIN | Калькуляция непуста; предоплата не требуется | `acceptedAt`; уведомление клиенту «заказ принят» |
 | 4 | `AWAITING_APPROVAL` | `AWAITING_PREPAYMENT` | RECEIVER, CASHIER, ADMIN | Есть `Approval` по сумме и сроку | `approvedAt`; `dueAt` по нормативу предоплаты |
-| 5 | `AWAITING_APPROVAL` | `ACCEPTED` | RECEIVER, ADMIN | Есть `Approval`; `requiresPrepayment = false` | `approvedAt` |
+| 5 | `AWAITING_APPROVAL` | `ACCEPTED` | RECEIVER, ADMIN | Есть `Approval`; `requiresPrepayment = false` | `approvedAt`; уведомление клиенту «заказ принят» |
 | 6 | `AWAITING_APPROVAL` | `CANCELLED` | RECEIVER, MANAGER, ADMIN | — | Причина обязательна |
 | 7 | `AWAITING_PREPAYMENT` | `ACCEPTED` | **SYSTEM**, CASHIER, ADMIN | `paidAmount >= prepaymentRequired` | `prepaymentConfirmedAt`; снятие блокировки работ |
 | 8 | `AWAITING_PREPAYMENT` | `CANCELLED` | RECEIVER, MANAGER, ADMIN | — | Причина обязательна |
