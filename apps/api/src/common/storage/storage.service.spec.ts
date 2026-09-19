@@ -145,6 +145,61 @@ describe('Хранилище: сохранение фотографий', () => 
   });
 });
 
+describe('Хранилище: драйвер S3 объявлен, но не реализован', () => {
+  /*
+   * Это проверка ДОКУМЕНТИРОВАННОГО поведения, а не желаемого. `docs/05-integrations.md`
+   * §4.2 прямо говорит: драйвер S3 в коде есть, но чтение и запись недоступны.
+   *
+   * Зачем фиксировать недоделку тестом. Без него «S3 не работает» — знание,
+   * которое живёт только в документе, а документ расходится с кодом молча.
+   * С ним попытка переезда на S3 упрётся в падающий тест, и это правильный
+   * момент узнать о недостающей реализации — до выката, а не после.
+   */
+  /*
+   * Экземпляр создаётся ВНУТРИ теста, а не в теле `describe`. Тело `describe`
+   * выполняется при сборке набора — до `beforeAll`, — и `dir` там ещё
+   * `undefined`. Драйвер в этом случае взял бы каталог по умолчанию
+   * `/opt/repair/data/files`, файла бы не нашёл и вернул `false` по
+   * СОВЕРШЕННО другой причине, чем проверяется. Тест проходил бы и на снятой
+   * защите драйвера, то есть не проверял бы ничего.
+   */
+  const makeS3 = (): StorageService =>
+    new StorageService({
+      get: (key: string) =>
+        ({
+          STORAGE_DRIVER: 'S3',
+          STORAGE_LOCAL_DIR: dir,
+          UPLOAD_MAX_BYTES: 10 * 1024 * 1024,
+        })[key],
+    } as never);
+
+  it('при старте сообщает о драйвере S3, не падая', async () => {
+    await expect(makeS3().onModuleInit()).resolves.toBeUndefined();
+  });
+
+  it('отказывает в чтении, а не возвращает пустые данные', async () => {
+    // Пустой буфер выглядел бы как «файл повреждён» — и искали бы причину в файле.
+    await expect(makeS3().read('orders/o1/items/i1/a.jpg')).rejects.toThrow(/S3 не настроен/);
+  });
+
+  it('отказывает в записи, а не теряет файл молча', async () => {
+    const png = await makePng(50, 50);
+    await expect(makeS3().savePhoto({ buffer: png, folder: 'orders/o2/items/i2' })).rejects.toThrow(
+      /S3 не настроен/,
+    );
+  });
+
+  it('не считает существующим файл, который лежит в локальном каталоге', async () => {
+    const png = await makePng(50, 50);
+    const saved = await storage.savePhoto({ buffer: png, folder: 'orders/o3/items/i3' });
+
+    // Файл заведомо есть: тот же экземпляр с драйвером LOCAL его только что создал.
+    expect(await storage.exists(saved.objectKey)).toBe(true);
+    // Драйвер S3 не должен «увидеть» его в локальном каталоге.
+    expect(await makeS3().exists(saved.objectKey)).toBe(false);
+  });
+});
+
 describe('Хранилище: удаление', () => {
   it('удаляет файл', async () => {
     const png = await makePng(100, 100);
