@@ -314,16 +314,6 @@ export const createBatchSchema = z
       message: 'Для партии в цех нужен цех, для партии в магазин — магазин назначения',
       path: ['toWorkshopId'],
     },
-  )
-  .refine(
-    (data) =>
-      data.direction !== 'TO_STORE' ||
-      data.fromStoreId === undefined ||
-      data.fromStoreId !== data.toStoreId,
-    {
-      message: 'Магазин отправления и назначения не могут совпадать',
-      path: ['toStoreId'],
-    },
   );
 
 export const batchOrdersSchema = z.object({

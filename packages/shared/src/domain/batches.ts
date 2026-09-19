@@ -59,15 +59,33 @@ export interface BatchEligibility {
   reason: BatchIneligibilityReason | null;
   /** Текст для приёмщика. */
   message: string | null;
+  /**
+   * Замечание, которое НЕ мешает включить заказ.
+   *
+   * Контроль «где приняли, там и выдаём» — зона ответственности менеджера
+   * (решение заказчика, docs/00-decisions.md §7.4), поэтому расхождение
+   * магазинов показывается, но не блокирует: заказ может ехать в другой
+   * магазин осознанно — например, клиент попросил выдать изделие в другой
+   * точке.
+   */
+  warning: string | null;
 }
 
 export const BATCH_INELIGIBILITY = {
   WRONG_STATUS: 'WRONG_STATUS',
   ALREADY_IN_BATCH: 'ALREADY_IN_BATCH',
+  /** Заказ принят в другом магазине (направление «в цех»). */
   WRONG_STORE: 'WRONG_STORE',
   NO_WORKSHOP: 'NO_WORKSHOP',
   WRONG_WORKSHOP: 'WRONG_WORKSHOP',
-  SAME_STORE: 'SAME_STORE',
+  /**
+   * Заказ выдаётся не в том магазине, куда едет партия.
+   *
+   * Заменяет прежний `SAME_STORE`, который сравнивал получателя с магазином
+   * ПРИЁМА и тем самым запрещал ровно то, что требуется: доставить изделие
+   * туда, где его принимали. Подробности — дефект 62 в docs/15-known-issues.md.
+   */
+  WRONG_DELIVERY_STORE: 'WRONG_DELIVERY_STORE',
 } as const;
 
 export type BatchIneligibilityReason =
@@ -99,22 +117,33 @@ export function isReadyForStoreDelivery(status: OrderStatus): boolean {
  *
  * @param order        заказ
  * @param direction    направление партии
- * @param batch        партия, в которую включаем (её магазин/цех), или `null` при создании
+ * @param fromStoreId  магазин отправления (для «в цех» — точка сбора)
+ * @param toStoreId    магазин-получатель (для «в магазин»)
+ * @param toWorkshopId цех-получатель (для «в цех»)
  * @param alreadyInIds идентификаторы заказов, уже лежащих в активных партиях
  */
 export function checkBatchEligibility(params: {
   order: BatchCandidateOrder;
   direction: BatchDirection;
   fromStoreId?: string | null;
+  toStoreId?: string | null;
   toWorkshopId?: string | null;
   alreadyInIds?: ReadonlySet<string>;
 }): BatchEligibility {
-  const { order, direction, fromStoreId, toWorkshopId, alreadyInIds } = params;
+  const { order, direction, fromStoreId, toStoreId, toWorkshopId, alreadyInIds } = params;
 
   const reject = (reason: BatchIneligibilityReason, message: string): BatchEligibility => ({
     eligible: false,
     reason,
     message,
+    warning: null,
+  });
+
+  const accept = (warning: string | null = null): BatchEligibility => ({
+    eligible: true,
+    reason: null,
+    message: null,
+    warning,
   });
 
   /*
@@ -153,20 +182,47 @@ export function checkBatchEligibility(params: {
     if (toWorkshopId != null && order.workshopId != null && order.workshopId !== toWorkshopId) {
       return reject(BATCH_INELIGIBILITY.WRONG_WORKSHOP, 'Заказ закреплён за другим цехом');
     }
-    return { eligible: true, reason: null, message: null };
+    return accept();
   }
 
-  // Направление TO_STORE: возврат готового изделия в магазин выдачи.
+  /*
+   * Направление TO_STORE: возврат изделия из цеха в магазин.
+   *
+   * Получатель — `toStoreId`. Прежняя реализация сравнивала получателя с
+   * магазином ПРИЁМА (`fromStoreId`) и отклоняла совпадение как «заказ уже
+   * числится в этом магазине»: изделие, которое принимали в MSK1, нельзя было
+   * вернуть в MSK1. Вместе с фильтром `candidates()` по `createdStoreId`
+   * это делало сборку обратной партии невозможной (дефект 62).
+   */
   if (!isReadyForStoreDelivery(order.status)) {
     return reject(
       BATCH_INELIGIBILITY.WRONG_STATUS,
       'В магазин можно отправить только заказ в статусе «В пути в магазин»',
     );
   }
-  if (fromStoreId != null && order.createdStoreId === fromStoreId) {
-    return reject(BATCH_INELIGIBILITY.SAME_STORE, 'Заказ уже числится в этом магазине');
+  /*
+   * Партия едет в ОДИН магазин: все изделия в ней должны выдаваться там же.
+   * Иначе машина привезёт изделие в точку, где его не ждут, и его придётся
+   * везти дальше. Это запрет, а не замечание: расхождение означает, что
+   * изделие физически доставят не туда.
+   */
+  if (toStoreId != null && order.pickupStoreId !== toStoreId) {
+    return reject(
+      BATCH_INELIGIBILITY.WRONG_DELIVERY_STORE,
+      'Заказ выдают в другом магазине — выберите партию на магазин выдачи',
+    );
   }
-  return { eligible: true, reason: null, message: null };
+  /*
+   * Магазин ПРИЁМА может отличаться от магазина выдачи: контроль «где приняли,
+   * там и выдаём» — зона ответственности менеджера (решение заказчика,
+   * docs/00-decisions.md §7.4), поэтому здесь только замечание. Осознанная
+   * выдача в другой точке — законный сценарий, и запрет заставил бы менеджера
+   * искать обходной путь.
+   */
+  if (toStoreId != null && order.createdStoreId !== toStoreId) {
+    return accept('Заказ принят в другом магазине — выдача будет в магазине, куда едет партия');
+  }
+  return accept();
 }
 
 /**
@@ -175,11 +231,16 @@ export function checkBatchEligibility(params: {
  * Возвращает обе группы, а не только подходящие: интерфейс обязан показать
  * причину отказа по каждому заказу, иначе приёмщик видит, что «заказ не
  * добавился», и не понимает почему.
+ *
+ * Замечания подходящих заказов (`warning`) идут третьим списком: они не мешают
+ * включить заказ, но интерфейс обязан их показать — иначе предупреждение
+ * «заказ принят в другом магазине» существовало бы только в коде.
  */
 export function partitionBatchCandidates(params: {
   orders: readonly BatchCandidateOrder[];
   direction: BatchDirection;
   fromStoreId?: string | null;
+  toStoreId?: string | null;
   toWorkshopId?: string | null;
   alreadyInIds?: ReadonlySet<string>;
 }): {
@@ -189,6 +250,7 @@ export function partitionBatchCandidates(params: {
     reason: BatchIneligibilityReason;
     message: string;
   }>;
+  warnings: Array<{ order: BatchCandidateOrder; message: string }>;
 } {
   const eligible: BatchCandidateOrder[] = [];
   const rejected: Array<{
@@ -196,11 +258,13 @@ export function partitionBatchCandidates(params: {
     reason: BatchIneligibilityReason;
     message: string;
   }> = [];
+  const warnings: Array<{ order: BatchCandidateOrder; message: string }> = [];
 
   for (const order of params.orders) {
     const verdict = checkBatchEligibility({ ...params, order });
     if (verdict.eligible) {
       eligible.push(order);
+      if (verdict.warning !== null) warnings.push({ order, message: verdict.warning });
     } else {
       rejected.push({
         order,
@@ -210,7 +274,7 @@ export function partitionBatchCandidates(params: {
     }
   }
 
-  return { eligible, rejected };
+  return { eligible, rejected, warnings };
 }
 
 /**

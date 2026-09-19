@@ -381,20 +381,27 @@ describe('BatchesService: создание партии', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('отклоняет партию, где магазин отправления и назначения совпадают', async () => {
+  it('принимает партию в магазин, где изделия были приняты', async () => {
+    /*
+     * Основной сценарий заказчика «где приняли, там и выдаём». Прежняя схема
+     * отклоняла такую партию сообщением «магазин отправления и назначения не
+     * могут совпадать», сравнивая получателя с магазином приёма, — собрать
+     * обратную партию было невозможно (дефект 62).
+     */
     const prisma = createPrismaMock();
 
-    await expect(
-      makeService(prisma).create(
-        {
-          direction: 'TO_STORE',
-          fromStoreId: STORE_MSK1,
-          toStoreId: STORE_MSK1,
-          plannedAt: new Date(),
-        },
-        LOGIST,
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await makeService(prisma).create(
+      { direction: 'TO_STORE', toStoreId: STORE_MSK1, plannedAt: new Date() },
+      LOGIST,
+    );
+
+    // Двойник отдаёт фиксированную строку, поэтому проверяется то, что сервис
+    // ЗАПИСАЛ: получатель партии — магазин, куда изделия и должны вернуться.
+    expect(prisma._tx.batch.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ direction: 'TO_STORE', toStoreId: STORE_MSK1 }),
+      }),
+    );
   });
 });
 

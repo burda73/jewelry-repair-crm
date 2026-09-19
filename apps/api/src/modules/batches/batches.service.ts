@@ -611,7 +611,7 @@ export class BatchesService {
     batchId: string,
     actor: AuthenticatedUser,
   ): Promise<{
-    eligible: Array<{ id: string; orderNo: string; status: string }>;
+    eligible: Array<{ id: string; orderNo: string; status: string; warning?: string }>;
     rejected: Array<{ id: string; orderNo: string; reason: string; message: string }>;
   }> {
     const scopeFilter = this.buildScopeFilter(actor);
@@ -623,20 +623,31 @@ export class BatchesService {
     const alreadyInIds = await this.ordersInActiveBatches(this.prisma);
 
     /*
-     * Кандидаты берутся по статусу, соответствующему направлению партии, и по
-     * магазину отправления: остальные заведомо не подходят, и показывать их
-     * логисту значит заставлять его читать длинный список отказов.
+     * Кандидаты берутся по статусу, соответствующему направлению партии.
+     *
+     * Для направления В ЦЕХ дополнительно ограничиваем магазином отправления:
+     * машина забирает изделия с одной точки, и заказы из других магазинов
+     * заведомо не подходят — показывать их значит заставлять логиста читать
+     * длинный список отказов.
+     *
+     * Для направления В МАГАЗИН такого ограничения НЕТ. Прежде здесь стоял
+     * фильтр `createdStoreId: batch.fromStoreId`, и он отсекал ровно те заказы,
+     * которые нужны: магазин приёма совпадал с фильтром, после чего проверка
+     * отклоняла их как «заказ уже числится в этом магазине». Собрать обратную
+     * партию было невозможно (дефект 62, docs/15-known-issues.md).
+     * Область видимости по магазину здесь тоже не сужается: менеджер
+     * производства собирает рейс на точку, к которой сам не приписан.
      */
-    const status =
+    const where: Prisma.OrderWhereInput =
       batch.direction === BATCH_DIRECTION.TO_PRODUCTION
-        ? 'QUEUED_FOR_DISPATCH'
-        : 'IN_TRANSIT_TO_STORE';
+        ? {
+            status: 'QUEUED_FOR_DISPATCH',
+            ...(batch.fromStoreId === null ? {} : { createdStoreId: batch.fromStoreId }),
+          }
+        : { status: 'IN_TRANSIT_TO_STORE' };
 
     const orders = await this.prisma.order.findMany({
-      where: {
-        status,
-        ...(batch.fromStoreId === null ? {} : { createdStoreId: batch.fromStoreId }),
-      },
+      where,
       orderBy: { acceptedAt: 'asc' },
       take: 500,
       select: {
@@ -653,16 +664,24 @@ export class BatchesService {
       orders,
       direction: batch.direction,
       fromStoreId: batch.fromStoreId,
+      toStoreId: batch.toStoreId,
       toWorkshopId: batch.toWorkshopId,
       alreadyInIds,
     });
 
+    /*
+     * Замечания подходящих заказов отдаются интерфейсу: без них предупреждение
+     * «заказ принят в другом магазине» осталось бы только в коде.
+     */
+    const warningById = new Map(result.warnings.map((w) => [w.order.id, w.message]));
+
     return {
-      eligible: result.eligible.map((order) => ({
-        id: order.id,
-        orderNo: order.orderNo ?? '',
-        status: order.status,
-      })),
+      eligible: result.eligible.map((order) => {
+        const warning = warningById.get(order.id);
+        return warning === undefined
+          ? { id: order.id, orderNo: order.orderNo ?? '', status: order.status }
+          : { id: order.id, orderNo: order.orderNo ?? '', status: order.status, warning };
+      }),
       rejected: result.rejected.map((entry) => ({
         id: entry.order.id,
         orderNo: entry.order.orderNo ?? '',

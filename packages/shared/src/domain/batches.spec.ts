@@ -177,27 +177,59 @@ describe('Партия в магазин: отказы и допуски', () =>
     }
   });
 
-  it('отклоняет возврат в тот же магазин', () => {
-    // Изделие уже числится в этом магазине — везти нечего.
+  it('заказ, принятый и выдаваемый в магазине назначения, подходит', () => {
+    // Основной сценарий «где приняли, там и выдаём»: изделие едет в тот же
+    // магазин, где его приняли. Прежняя реализация отклоняла этот случай как
+    // «заказ уже числится в этом магазине» — собрать обратную партию было
+    // невозможно (дефект 62).
     const verdict = checkBatchEligibility({
-      order: returnable({ createdStoreId: 'store-msk1' }),
+      order: returnable({ createdStoreId: 'store-msk1', pickupStoreId: 'store-msk1' }),
       direction: BATCH_DIRECTION.TO_STORE,
-      fromStoreId: 'store-msk1',
-    });
-
-    expect(verdict.eligible).toBe(false);
-    expect(verdict.reason).toBe(BATCH_INELIGIBILITY.SAME_STORE);
-  });
-
-  it('заказ, принятый в другом магазине, можно вернуть в магазин приёма', () => {
-    // Приём в MSK1, выдача в MSK2: обратный рейс в MSK1 допустим.
-    const verdict = checkBatchEligibility({
-      order: returnable({ createdStoreId: 'store-spb1' }),
-      direction: BATCH_DIRECTION.TO_STORE,
-      fromStoreId: 'store-msk1',
+      toStoreId: 'store-msk1',
     });
 
     expect(verdict.eligible).toBe(true);
+    expect(verdict.warning).toBeNull();
+  });
+
+  it('заказ, принятый в другом магазине, подходит с замечанием', () => {
+    // Приём в MSK2, выдача в MSK1: контроль «где приняли, там и выдаём» —
+    // зона менеджера, поэтому расхождение показывается, но не блокирует.
+    const verdict = checkBatchEligibility({
+      order: returnable({ createdStoreId: 'store-spb1', pickupStoreId: 'store-msk1' }),
+      direction: BATCH_DIRECTION.TO_STORE,
+      toStoreId: 'store-msk1',
+    });
+
+    expect(verdict.eligible).toBe(true);
+    expect(verdict.warning).toMatch(/принят в другом магазине/);
+  });
+
+  it('отклоняет заказ, выдаваемый не в том магазине, куда едет партия', () => {
+    // Партия едет в MSK2, а изделие клиент забирает в MSK1: машина привезёт его
+    // не туда, где его ждут. Это запрет, в отличие от расхождения магазина
+    // приёма (см. следующий тест).
+    const verdict = checkBatchEligibility({
+      order: returnable({ createdStoreId: 'store-msk1', pickupStoreId: 'store-msk1' }),
+      direction: BATCH_DIRECTION.TO_STORE,
+      toStoreId: 'store-msk2',
+    });
+
+    expect(verdict.eligible).toBe(false);
+    expect(verdict.reason).toBe(BATCH_INELIGIBILITY.WRONG_DELIVERY_STORE);
+  });
+
+  it('заказ, принятый в другом магазине, можно вернуть в магазин приёма', () => {
+    // Приём в MSK2, выдача в MSK2, рейс в MSK2: заказ доедет туда, где его
+    // и принимали, и где будут выдавать. Направление задаётся `toStoreId`.
+    const verdict = checkBatchEligibility({
+      order: returnable({ createdStoreId: 'store-spb1', pickupStoreId: 'store-spb1' }),
+      direction: BATCH_DIRECTION.TO_STORE,
+      toStoreId: 'store-spb1',
+    });
+
+    expect(verdict.eligible).toBe(true);
+    expect(verdict.warning).toBeNull();
   });
 });
 
