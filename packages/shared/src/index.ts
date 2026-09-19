@@ -17,6 +17,7 @@ export * from './domain/notification-policy.js';
 export * from './domain/receipt.js';
 export * from './domain/metal-kind.js';
 export * from './domain/price-list.js';
+export * from './domain/public-order-status.js';
 export * from './domain/roles.js';
 export * from './domain/working-calendar.js';
 export * from './utils/money.js';

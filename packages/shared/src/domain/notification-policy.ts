@@ -66,6 +66,20 @@ export const CUSTOMER_NOTIFICATION_CODES = {
   READY_FOR_PICKUP: 'READY_FOR_PICKUP',
   UNCLAIMED_REMINDER: 'UNCLAIMED_REMINDER',
   WARRANTY_ISSUED: 'WARRANTY_ISSUED',
+  /**
+   * Код подтверждения для публичной проверки статуса (задача 5.11).
+   *
+   * ОСОБЫЙ СЛУЧАЙ среди клиентских событий, и это важно понимать. Все прочие
+   * события — уведомления: их отсутствие означает «клиент не узнал новость», и
+   * это терпимо. Здесь же код — это КЛЮЧ ДОСТУПА, и без доставки публичная
+   * страница просто не работает: клиент не может посмотреть свой заказ.
+   *
+   * При этом канал всё равно остаётся внешним и платным, поэтому правило то же:
+   * `SMS` и мессенджер подключаются настройкой. Разница в последствиях: пока
+   * канал выключен, функцию нельзя считать рабочей, и сервис обязан сказать об
+   * этом в журнал громко, а не создавать код «в пустоту».
+   */
+  PUBLIC_STATUS_CODE: 'PUBLIC_STATUS_CODE',
 } as const;
 
 /** События для сотрудника (docs/05 §3). */
@@ -119,6 +133,18 @@ export const NOTIFICATION_CHANNEL_RULES: readonly NotificationChannelRule[] = [
   },
   {
     code: CUSTOMER_NOTIFICATION_CODES.WARRANTY_ISSUED,
+    audience: NOTIFICATION_AUDIENCE.CUSTOMER,
+    baseChannels: [],
+    optionalChannels: ['SMS', 'MESSENGER'],
+  },
+  {
+    /*
+     * Код проверки статуса. Каналы те же, что у прочих клиентских событий:
+     * внешние и подключаемые настройкой. Отличие в том, что это не уведомление,
+     * а ключ доступа, — поэтому `PublicStatusService` отдельно предупреждает в
+     * журнале, когда ни один канал не включён и код фактически никуда не ушёл.
+     */
+    code: CUSTOMER_NOTIFICATION_CODES.PUBLIC_STATUS_CODE,
     audience: NOTIFICATION_AUDIENCE.CUSTOMER,
     baseChannels: [],
     optionalChannels: ['SMS', 'MESSENGER'],

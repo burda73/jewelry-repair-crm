@@ -1021,3 +1021,32 @@ export type CalendarDateInput = z.infer<typeof calendarDateSchema>;
 export type CreateCalendarDayInput = z.infer<typeof createCalendarDaySchema>;
 export type UpdateCalendarDayInput = z.infer<typeof updateCalendarDaySchema>;
 export type CalendarQueryInput = z.infer<typeof calendarQuerySchema>;
+
+/**
+ * Запрос кода подтверждения для публичной проверки статуса (задача 5.11).
+ *
+ * Телефон обязателен и проверяется `phoneSchema` — той же схемой, что и при
+ * приёме заказа. Публичный маршрут не должен принимать формат, который система
+ * не считает телефоном: иначе нормализация вернула бы `null` и клиент получал бы
+ * «код отправлен» без отправки, не понимая, почему код не приходит.
+ */
+export const requestPublicCodeSchema = z.object({
+  orderNo: z.string().trim().min(1, 'Укажите номер заказа').max(50),
+  phone: phoneSchema,
+});
+
+/**
+ * Публичная проверка статуса: номер заказа и код.
+ *
+ * Код проверяется только на «похожесть» (четыре цифры с возможными пробелами и
+ * дефисами). Семантика — срок, число попыток, совпадение — в сервисе: схема не
+ * знает ни базы, ни времени, и попытка выразить здесь жизненный цикл кода
+ * закончилась бы дублированием правил.
+ */
+export const publicOrderStatusQuerySchema = z.object({
+  orderNo: z.string().trim().min(1, 'Укажите номер заказа').max(50),
+  code: z.string().trim().min(1, 'Укажите код из SMS').max(20),
+});
+
+export type RequestPublicCodeInput = z.infer<typeof requestPublicCodeSchema>;
+export type PublicOrderStatusQuery = z.infer<typeof publicOrderStatusQuerySchema>;

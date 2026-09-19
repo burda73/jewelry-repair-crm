@@ -32,6 +32,7 @@
 
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
+import { envFlag } from '../../config/env.validation';
 import {
   NOTIFICATION_CHANNEL,
   isRetryableHttpStatus,
@@ -80,10 +81,12 @@ export function readSmsSettings(
    * оба сразу, и расходы оказались бы вдвое больше запланированных: это разные
    * провайдеры и разные деньги.
    */
-  const enabled = config.get<string>(`NOTIFICATIONS_${prefix}_ENABLED`);
-  // Сравнение со строкой: значения окружения всегда строки, а `ConfigService`
-  // может вернуть и приведённое значение — проверяются оба варианта.
-  if (enabled !== 'true' && String(enabled) !== 'true') return null;
+  /*
+   * Через `envFlag`, а не сравнением со строкой: схема окружения приводит флаги
+   * к булеву значению, и `=== 'true'` для него всегда ложно. Этот дефект уже
+   * проявлялся — канал считался выключенным при заданном `=true`.
+   */
+  if (!envFlag(config.get(`NOTIFICATIONS_${prefix}_ENABLED`))) return null;
 
   const url = config.get<string>(`${prefix}_GATEWAY_URL`);
   if (url === undefined || url.trim() === '') return null;

@@ -18,6 +18,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { envFlag } from '../../config/env.validation';
 import { ConfigService } from '@nestjs/config';
 import type { Transporter } from 'nodemailer';
 import {
@@ -71,7 +72,12 @@ export function readSmtpSettings(config: ConfigService): SmtpSettings | null {
      * порта — распространённая ошибка: 465 требует `secure: true`, а 587
      * начинает с открытого соединения и повышает его через STARTTLS.
      */
-    secure: config.get<string>('SMTP_SECURE') === 'true',
+    /*
+     * Через `envFlag`: схема окружения приводит `SMTP_SECURE` к булеву значению,
+     * и сравнение со строкой `'true'` всегда давало `false` — то есть шифрование
+     * почты молча оставалось выключенным даже при `SMTP_SECURE=true`.
+     */
+    secure: envFlag(config.get('SMTP_SECURE')),
     user: user === undefined || user.trim() === '' ? null : user.trim(),
     password: password === undefined || password === '' ? null : password,
     from: from === undefined || from.trim() === '' ? 'noreply@remixgold.local' : from.trim(),

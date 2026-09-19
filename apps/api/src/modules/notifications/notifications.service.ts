@@ -21,6 +21,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { channelsFor } from '@app/shared';
+import { envFlag } from '../../config/env.validation';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 
@@ -285,14 +286,21 @@ export class NotificationsService {
     return created;
   }
 
-  /** Включён ли SMS-канал. */
+  /**
+   * Включён ли SMS-канал.
+   *
+   * Читается через `envFlag`, а не сравнением со строкой `'true'`: схема
+   * окружения приводит флаг к булеву значению, и сравнение с булевым значением
+   * строки НИКОГДА не даёт истины. Из-за этого SMS не отправлялись никогда, хотя
+   * канал считался настроенным в состоянии интеграции.
+   */
   private smsEnabled(): boolean {
-    return this.config.get<string>('NOTIFICATIONS_SMS_ENABLED') === 'true';
+    return envFlag(this.config.get('NOTIFICATIONS_SMS_ENABLED'));
   }
 
   /** Включён ли канал мессенджера. */
   private messengerEnabled(): boolean {
-    return this.config.get<string>('NOTIFICATIONS_MESSENGER_ENABLED') === 'true';
+    return envFlag(this.config.get('NOTIFICATIONS_MESSENGER_ENABLED'));
   }
 
   /**

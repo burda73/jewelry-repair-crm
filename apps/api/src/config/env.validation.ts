@@ -282,6 +282,34 @@ export const envSchema = z
 export type AppEnv = z.infer<typeof envSchema>;
 
 /** Вызывается ConfigModule. Бросает исключение — приложение не стартует. */
+/**
+ * Прочитать флаг окружения, приведённый схемой к булеву значению.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНАЯ ФУНКЦИЯ. `z.coerce.boolean()` в `envSchema` превращает строку
+ * `'true'` в булево `true` — и тогда проверка вида `config.get('ФЛАГ') === 'true'`
+ * НИКОГДА не срабатывает: булево значение не равно строке, даже если оно истинно.
+ *
+ * Этот дефект был найден на живой проверке кода подтверждения (задача 5.11): флаг
+ * `NOTIFICATIONS_SMS_ENABLED=true` стоял, шлюз был настроен, администратор видел
+ * канал как «настроен» — а `channelsFor` получал `smsEnabled: false`, потому что
+ * сервис сравнивал приведённое булево значение со строкой. SMS не отправлялись
+ * НИКОГДА, и заметить это в интерфейсе было нельзя: состояние канала считалось
+ * другим кодом, который читает значение правильно.
+ *
+ * Тем же дефектом были поражены `NOTIFICATIONS_MESSENGER_ENABLED` и
+ * `SMTP_SECURE` — то есть шифрование почты молча оставалось выключенным даже при
+ * `SMTP_SECURE=true`.
+ *
+ * Функция принимает `unknown` и разбирает ОБА варианта: значение может прийти и
+ * строкой, если схема однажды перестанет приводить тип. Тогда проверка не
+ * сломается молча, а продолжит работать.
+ */
+export function envFlag(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value === 'true';
+  return false;
+}
+
 export function validateEnv(config: Record<string, unknown>): AppEnv {
   const result = envSchema.safeParse(config);
 

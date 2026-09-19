@@ -11,7 +11,8 @@
  *  4. telephony-import     — импорт журнала звонков (ТЗ п. 2.4);
  *  5. recording-retention  — удаление записей старше 1 года (ТЗ п. 2.4);
  *  6. notifications        — отправка уведомлений;
- *  7. totals-reconcile     — ночная сверка итогов заказов с платежами.
+ *  7. totals-reconcile     — ночная сверка итогов заказов с платежами;
+ *  8. public-code-cleanup  — удаление истёкших кодов проверки статуса (задача 5.11).
  *
  * РЕАЛИЗАЦИЯ: на текущем этапе это рабочая точка входа с graceful shutdown;
  * сами воркеры подключаются по мере разработки соответствующих модулей
@@ -24,6 +25,7 @@ import { AppModule } from './app.module';
 import { EscalationsService } from './modules/escalations/escalations.service';
 import { UnclaimedService } from './modules/escalations/unclaimed.service';
 import { NotificationSenderService } from './integrations/notifications/notification-sender.service';
+import { PublicStatusService } from './modules/public-status/public-status.service';
 
 interface WorkerDefinition {
   name: string;
@@ -52,6 +54,17 @@ const ESCALATION_INTERVAL_MS = 15 * 60_000;
 const UNCLAIMED_INTERVAL_MS = 24 * 60 * 60_000;
 
 /**
+ * Периодичность уборки истёкших кодов проверки статуса.
+ *
+ * Раз в час. Срок жизни кода — десять минут, и держать истёкшие дольше нужного
+ * незачем: в них хранится телефон клиента в связке с номером заказа, то есть
+ * персональные данные. Час — компромисс: чаще означало бы постоянные удаления
+ * почти пустых наборов, реже — лишние записи в базе. Просроченные коды
+ * безвредны сами по себе (они не принимаются), поэтому спешить некуда.
+ */
+const PUBLIC_CODE_CLEANUP_INTERVAL_MS = 60 * 60_000;
+
+/**
  * Периодичность отправки уведомлений.
  *
  * Тридцать секунд. Быстрее бессмысленно: минимальная задержка между попытками —
@@ -67,6 +80,7 @@ const registeredWorkers: WorkerDefinition[] = [];
 let escalations: EscalationsService | null = null;
 let unclaimed: UnclaimedService | null = null;
 let notificationSender: NotificationSenderService | null = null;
+let publicStatus: PublicStatusService | null = null;
 
 const timers: NodeJS.Timeout[] = [];
 let shuttingDown = false;
@@ -139,6 +153,7 @@ async function bootstrap(): Promise<void> {
   escalations = app.get(EscalationsService);
   unclaimed = app.get(UnclaimedService);
   notificationSender = app.get(NotificationSenderService);
+  publicStatus = app.get(PublicStatusService);
 
   registeredWorkers.push({
     name: 'escalations',
@@ -196,6 +211,20 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  registeredWorkers.push({
+    name: 'public-code-cleanup',
+    intervalMs: PUBLIC_CODE_CLEANUP_INTERVAL_MS,
+    run: async () => {
+      if (publicStatus === null) return 0;
+      /*
+       * Убираются и использованные коды: срок — единственный критерий. Код,
+       * которым уже вошли, хранить дольше срока незачем, а разделять два
+       * удаления означало бы два прохода по таблице ради нуля пользы.
+       */
+      return publicStatus.purgeExpired();
+    },
+  });
+
   for (const worker of registeredWorkers) {
     scheduleWorker(worker);
   }
@@ -211,6 +240,7 @@ function shutdown(signal: string): void {
   escalations = null;
   unclaimed = null;
   notificationSender = null;
+  publicStatus = null;
 
   for (const timer of timers) {
     clearInterval(timer);

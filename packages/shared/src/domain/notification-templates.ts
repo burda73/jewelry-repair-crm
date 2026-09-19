@@ -265,6 +265,22 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateSeed[] = [
     subject: null,
     body: 'Заказ {{orderNo}} выдан. Гарантия до {{warrantyUntil}}.',
   },
+  {
+    /*
+     * Код проверки статуса (задача 5.11). Текст намеренно без номера заказа в
+     * начале: сообщение приходит на телефон, который и так связан с заказом, а
+     * лишние символы в SMS стоят денег. Код стоит в конце — так его удобнее
+     * прочитать и скопировать на телефоне.
+     *
+     * НИКОГДА НЕ УКАЗЫВАТЬ ЗДЕСЬ СРОК В МИНУТАХ ЧИСЛОМ: он живёт в
+     * `PUBLIC_CODE_TTL_MS`, и расхождение текста с реальным сроком заставило бы
+     * клиента ждать код, который уже не действует.
+     */
+    channel: TEMPLATE_CHANNEL.SMS,
+    code: 'PUBLIC_STATUS_CODE',
+    subject: null,
+    body: 'Код для проверки заказа: {{code}}. Никому не сообщайте.',
+  },
 
   /*
    * ---------------------------------------------------------------------------
@@ -279,6 +295,12 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateSeed[] = [
    * формулировок.
    * ---------------------------------------------------------------------------
    */
+  {
+    channel: TEMPLATE_CHANNEL.MESSENGER,
+    code: 'PUBLIC_STATUS_CODE',
+    subject: null,
+    body: 'Код для проверки статуса заказа: {{code}}\n\nКод действует 10 минут. Если вы не запрашивали его, просто не отвечайте на это сообщение.',
+  },
   {
     channel: TEMPLATE_CHANNEL.MESSENGER,
     code: 'ORDER_ACCEPTED',

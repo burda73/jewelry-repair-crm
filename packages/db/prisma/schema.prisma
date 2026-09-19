@@ -32,14 +32,14 @@ model Store {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users           UserStore[]
-  ordersCreated   Order[]        @relation("OrderCreatedStore")
-  ordersPickup    Order[]        @relation("OrderPickupStore")
-  payments        Payment[]
-  batchesFrom     Batch[]        @relation("BatchFromStore")
-  batchesTo       Batch[]        @relation("BatchToStore")
-  userRoles       UserRole[]
-  priceLists      PriceListVersion[]
+  users            UserStore[]
+  ordersCreated    Order[]            @relation("OrderCreatedStore")
+  ordersPickup     Order[]            @relation("OrderPickupStore")
+  payments         Payment[]
+  batchesFrom      Batch[]            @relation("BatchFromStore")
+  batchesTo        Batch[]            @relation("BatchToStore")
+  userRoles        UserRole[]
+  priceLists       PriceListVersion[]
   workingCalendars WorkingCalendar[]
 
   @@map("store")
@@ -57,7 +57,7 @@ model Workshop {
 
   performers Performer[]
   orders     Order[]
-  batchesTo  Batch[]   @relation("BatchToWorkshop")
+  batchesTo  Batch[]     @relation("BatchToWorkshop")
 
   @@map("workshop")
 }
@@ -91,46 +91,46 @@ enum DataScope {
 }
 
 model User {
-  id             String    @id @default(cuid())
-  email          String    @unique
-  phone          String?
-  fullName       String
-  passwordHash   String // Argon2id
-  isActive       Boolean   @default(true)
-  lastLoginAt    DateTime?
-  failedAttempts Int       @default(0)
-  lockedUntil    DateTime?
-  mustChangePassword Boolean @default(false)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  phone              String?
+  fullName           String
+  passwordHash       String // Argon2id
+  isActive           Boolean   @default(true)
+  lastLoginAt        DateTime?
+  failedAttempts     Int       @default(0)
+  lockedUntil        DateTime?
+  mustChangePassword Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  roles       UserRole[]
-  stores      UserStore[]
-  ordersCreated   Order[]          @relation("OrderCreatedBy")
-  ordersManaged   Order[]          @relation("OrderProductionManager")
-  statusChanges   OrderStatusHistory[]
-  calcLines       OrderWork[]
-  stoneLines      OrderStone[]
-  adjustments     CalcAdjustment[]
-  approvals       Approval[]
-  payments        Payment[]
-  auditLogs       AuditLog[]
-  notifications   Notification[]
-  assignments     OrderAssignment[]
-  claimsReviewed  WarrantyClaim[]  @relation("ClaimReviewer")
-  sessions        UserSession[]
+  roles          UserRole[]
+  stores         UserStore[]
+  ordersCreated  Order[]              @relation("OrderCreatedBy")
+  ordersManaged  Order[]              @relation("OrderProductionManager")
+  statusChanges  OrderStatusHistory[]
+  calcLines      OrderWork[]
+  stoneLines     OrderStone[]
+  adjustments    CalcAdjustment[]
+  approvals      Approval[]
+  payments       Payment[]
+  auditLogs      AuditLog[]
+  notifications  Notification[]
+  assignments    OrderAssignment[]
+  claimsReviewed WarrantyClaim[]      @relation("ClaimReviewer")
+  sessions       UserSession[]
 
   @@index([isActive])
   @@map("user")
 }
 
 model UserRole {
-  id      String   @id @default(cuid())
-  userId  String
-  role    RoleCode
-  storeId String? // для ролей, ограниченных точкой (RECEIVER, CASHIER)
-  scope   DataScope @default(STORE)
-  grantedAt DateTime @default(now())
+  id          String    @id @default(cuid())
+  userId      String
+  role        RoleCode
+  storeId     String? // для ролей, ограниченных точкой (RECEIVER, CASHIER)
+  scope       DataScope @default(STORE)
+  grantedAt   DateTime  @default(now())
   grantedById String?
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -142,8 +142,8 @@ model UserRole {
 }
 
 model UserStore {
-  userId  String
-  storeId String
+  userId    String
+  storeId   String
   isDefault Boolean @default(false)
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -154,14 +154,14 @@ model UserStore {
 }
 
 model UserSession {
-  id           String   @id @default(cuid())
-  userId       String
-  refreshHash  String   @unique
-  userAgent    String?
-  ip           String?
-  expiresAt    DateTime
-  revokedAt    DateTime?
-  createdAt    DateTime @default(now())
+  id          String    @id @default(cuid())
+  userId      String
+  refreshHash String    @unique
+  userAgent   String?
+  ip          String?
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -175,19 +175,19 @@ model UserSession {
 // ============================================================================
 
 model AuditLog {
-  id         BigInt   @id @default(autoincrement())
-  actorId    String?
-  actorRole  RoleCode?
-  action     String // CREATE | UPDATE | DELETE | STATUS_CHANGE | LOGIN | DENIED ...
-  entity     String // "Order" | "Payment" | "PriceListVersion" ...
-  entityId   String?
-  storeId    String?
-  before     Json?
-  after      Json?
-  reason     String? // обязателен для корректировок и отмен
-  ip         String?
-  userAgent  String?
-  createdAt  DateTime @default(now())
+  id        BigInt    @id @default(autoincrement())
+  actorId   String?
+  actorRole RoleCode?
+  action    String // CREATE | UPDATE | DELETE | STATUS_CHANGE | LOGIN | DENIED ...
+  entity    String // "Order" | "Payment" | "PriceListVersion" ...
+  entityId  String?
+  storeId   String?
+  before    Json?
+  after     Json?
+  reason    String? // обязателен для корректировок и отмен
+  ip        String?
+  userAgent String?
+  createdAt DateTime  @default(now())
 
   actor User? @relation(fields: [actorId], references: [id])
 
@@ -242,22 +242,22 @@ enum PriceListStatus {
 }
 
 model PriceListVersion {
-  id            String          @id @default(cuid())
-  version       Int
-  storeId       String? // null = общий прейскурант сети
-  status        PriceListStatus @default(DRAFT)
-  effectiveFrom DateTime
-  effectiveTo   DateTime?
-  comment       String?
-  createdById   String
-  approvedById  String?
-  approvedAt    DateTime?
+  id              String          @id @default(cuid())
+  version         Int
+  storeId         String? // null = общий прейскурант сети
+  status          PriceListStatus @default(DRAFT)
+  effectiveFrom   DateTime
+  effectiveTo     DateTime?
+  comment         String?
+  createdById     String
+  approvedById    String?
+  approvedAt      DateTime?
   rejectionReason String?
-  createdAt     DateTime        @default(now())
+  createdAt       DateTime        @default(now())
 
-  store     Store?         @relation(fields: [storeId], references: [id])
-  items     PriceListItem[]
-  orders    Order[]
+  store  Store?          @relation(fields: [storeId], references: [id])
+  items  PriceListItem[]
+  orders Order[]
 
   @@unique([storeId, version])
   @@index([status, effectiveFrom])
@@ -265,17 +265,17 @@ model PriceListVersion {
 }
 
 model WorkCategory {
-  id       String @id @default(cuid())
-  code     String @unique
-  name     String
-  sortOrder Int   @default(0)
+  id        String  @id @default(cuid())
+  code      String  @unique
+  name      String
+  sortOrder Int     @default(0)
   /// Категория выведена из обращения.
   ///
   /// Поле добавлено вместе с CRUD справочников (задача 1.3.1): админка
   /// отключает записи вместо удаления, потому что на категорию ссылаются
   /// позиции прейскуранта, а на те, в свою очередь, — уже созданные заказы.
   /// Удаление разорвало бы историю расчётов.
-  isActive Boolean @default(true)
+  isActive  Boolean @default(true)
 
   items PriceListItem[]
 
@@ -303,27 +303,27 @@ enum MetalKind {
 }
 
 model PriceListItem {
-  id             String @id @default(cuid())
-  priceListId    String
-  categoryId     String?
-  code           String // артикул работы
-  name           String
-  description    String?
-  unit           String @default("шт") // шт | см | карат | грамм
+  id          String  @id @default(cuid())
+  priceListId String
+  categoryId  String?
+  code        String // артикул работы
+  name        String
+  description String?
+  unit        String  @default("шт") // шт | см | карат | грамм
 
   /// Цена по умолчанию — ставка для металла, не перечисленного в `rates`.
   ///
   /// Оставлена, чтобы позиция без разбивки по металлам (например, чистка)
   /// не требовала отдельной строки тарифа. Интерфейс показывает её как
   /// единственную цену, если `rates` пуст.
-  priceMinor     Int
+  priceMinor Int
 
   /// Цена указана как «от» (минимальная), а не фиксированная.
   ///
   /// В прейскуранте 5 таких позиций («Полировка браслета — от 1800»).
   /// Признак нужен, чтобы приёмщик видел, что итог будет уточнён, и чтобы
   /// калькулятор не считал такую работу фиксированной стоимостью.
-  priceFrom      Boolean @default(false)
+  priceFrom Boolean @default(false)
 
   /// Стоимость металла в цену НЕ входит и считается отдельно.
   ///
@@ -332,15 +332,15 @@ model PriceListItem {
   /// посчитает работу вместе с металлом и занизит сумму заказа.
   metalCostSeparate Boolean @default(false)
 
-  costMinor      Int? // себестоимость для маржинальности
-  durationHours  Int? // плановая трудоёмкость для загрузки производства
-  warrantyMonths Int    @default(6) // 6 мес. обычный, 3 мес. закрепка
+  costMinor          Int? // себестоимость для маржинальности
+  durationHours      Int? // плановая трудоёмкость для загрузки производства
+  warrantyMonths     Int     @default(6) // 6 мес. обычный, 3 мес. закрепка
   requiresPrepayment Boolean @default(false)
-  isActive       Boolean @default(true)
+  isActive           Boolean @default(true)
 
-  priceList PriceListVersion @relation(fields: [priceListId], references: [id], onDelete: Cascade)
-  category  WorkCategory?    @relation(fields: [categoryId], references: [id])
-  rates     PriceListItemRate[]
+  priceList  PriceListVersion    @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  category   WorkCategory?       @relation(fields: [categoryId], references: [id])
+  rates      PriceListItemRate[]
   orderWorks OrderWork[]
 
   @@unique([priceListId, code])
@@ -355,9 +355,9 @@ model PriceListItem {
 /// потребовали бы миграции схемы на каждый новый металл. Таблица же
 /// расширяется данными.
 model PriceListItemRate {
-  id        String    @id @default(cuid())
-  itemId    String
-  metal     MetalKind
+  id     String    @id @default(cuid())
+  itemId String
+  metal  MetalKind
 
   /// Цена в копейках. Может быть 0: в прейскуранте есть позиции, где для
   /// металла цена не указана, и это отличается от «услуга недоступна».
@@ -365,7 +365,7 @@ model PriceListItemRate {
 
   /// «От» именно для этого металла: в прейскуранте встречаются позиции, где
   /// для золота цена фиксированная, а для серебра — «от».
-  isFrom    Boolean @default(false)
+  isFrom Boolean @default(false)
 
   item PriceListItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
 
@@ -378,13 +378,13 @@ model PriceListItemRate {
 
 /// Справочник камней — отдельные строки калькуляции (ТЗ п. 2.3)
 model StoneType {
-  id          String  @id @default(cuid())
-  code        String  @unique
-  name        String // "Фианит", "Сапфир"
-  unit        String  @default("шт")
-  priceMinor  Int
-  isActive    Boolean @default(true)
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(cuid())
+  code       String   @unique
+  name       String // "Фианит", "Сапфир"
+  unit       String   @default("шт")
+  priceMinor Int
+  isActive   Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
 
   orderStones OrderStone[]
 
@@ -396,19 +396,19 @@ model StoneType {
 // ============================================================================
 
 model Customer {
-  id              String   @id @default(cuid())
-  fullName        String
-  phone           String // как ввёл пользователь
-  phoneNormalized String // E.164-нормализованный — для поиска и сопоставления звонков
-  email           String?
-  birthDate       DateTime?
-  consentCallRecording Boolean @default(false) // ТЗ п. 2.4
-  consentMarketing     Boolean @default(false)
-  notes           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                   String    @id @default(cuid())
+  fullName             String
+  phone                String // как ввёл пользователь
+  phoneNormalized      String // E.164-нормализованный — для поиска и сопоставления звонков
+  email                String?
+  birthDate            DateTime?
+  consentCallRecording Boolean   @default(false) // ТЗ п. 2.4
+  consentMarketing     Boolean   @default(false)
+  notes                String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
-  orders Order[]
+  orders         Order[]
   callRecordings CallRecording[]
 
   @@index([phoneNormalized])
@@ -449,35 +449,35 @@ enum Priority {
 }
 
 model Order {
-  id           String      @id @default(cuid())
-  orderNo      String      @unique // человекочитаемый номер
-  status       OrderStatus @default(DRAFT)
-  priority     Priority    @default(NORMAL)
+  id       String      @id @default(cuid())
+  orderNo  String      @unique // человекочитаемый номер
+  status   OrderStatus @default(DRAFT)
+  priority Priority    @default(NORMAL)
 
-  customerId   String
-  createdStoreId String // где принят
-  pickupStoreId  String // где выдают (может отличаться)
-  workshopId     String? // назначенный цех
-  createdById    String
+  customerId          String
+  createdStoreId      String // где принят
+  pickupStoreId       String // где выдают (может отличаться)
+  workshopId          String? // назначенный цех
+  createdById         String
   productionManagerId String?
 
   // Деньги: всё в минорных единицах
-  currency          String @default("RUB")
-  worksTotalMinor   Int    @default(0) // сумма строк работ
-  stonesTotalMinor  Int    @default(0) // сумма строк камней
-  discountMinor     Int    @default(0)
-  totalAmountMinor  Int    @default(0) // works + stones - discount
-  paidAmountMinor   Int    @default(0) // подтверждённые платежи
-  prepaymentRequiredMinor Int @default(0) // сколько нужно внести до старта
-  requiresPrepayment Boolean @default(false)
+  currency                String  @default("RUB")
+  worksTotalMinor         Int     @default(0) // сумма строк работ
+  stonesTotalMinor        Int     @default(0) // сумма строк камней
+  discountMinor           Int     @default(0)
+  totalAmountMinor        Int     @default(0) // works + stones - discount
+  paidAmountMinor         Int     @default(0) // подтверждённые платежи
+  prepaymentRequiredMinor Int     @default(0) // сколько нужно внести до старта
+  requiresPrepayment      Boolean @default(false)
 
   // Прейскурант, зафиксированный на момент приёма (ТЗ п. 2.2)
   priceListVersionId String?
   priceFixedAt       DateTime?
 
   // Сроки (ТЗ п. 2.7)
-  dueAt            DateTime? // текущий нормативный срок по активному статусу
-  promisedAt       DateTime? // обещанный клиенту срок (из согласования)
+  dueAt      DateTime? // текущий нормативный срок по активному статусу
+  promisedAt DateTime? // обещанный клиенту срок (из согласования)
 
   /// Сложность ремонта. Определяет выбор норматива этапа производства:
   /// `StageNorm.workType = SIMPLE | COMPLEX`. Без этого поля нормативы
@@ -485,17 +485,17 @@ model Order {
   /// самый длинный срок.
   ///
   /// Значение `ANY` означает «не определена» — применяется общий норматив.
-  complexity       String   @default("ANY") // ANY | SIMPLE | COMPLEX
+  complexity String @default("ANY") // ANY | SIMPLE | COMPLEX
 
-  acceptedAt       DateTime?
-  approvedAt       DateTime? // момент согласования клиентом
+  acceptedAt            DateTime?
+  approvedAt            DateTime? // момент согласования клиентом
   prepaymentConfirmedAt DateTime?
   productionStartedAt   DateTime?
   productionFinishedAt  DateTime?
-  readyAt          DateTime?
-  completedAt      DateTime?
-  escalatedAt      DateTime?
-  escalationLevel  Int      @default(0)
+  readyAt               DateTime?
+  completedAt           DateTime?
+  escalatedAt           DateTime?
+  escalationLevel       Int       @default(0)
 
   // Подпись клиента о получении изделия (ТЗ п. 2.8: условие выдачи)
   pickupSignatureFileId String?
@@ -504,35 +504,38 @@ model Order {
   /// Формат: `repair://order/{orderNo}`. Генерируется вместе с номером заказа
   /// и НЕ меняется при перепечати — иначе ранее напечатанные квитанции перестанут
   /// считываться сканером.
-  qrPayload        String?  @unique
+  qrPayload            String?   @unique
   /// Сколько раз печаталась квитанция — для контроля и подозрительных перепечаток.
-  receiptPrintCount Int     @default(0)
+  receiptPrintCount    Int       @default(0)
   receiptLastPrintedAt DateTime?
 
   // Гарантия (ТЗ п. 2.9)
-  isWarranty       Boolean  @default(false)
-  parentOrderId    String?
-  warrantyMonths   Int      @default(6)
-  warrantyUntil    DateTime?
+  isWarranty     Boolean   @default(false)
+  parentOrderId  String?
+  warrantyMonths Int       @default(6)
+  warrantyUntil  DateTime?
 
-  description      String? // описание неисправности со слов клиента
-  diagnosis        String? // заключение производства
-  cancelReason     String?
-  refusalReason    String?
-  version          Int      @default(1) // оптимистичная блокировка
+  /// Выданные клиенту коды проверки статуса (задача 5.11).
+  publicCodes PublicOrderCode[]
+
+  description   String? // описание неисправности со слов клиента
+  diagnosis     String? // заключение производства
+  cancelReason  String?
+  refusalReason String?
+  version       Int     @default(1) // оптимистичная блокировка
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  customer        Customer        @relation(fields: [customerId], references: [id])
-  createdStore    Store           @relation("OrderCreatedStore", fields: [createdStoreId], references: [id])
-  pickupStore     Store           @relation("OrderPickupStore", fields: [pickupStoreId], references: [id])
-  workshop        Workshop?       @relation(fields: [workshopId], references: [id])
-  createdBy       User            @relation("OrderCreatedBy", fields: [createdById], references: [id])
-  productionManager User?         @relation("OrderProductionManager", fields: [productionManagerId], references: [id])
-  priceListVersion PriceListVersion? @relation(fields: [priceListVersionId], references: [id])
-  parentOrder     Order?          @relation("WarrantyOrders", fields: [parentOrderId], references: [id])
-  warrantyOrders  Order[]         @relation("WarrantyOrders")
+  customer          Customer          @relation(fields: [customerId], references: [id])
+  createdStore      Store             @relation("OrderCreatedStore", fields: [createdStoreId], references: [id])
+  pickupStore       Store             @relation("OrderPickupStore", fields: [pickupStoreId], references: [id])
+  workshop          Workshop?         @relation(fields: [workshopId], references: [id])
+  createdBy         User              @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  productionManager User?             @relation("OrderProductionManager", fields: [productionManagerId], references: [id])
+  priceListVersion  PriceListVersion? @relation(fields: [priceListVersionId], references: [id])
+  parentOrder       Order?            @relation("WarrantyOrders", fields: [parentOrderId], references: [id])
+  warrantyOrders    Order[]           @relation("WarrantyOrders")
 
   items          Item[]
   statusHistory  OrderStatusHistory[]
@@ -558,18 +561,18 @@ model Order {
 
 /// История статусов — неизменяемая лента (ТЗ п. 2.1)
 model OrderStatusHistory {
-  id         String      @id @default(cuid())
-  orderId    String
-  fromStatus OrderStatus?
-  toStatus   OrderStatus
-  stage      String? // этап для аналитики сроков
-  changedById String?
-  isSystem   Boolean     @default(false) // переход выполнен планировщиком
-  reason     String?
-  dueAtBefore DateTime?
-  dueAtAfter  DateTime?
+  id              String       @id @default(cuid())
+  orderId         String
+  fromStatus      OrderStatus?
+  toStatus        OrderStatus
+  stage           String? // этап для аналитики сроков
+  changedById     String?
+  isSystem        Boolean      @default(false) // переход выполнен планировщиком
+  reason          String?
+  dueAtBefore     DateTime?
+  dueAtAfter      DateTime?
   durationMinutes Int? // сколько заказ провёл в предыдущем статусе
-  createdAt  DateTime    @default(now())
+  createdAt       DateTime     @default(now())
 
   order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
   changedBy User? @relation(fields: [changedById], references: [id])
@@ -581,20 +584,20 @@ model OrderStatusHistory {
 
 /// Изделие, принятое в ремонт. В одном заказе может быть несколько.
 model Item {
-  id          String   @id @default(cuid())
-  orderId     String
-  name        String // "Кольцо золото 585"
-  metal       String? // Au585, Ag925
-  weightGram  Decimal? @db.Decimal(10, 3)
-  size        String?
-  hallmark    String?
-  defects     String? // описание дефектов
+  id           String   @id @default(cuid())
+  orderId      String
+  name         String // "Кольцо золото 585"
+  metal        String? // Au585, Ag925
+  weightGram   Decimal? @db.Decimal(10, 3)
+  size         String?
+  hallmark     String?
+  defects      String? // описание дефектов
   completeness String? // комплектность
-  inventoryNo String? // бирка/номер
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  inventoryNo  String? // бирка/номер
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  order  Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order  Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
   photos ItemPhoto[]
   works  OrderWork[]
   stones OrderStone[]
@@ -605,15 +608,15 @@ model Item {
 
 /// Метаданные файла в S3. Сами файлы в БД не хранятся.
 model FileObject {
-  id          String   @id @default(cuid())
-  bucket      String
-  objectKey   String   @unique
-  mimeType    String
-  sizeBytes   Int
-  checksum    String?
+  id           String    @id @default(cuid())
+  bucket       String
+  objectKey    String    @unique
+  mimeType     String
+  sizeBytes    Int
+  checksum     String?
   uploadedById String?
-  createdAt   DateTime @default(now())
-  retainUntil DateTime? // для записей звонков — 1 год (ТЗ п. 2.4)
+  createdAt    DateTime  @default(now())
+  retainUntil  DateTime? // для записей звонков — 1 год (ТЗ п. 2.4)
 
   itemPhotos     ItemPhoto[]
   batchPhotos    BatchPhoto[]
@@ -625,12 +628,12 @@ model FileObject {
 }
 
 model ItemPhoto {
-  id       String @id @default(cuid())
-  itemId   String
-  fileId   String
-  kind     String @default("INTAKE") // INTAKE | DEFECT | RESULT | AFTER_REPAIR
-  caption  String?
-  sortOrder Int   @default(0)
+  id        String   @id @default(cuid())
+  itemId    String
+  fileId    String
+  kind      String   @default("INTAKE") // INTAKE | DEFECT | RESULT | AFTER_REPAIR
+  caption   String?
+  sortOrder Int      @default(0)
   createdAt DateTime @default(now())
 
   item Item       @relation(fields: [itemId], references: [id], onDelete: Cascade)
@@ -645,45 +648,45 @@ model ItemPhoto {
 // ============================================================================
 
 model OrderWork {
-  id        String  @id @default(cuid())
-  orderId   String
-  itemId    String?
+  id              String   @id @default(cuid())
+  orderId         String
+  itemId          String?
   priceListItemId String? // null для нетиповой работы
-  code      String
-  name      String
-  quantity  Decimal @db.Decimal(10, 2) @default(1)
-  unit      String  @default("шт")
-  unitPriceMinor Int // цена на момент приёма — копия из прейскуранта
-  amountMinor    Int // quantity * unitPriceMinor
-  durationHours  Int?
-  warrantyMonths Int    @default(6)
-  isCustom  Boolean @default(false) // нетиповая работа
-  comment   String?
-  createdById String
-  createdAt DateTime @default(now())
+  code            String
+  name            String
+  quantity        Decimal  @default(1) @db.Decimal(10, 2)
+  unit            String   @default("шт")
+  unitPriceMinor  Int // цена на момент приёма — копия из прейскуранта
+  amountMinor     Int // quantity * unitPriceMinor
+  durationHours   Int?
+  warrantyMonths  Int      @default(6)
+  isCustom        Boolean  @default(false) // нетиповая работа
+  comment         String?
+  createdById     String
+  createdAt       DateTime @default(now())
 
-  order    Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  item     Item?          @relation(fields: [itemId], references: [id])
+  order         Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  item          Item?          @relation(fields: [itemId], references: [id])
   priceListItem PriceListItem? @relation(fields: [priceListItemId], references: [id])
-  createdBy User          @relation(fields: [createdById], references: [id])
+  createdBy     User           @relation(fields: [createdById], references: [id])
 
   @@index([orderId])
   @@map("order_work")
 }
 
 model OrderStone {
-  id        String  @id @default(cuid())
-  orderId   String
-  itemId    String?
-  stoneTypeId String?
-  name      String
-  quantity  Int     @default(1)
-  caratWeight Decimal? @db.Decimal(10, 3)
+  id             String   @id @default(cuid())
+  orderId        String
+  itemId         String?
+  stoneTypeId    String?
+  name           String
+  quantity       Int      @default(1)
+  caratWeight    Decimal? @db.Decimal(10, 3)
   unitPriceMinor Int
   amountMinor    Int
-  comment   String?
-  createdById String
-  createdAt DateTime @default(now())
+  comment        String?
+  createdById    String
+  createdAt      DateTime @default(now())
 
   order     Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
   item      Item?      @relation(fields: [itemId], references: [id])
@@ -696,18 +699,18 @@ model OrderStone {
 
 /// Корректировка калькуляции с обязательной причиной (ТЗ п. 2.3)
 model CalcAdjustment {
-  id         String   @id @default(cuid())
-  orderId    String
-  targetType String // WORK | STONE | TOTAL
-  targetId   String?
+  id                String    @id @default(cuid())
+  orderId           String
+  targetType        String // WORK | STONE | TOTAL
+  targetId          String?
   amountBeforeMinor Int
   amountAfterMinor  Int
   deltaMinor        Int
-  reason     String // обязательна
-  adjustedById String
-  approvedById String?
-  approvedAt   DateTime?
-  createdAt  DateTime @default(now())
+  reason            String // обязательна
+  adjustedById      String
+  approvedById      String?
+  approvedAt        DateTime?
+  createdAt         DateTime  @default(now())
 
   order      Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
   adjustedBy User  @relation(fields: [adjustedById], references: [id])
@@ -741,18 +744,18 @@ enum ApprovalResult {
 }
 
 model Approval {
-  id        String          @id @default(cuid())
-  orderId   String
-  channel   ApprovalChannel
-  result    ApprovalResult  @default(PENDING)
-  isVerbal  Boolean         @default(false) // пометка «согласовано устно»
+  id          String          @id @default(cuid())
+  orderId     String
+  channel     ApprovalChannel
+  result      ApprovalResult  @default(PENDING)
+  isVerbal    Boolean         @default(false) // пометка «согласовано устно»
   amountMinor Int // согласованная сумма
   termDays    Int? // согласованный срок в рабочих днях
   promisedAt  DateTime? // согласованная дата готовности
   comment     String?
   createdById String // сотрудник, получивший согласие
   approvedAt  DateTime?
-  createdAt   DateTime      @default(now())
+  createdAt   DateTime        @default(now())
 
   order      Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   createdBy  User            @relation(fields: [createdById], references: [id])
@@ -764,29 +767,29 @@ model Approval {
 
 /// Запись разговора из IP-АТС (ТЗ п. 2.4). Хранится 1 год.
 model CallRecording {
-  id            String   @id @default(cuid())
-  orderId       String?
-  approvalId    String?
-  customerId    String?
-  fileId        String?
-  externalId    String   @unique // ID звонка в АТС — идемпотентность при импорте
-  direction     String // IN | OUT
-  phoneFrom     String?
-  phoneTo       String?
-  extension     String? // внутренний номер сотрудника
-  startedAt     DateTime
-  durationSec   Int
-  matchedBy     String? // PHONE_TIME | MANUAL | EXTENSION
-  matchScore    Decimal? @db.Decimal(5, 2)
-  linkedById    String?
-  linkedAt      DateTime?
-  retainUntil   DateTime // startedAt + 1 год
-  createdAt     DateTime @default(now())
+  id          String    @id @default(cuid())
+  orderId     String?
+  approvalId  String?
+  customerId  String?
+  fileId      String?
+  externalId  String    @unique // ID звонка в АТС — идемпотентность при импорте
+  direction   String // IN | OUT
+  phoneFrom   String?
+  phoneTo     String?
+  extension   String? // внутренний номер сотрудника
+  startedAt   DateTime
+  durationSec Int
+  matchedBy   String? // PHONE_TIME | MANUAL | EXTENSION
+  matchScore  Decimal?  @db.Decimal(5, 2)
+  linkedById  String?
+  linkedAt    DateTime?
+  retainUntil DateTime // startedAt + 1 год
+  createdAt   DateTime  @default(now())
 
-  order    Order?        @relation(fields: [orderId], references: [id])
-  approval Approval?     @relation(fields: [approvalId], references: [id])
-  customer Customer?     @relation(fields: [customerId], references: [id])
-  file     FileObject?   @relation(fields: [fileId], references: [id])
+  order    Order?      @relation(fields: [orderId], references: [id])
+  approval Approval?   @relation(fields: [approvalId], references: [id])
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  file     FileObject? @relation(fields: [fileId], references: [id])
 
   @@index([orderId])
   @@index([phoneFrom, startedAt])
@@ -853,9 +856,9 @@ model Payment {
   createdById    String
   createdAt      DateTime      @default(now())
 
-  order     Order @relation(fields: [orderId], references: [id])
-  store     Store @relation(fields: [storeId], references: [id])
-  cashier   User  @relation(fields: [cashierId], references: [id])
+  order   Order @relation(fields: [orderId], references: [id])
+  store   Store @relation(fields: [storeId], references: [id])
+  cashier User  @relation(fields: [cashierId], references: [id])
 
   @@index([orderId, status])
   @@index([storeId, paidAt])
@@ -867,16 +870,16 @@ model Payment {
 /// Акт отказа от оплаты (ТЗ п. 2.8).
 /// Акт — владелец связи с Document по fileId.
 model RefusalAct {
-  id          String   @id @default(cuid())
-  orderId     String   @unique
-  actNo       String   @unique
-  reason      String
-  amountMinor Int
+  id           String    @id @default(cuid())
+  orderId      String    @unique
+  actNo        String    @unique
+  reason       String
+  amountMinor  Int
   storageUntil DateTime? // срок ответственного хранения изделия
-  createdById String
-  signedAt    DateTime?
-  fileId      String?  @unique
-  createdAt   DateTime @default(now())
+  createdById  String
+  signedAt     DateTime?
+  fileId       String?   @unique
+  createdAt    DateTime  @default(now())
 
   order    Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   document Document? @relation("RefusalActFile", fields: [fileId], references: [id])
@@ -906,40 +909,40 @@ enum BatchDirection {
 }
 
 model Batch {
-  id          String         @id @default(cuid())
-  batchNo     String         @unique
-  direction   BatchDirection
-  status      BatchStatus    @default(DRAFT)
-  fromStoreId String?
-  toStoreId   String?
+  id           String         @id @default(cuid())
+  batchNo      String         @unique
+  direction    BatchDirection
+  status       BatchStatus    @default(DRAFT)
+  fromStoreId  String?
+  toStoreId    String?
   toWorkshopId String?
-  courierId   String?
-  plannedAt   DateTime // плановая дата отправки по графику
+  courierId    String?
+  plannedAt    DateTime // плановая дата отправки по графику
   dispatchedAt DateTime?
-  receivedAt  DateTime?
-  itemsCount  Int            @default(0)
-  comment     String?
-  createdById String
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  receivedAt   DateTime?
+  itemsCount   Int            @default(0)
+  comment      String?
+  createdById  String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
-  fromStore Store?    @relation("BatchFromStore", fields: [fromStoreId], references: [id])
-  toStore   Store?    @relation("BatchToStore", fields: [toStoreId], references: [id])
-  toWorkshop Workshop? @relation("BatchToWorkshop", fields: [toWorkshopId], references: [id])
-  items     BatchItem[]
-  acts      BatchAct[]
-  photos    BatchPhoto[]
+  fromStore  Store?       @relation("BatchFromStore", fields: [fromStoreId], references: [id])
+  toStore    Store?       @relation("BatchToStore", fields: [toStoreId], references: [id])
+  toWorkshop Workshop?    @relation("BatchToWorkshop", fields: [toWorkshopId], references: [id])
+  items      BatchItem[]
+  acts       BatchAct[]
+  photos     BatchPhoto[]
 
   @@index([status, plannedAt])
   @@map("batch")
 }
 
 model BatchItem {
-  batchId  String
-  orderId  String
-  addedAt  DateTime @default(now())
-  addedById String
-  removedAt DateTime?
+  batchId      String
+  orderId      String
+  addedAt      DateTime  @default(now())
+  addedById    String
+  removedAt    DateTime?
   removeReason String?
 
   batch Batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
@@ -953,19 +956,19 @@ model BatchItem {
 /// Электронный акт приёма-передачи партии (ТЗ п. 2.6).
 /// PDF-файл акта хранится в Document (BatchAct — владелец связи по pdfFileId).
 model BatchAct {
-  id         String   @id @default(cuid())
-  batchId    String
-  actNo      String   @unique
+  id             String    @id @default(cuid())
+  batchId        String
+  actNo          String    @unique
   // Имя историческое и вводит в заблуждение: это идентификатор ДОКУМЕНТА
   // (`Document`), а не файла; сам файл — в `Document.fileId`. Именно на этом
   // ошиблись при первом сохранении PDF акта (ответ 500 по внешнему ключу).
-  pdfFileId  String?  @unique
+  pdfFileId      String?   @unique
   signedByFromId String?
   signedByToId   String?
   signedFromAt   DateTime?
   signedToAt     DateTime?
   itemsSnapshot  Json // снимок состава партии на момент подписания
-  createdAt  DateTime @default(now())
+  createdAt      DateTime  @default(now())
 
   batch   Batch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
   pdfFile Document? @relation("BatchActPdf", fields: [pdfFileId], references: [id])
@@ -975,10 +978,10 @@ model BatchAct {
 }
 
 model BatchPhoto {
-  id      String @id @default(cuid())
-  batchId String
-  fileId  String
-  caption String?
+  id        String   @id @default(cuid())
+  batchId   String
+  fileId    String
+  caption   String?
   createdAt DateTime @default(now())
 
   batch Batch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
@@ -993,14 +996,14 @@ model BatchPhoto {
 
 /// Исполнитель производства — ювелир. НЕ пользователь системы (решение заказчика).
 model Performer {
-  id          String   @id @default(cuid())
-  workshopId  String
-  fullName    String
+  id             String   @id @default(cuid())
+  workshopId     String
+  fullName       String
   specialization String? // "закрепка", "пайка", "полировка"
-  grade       String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  grade          String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   workshop    Workshop          @relation(fields: [workshopId], references: [id])
   assignments OrderAssignment[]
@@ -1011,20 +1014,20 @@ model Performer {
 
 /// Назначение работ заказа на исполнителя производства
 model OrderAssignment {
-  id          String   @id @default(cuid())
-  orderId     String
-  performerId String
+  id           String    @id @default(cuid())
+  orderId      String
+  performerId  String
   assignedById String // менеджер производства
   plannedHours Int?
-  startedAt   DateTime?
-  finishedAt  DateTime?
-  status      String   @default("ASSIGNED") // ASSIGNED | IN_PROGRESS | DONE | RETURNED
-  comment     String?
-  createdAt   DateTime @default(now())
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  status       String    @default("ASSIGNED") // ASSIGNED | IN_PROGRESS | DONE | RETURNED
+  comment      String?
+  createdAt    DateTime  @default(now())
 
-  order     Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  performer Performer @relation(fields: [performerId], references: [id])
-  assignedBy User     @relation(fields: [assignedById], references: [id])
+  order      Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  performer  Performer @relation(fields: [performerId], references: [id])
+  assignedBy User      @relation(fields: [assignedById], references: [id])
 
   @@index([orderId])
   @@index([performerId, status])
@@ -1033,9 +1036,9 @@ model OrderAssignment {
 
 /// Нормативы этапов — версионируются вместе с прейскурантом (ТЗ п. 2.7)
 model StageNorm {
-  id         String   @id @default(cuid())
-  version    Int
-  stage      String // APPROVAL | PREPAYMENT | DISPATCH | DELIVERY_OUT |
+  id             String    @id @default(cuid())
+  version        Int
+  stage          String // APPROVAL | PREPAYMENT | DISPATCH | DELIVERY_OUT |
   // PRODUCTION | DELIVERY_IN | STORAGE | CLAIM
   /// Тип работ, к которому применим норматив.
   ///
@@ -1045,15 +1048,15 @@ model StageNorm {
   /// повторный запуск seed создавал бы новые строки, а расчёт дедлайна
   /// становился бы недетерминированным (какую из строк выбрать — неясно).
   /// Явное `ANY` делает уникальность реальной.
-  workType   String   @default("ANY") // ANY | SIMPLE | COMPLEX
-  value      Int // число
-  unit       String   @default("WORKDAY") // WORKHOUR | WORKDAY | CALENDAR_DAY
+  workType       String    @default("ANY") // ANY | SIMPLE | COMPLEX
+  value          Int // число
+  unit           String    @default("WORKDAY") // WORKHOUR | WORKDAY | CALENDAR_DAY
   escalateToRole RoleCode?
-  isActive   Boolean  @default(true)
-  effectiveFrom DateTime
-  approvedById String?
-  approvedAt   DateTime?
-  createdAt  DateTime @default(now())
+  isActive       Boolean   @default(true)
+  effectiveFrom  DateTime
+  approvedById   String?
+  approvedAt     DateTime?
+  createdAt      DateTime  @default(now())
 
   @@unique([version, stage, workType])
   @@index([stage, isActive])
@@ -1077,21 +1080,21 @@ enum ClaimStatus {
 }
 
 model WarrantyClaim {
-  id           String      @id @default(cuid())
-  claimNo      String      @unique
-  orderId      String // основной заказ — рекламация пишется в него (ТЗ п. 2.9)
-  status       ClaimStatus @default(OPENED)
-  reason       String
+  id              String      @id @default(cuid())
+  claimNo         String      @unique
+  orderId         String // основной заказ — рекламация пишется в него (ТЗ п. 2.9)
+  status          ClaimStatus @default(OPENED)
+  reason          String
   clientStatement String?
-  openedAt     DateTime    @default(now())
-  dueAt        DateTime // openedAt + 10 рабочих дней
-  reviewerId   String?
-  resolution   String?
-  resolvedAt   DateTime?
-  closedAt     DateTime?
-  isWarrantyCase Boolean   @default(true)
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  openedAt        DateTime    @default(now())
+  dueAt           DateTime // openedAt + 10 рабочих дней
+  reviewerId      String?
+  resolution      String?
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+  isWarrantyCase  Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   order    Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
   reviewer User? @relation("ClaimReviewer", fields: [reviewerId], references: [id])
@@ -1106,16 +1109,16 @@ model WarrantyClaim {
 // ============================================================================
 
 model Document {
-  id         String   @id @default(cuid())
-  orderId    String?
-  batchId    String?
-  type       String // RECEIPT | BATCH_ACT | REFUSAL_ACT | WARRANTY | INVOICE | OTHER
-  number     String?
-  fileId     String
-  createdAt  DateTime @default(now())
+  id        String   @id @default(cuid())
+  orderId   String?
+  batchId   String?
+  type      String // RECEIPT | BATCH_ACT | REFUSAL_ACT | WARRANTY | INVOICE | OTHER
+  number    String?
+  fileId    String
+  createdAt DateTime @default(now())
 
-  order    Order?     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  file     FileObject @relation(fields: [fileId], references: [id])
+  order      Order?      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  file       FileObject  @relation(fields: [fileId], references: [id])
   // Обратные стороны связей: владельцы — BatchAct.pdfFileId и RefusalAct.fileId.
   batchAct   BatchAct?   @relation("BatchActPdf")
   refusalAct RefusalAct? @relation("RefusalActFile")
@@ -1136,14 +1139,14 @@ enum NotificationChannelType {
 }
 
 model NotificationTemplate {
-  id        String    @id @default(cuid())
+  id        String                  @id @default(cuid())
   code      String // ORDER_OVERDUE, PREPAYMENT_RECEIVED, READY_FOR_PICKUP ...
   channel   NotificationChannelType
   subject   String?
   body      String // шаблон с {{переменными}}
-  locale    String    @default("ru")
-  isActive  Boolean   @default(true)
-  updatedAt DateTime  @updatedAt
+  locale    String                  @default("ru")
+  isActive  Boolean                 @default(true)
+  updatedAt DateTime                @updatedAt
 
   /// Уникальность по ПАРЕ «код + канал», а не по одному коду.
   ///
@@ -1159,31 +1162,30 @@ model NotificationTemplate {
 }
 
 model Notification {
-  id         String    @id @default(cuid())
-  userId     String?
-  customerId String?
-  orderId    String?
-  templateCode String
-  channel    NotificationChannelType @default(IN_APP)
-  recipient  String // email/телефон/userId
-  subject    String?
-  body       String
-  status     String    @default("PENDING") // PENDING | SENT | FAILED | READ
-  sentAt     DateTime?
-  readAt     DateTime?
-  error      String?
-  attempts   Int       @default(0)
+  id            String                  @id @default(cuid())
+  userId        String?
+  customerId    String?
+  orderId       String?
+  templateCode  String
+  channel       NotificationChannelType @default(IN_APP)
+  recipient     String // email/телефон/userId
+  subject       String?
+  body          String
+  status        String                  @default("PENDING") // PENDING | SENT | FAILED | READ
+  sentAt        DateTime?
+  readAt        DateTime?
+  error         String?
+  attempts      Int                     @default(0)
   /// Момент последней попытки отправки — по нему считается задержка повтора.
   /// Отдельное поле нужно потому, что `updatedAt` здесь создать нельзя (его нет
   /// в модели), а `sentAt` заполняется только при успехе: по нему нельзя понять,
   /// когда упала неудачная попытка, и задержка повтора не вычислялась бы.
   lastAttemptAt DateTime?
-  createdAt  DateTime  @default(now())
-
-  @@index([userId, status, lastAttemptAt])
+  createdAt     DateTime                @default(now())
 
   user User? @relation(fields: [userId], references: [id])
 
+  @@index([userId, status, lastAttemptAt])
   @@index([userId, status])
   @@index([status, createdAt])
   @@map("notification")
@@ -1191,19 +1193,19 @@ model Notification {
 
 /// Исходящая очередь в 1С (transactional outbox) — ТЗ п. 2.5, 2.8
 model IntegrationOutbox {
-  id          String   @id @default(cuid())
-  system      String   @default("1C")
-  eventType   String // PAYMENT_CREATED | PAYMENT_REVERSED | ORDER_CLOSED | KKT_RECEIPT
-  aggregateType String
-  aggregateId String
-  payload     Json
-  status      String   @default("PENDING") // PENDING | SENT | FAILED | DEAD
-  attempts    Int      @default(0)
-  lastError   String?
-  nextRetryAt DateTime?
-  idempotencyKey String @unique
-  sentAt      DateTime?
-  createdAt   DateTime @default(now())
+  id             String    @id @default(cuid())
+  system         String    @default("1C")
+  eventType      String // PAYMENT_CREATED | PAYMENT_REVERSED | ORDER_CLOSED | KKT_RECEIPT
+  aggregateType  String
+  aggregateId    String
+  payload        Json
+  status         String    @default("PENDING") // PENDING | SENT | FAILED | DEAD
+  attempts       Int       @default(0)
+  lastError      String?
+  nextRetryAt    DateTime?
+  idempotencyKey String    @unique
+  sentAt         DateTime?
+  createdAt      DateTime  @default(now())
 
   @@index([status, nextRetryAt])
   @@index([aggregateType, aggregateId])
@@ -1236,9 +1238,9 @@ model IntegrationLog {
 
 /// Счётчики для генерации человекочитаемых номеров (заказ, акт, партия)
 model Counter {
-  id      String @id @default(cuid())
-  scope   String // "ORDER:MSK1:2025" | "BATCH:2025" | "ACT:2025"
-  value   Int    @default(0)
+  id        String   @id @default(cuid())
+  scope     String // "ORDER:MSK1:2025" | "BATCH:2025" | "ACT:2025"
+  value     Int      @default(0)
   updatedAt DateTime @updatedAt
 
   @@unique([scope])
@@ -1246,11 +1248,57 @@ model Counter {
 }
 
 /// Настройки системы (ключ-значение), в т.ч. параметры интеграций
+/// Код подтверждения для публичной проверки статуса заказа (задача 5.11).
+///
+/// ## Почему код хранится ХЕШЕМ, а четыре цифры — не «секрет»
+///
+/// Четыре цифры перебираются мгновенно, поэтому главная защита — счётчик попыток
+/// и срок жизни, а не стойкость значения. И всё же хранить код открытым текстом
+/// нельзя: сотрудник с доступом к базе (или утечка дампа) получил бы возможность
+/// войти в чужой заказ, не зная даже телефона клиента. Хеш стоит одну операцию и
+/// убирает этот класс случаев.
+///
+/// ## Почему ключ идёт по заказу, а не по телефону
+///
+/// Код выдаётся на КОНКРЕТНЫЙ заказ: клиент вводит номер заказа и получает код на
+/// телефон ИЗ ЭТОГО заказа. Привязка к телефону позволила бы запросить код по
+/// любому своему заказу и затем посмотреть по нему ЛЮБОЙ другой заказ того же
+/// клиента — то есть проверить чужой ремонт по своему номеру.
+///
+/// ## Почему запросы считаются по телефону
+///
+/// Ограничение частоты защищает не систему, а ДЕНЬГИ: каждое SMS платное.
+/// «Выкачивают» сообщения с множества адресов на один номер, поэтому счётчик по
+/// IP здесь бесполезен (см. `PUBLIC_CODE_REQUESTS_PER_HOUR`).
+model PublicOrderCode {
+  id              String    @id @default(cuid())
+  orderId         String
+  /// Хеш кода. Алгоритм — SHA-256: значение короткое и живёт 10 минут,
+  /// поэтому медленный Argon2 тут не нужен и лишь нагружал бы сервер.
+  codeHash        String
+  /// Нормализованный телефон, на который выдан код. Нужен для счётчика запросов.
+  phoneNormalized String
+  /// Сколько раз код был введён неверно. При достижении предела код гасится.
+  attempts        Int       @default(0)
+  expiresAt       DateTime
+  /// Момент использования: код одноразовый, повторный вход им невозможен.
+  usedAt          DateTime?
+  ip              String?
+  createdAt       DateTime  @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([phoneNormalized, createdAt])
+  @@index([expiresAt])
+  @@map("public_order_code")
+}
+
 model Setting {
-  key       String   @id
-  value     Json
+  key         String   @id
+  value       Json
   updatedById String?
-  updatedAt DateTime @updatedAt
+  updatedAt   DateTime @updatedAt
 
   @@map("setting")
 }
