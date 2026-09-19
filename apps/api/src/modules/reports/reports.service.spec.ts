@@ -1177,6 +1177,7 @@ describe('Отчёт «Рекламации» (задача 6.7)', () => {
       dueAt: new Date('2025-09-29T09:00:00+03:00'),
       resolvedAt: null,
       closedAt: null,
+      resolution: null,
       order: { orderNo: 'MSK1-2509-000001', isWarranty: false },
       ...overrides,
     };
@@ -1248,8 +1249,16 @@ describe('Отчёт «Рекламации» (задача 6.7)', () => {
     const { service } = makeService({
       warrantyClaim: {
         findMany: vi.fn(async () => [
-          claim({ status: 'RESOLVED_REPAIR', resolvedAt: new Date('2025-09-20T09:00:00+03:00') }),
-          claim({ status: 'RESOLVED_REFUND', resolvedAt: new Date('2025-09-21T09:00:00+03:00') }),
+          claim({
+            status: 'RESOLVED_REPAIR',
+            resolution: 'RESOLVED_REPAIR',
+            resolvedAt: new Date('2025-09-20T09:00:00+03:00'),
+          }),
+          claim({
+            status: 'RESOLVED_REFUND',
+            resolution: 'RESOLVED_REFUND',
+            resolvedAt: new Date('2025-09-21T09:00:00+03:00'),
+          }),
           claim({ status: 'REJECTED' }),
         ]),
       },
@@ -1262,6 +1271,32 @@ describe('Отчёт «Рекламации» (задача 6.7)', () => {
       resolvedRefundCount: 1,
       rejectedCount: 1,
     });
+  });
+
+  it('сохраняет исход закрытой рекламации (дефект с живого сервера)', async () => {
+    const { service } = makeService({
+      warrantyClaim: {
+        findMany: vi.fn(async () => [
+          /*
+           * Рекламация ЗАКРЫТА, но исход — возврат денег. Подсчёт по текущему
+           * статусу потерял бы его: `CLOSED` не говорит, чем дело кончилось, и
+           * отчёт показал бы ноль возвратов. Именно этот дефект и был найден на
+           * живом сервере.
+           */
+          claim({
+            status: 'CLOSED',
+            resolution: 'RESOLVED_REFUND',
+            resolvedAt: new Date('2025-09-21T09:00:00+03:00'),
+            closedAt: new Date('2025-09-22T09:00:00+03:00'),
+          }),
+        ]),
+      },
+    });
+
+    const report = await service.build(REPORT_NAME.CLAIMS, query(), actor('ALL_STORES'));
+
+    expect(report.totals.resolvedRefundCount).toBe(1);
+    expect(report.totals.resolvedRepairCount).toBe(0);
   });
 
   it('считает открытыми только незавершённые рекламации', async () => {
@@ -1309,7 +1344,11 @@ describe('Отчёт «Рекламации» (задача 6.7)', () => {
         findMany: vi.fn(async () => [
           // 15.09 (пн) → 20.09 (сб): рабочие вт, ср, чт, пт — 4 рабочих дня, а не
           // 5 календарных.
-          claim({ status: 'RESOLVED_REPAIR', resolvedAt: new Date('2025-09-20T09:00:00+03:00') }),
+          claim({
+            status: 'RESOLVED_REPAIR',
+            resolution: 'RESOLVED_REPAIR',
+            resolvedAt: new Date('2025-09-20T09:00:00+03:00'),
+          }),
         ]),
       },
     });

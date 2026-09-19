@@ -258,6 +258,7 @@ export class ReportsService {
         dueAt: true,
         resolvedAt: true,
         closedAt: true,
+        resolution: true,
         order: { select: { orderNo: true, isWarranty: true } },
       },
       orderBy: { openedAt: 'desc' },
@@ -331,7 +332,7 @@ export class ReportsService {
         { key: 'overdueCount', title: 'Просрочено', type: REPORT_COLUMN_TYPE.NUMBER },
         {
           key: 'averageReviewDays',
-          title: 'Средний разбор, дней',
+          title: 'Средний разбор, раб. дней',
           type: REPORT_COLUMN_TYPE.NUMBER,
         },
       ],
@@ -340,12 +341,14 @@ export class ReportsService {
         claimsCount: rows.length,
         overdueCount: overdueTotal,
         /*
-         * Исходы отдельными итогами: «сколько вернули денег» — это разные по
-         * стоимости решения, и складывать их в одно число нельзя.
+         * Исходы считаются по полю `resolution`, а НЕ по текущему статусу:
+         * после закрытия статус становится `CLOSED`, и подсчёт по нему потерял
+         * бы, чем закончилось дело. Дефект найден на живом сервере — закрытая
+         * рекламация с возвратом давала `resolvedRefundCount: 0`.
          */
-        resolvedRepairCount: rows.filter((row) => row.status === CLAIM_STATUS.RESOLVED_REPAIR)
+        resolvedRepairCount: rows.filter((row) => row.resolution === CLAIM_STATUS.RESOLVED_REPAIR)
           .length,
-        resolvedRefundCount: rows.filter((row) => row.status === CLAIM_STATUS.RESOLVED_REFUND)
+        resolvedRefundCount: rows.filter((row) => row.resolution === CLAIM_STATUS.RESOLVED_REFUND)
           .length,
         rejectedCount: rows.filter((row) => row.status === CLAIM_STATUS.REJECTED).length,
         openCount: rows.filter((row) => !isClaimTerminal(row.status)).length,

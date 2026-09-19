@@ -34,6 +34,7 @@ import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import {
   CLAIM_STATUS,
+  CLAIM_RESOLUTION_LABELS,
   CLAIM_STATUS_LABELS,
   CLAIM_TRANSITION_DENIED,
   ORDER_STATUS,
@@ -79,7 +80,10 @@ export interface ClaimListItem {
 /** Карточка рекламации: строка реестра плюс подробности разбора. */
 export interface ClaimDetail extends ClaimListItem {
   clientStatement: string | null;
+  /** Исход рекламации: `RESOLVED_REPAIR` / `RESOLVED_REFUND` либо `null`. */
   resolution: string | null;
+  /** Читаемая формулировка исхода — для карточки. */
+  resolutionLabel: string | null;
   rejectionReason: string | null;
   isWarrantyCase: boolean;
   order: {
@@ -361,7 +365,15 @@ export class ClaimsService {
           ...(input.rejectionReason !== undefined && input.rejectionReason !== null
             ? { rejectionReason: input.rejectionReason.trim() }
             : {}),
-          ...(isClaimResolved(input.to) ? { resolvedAt: now } : {}),
+          /*
+           * Исход сохраняется В ТЕЛЕ записи (`resolution`), а не только в
+           * статусе. Это не дублирование, а необходимость: закрытие переводит
+           * рекламацию в `CLOSED` и стирает `RESOLVED_REFUND`, после чего отчёт
+           * уже не смог бы ответить, сколько денег вернули клиентам. Дефект
+           * найден на живом сервере: закрытая рекламация с возвратом давала
+           * `resolvedRefundCount: 0`.
+           */
+          ...(isClaimResolved(input.to) ? { resolvedAt: now, resolution: input.to } : {}),
           ...(input.to === CLAIM_STATUS.CLOSED ? { closedAt: now } : {}),
         },
         select: CLAIM_SELECT,
@@ -568,6 +580,10 @@ export class ClaimsService {
       ...this.toListItem(row, calendar, now),
       clientStatement: row.clientStatement,
       resolution: row.resolution,
+      resolutionLabel:
+        row.resolution === null
+          ? null
+          : (CLAIM_RESOLUTION_LABELS[row.resolution] ?? row.resolution),
       rejectionReason: row.rejectionReason,
       isWarrantyCase: row.isWarrantyCase,
       order: {

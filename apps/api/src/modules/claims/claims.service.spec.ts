@@ -324,6 +324,80 @@ describe('Смена статуса рекламации', () => {
   });
 });
 
+describe('Сохранение исхода при закрытии (дефект, найденный на живом сервере)', () => {
+  let prisma: ReturnType<typeof createPrismaMock>;
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+  });
+
+  it('записывает исход в поле, а не только в статус', async () => {
+    prisma.warrantyClaim.findUnique.mockResolvedValue({
+      id: CLAIM_ID,
+      claimNo: 'РЕК-25-00001',
+      status: 'APPROVED',
+      orderId: ORDER_ID,
+      order: { status: 'COMPLETED' },
+    });
+    prisma.__tx.warrantyClaim.update.mockResolvedValue(claimRow({ status: 'RESOLVED_REFUND' }));
+
+    await createService(prisma).service.transition(CLAIM_ID, { to: 'RESOLVED_REFUND' }, ACTOR);
+
+    /*
+     * Без записи исхода закрытие переводит рекламацию в `CLOSED`, и отчёт уже не
+     * может ответить, сколько денег вернули: статус `RESOLVED_REFUND` стёрт.
+     * Именно это и произошло на живом сервере — отчёт показал ноль возвратов по
+     * закрытой рекламации с возвратом.
+     */
+    const data = prisma.__tx.warrantyClaim.update.mock.calls[0]![0].data;
+    expect(data.resolution).toBe('RESOLVED_REFUND');
+  });
+
+  it('сохраняет исход ремонта отдельно от возврата', async () => {
+    prisma.warrantyClaim.findUnique.mockResolvedValue({
+      id: CLAIM_ID,
+      claimNo: 'РЕК-25-00001',
+      status: 'APPROVED',
+      orderId: ORDER_ID,
+      order: { status: 'COMPLETED' },
+    });
+    prisma.__tx.warrantyClaim.update.mockResolvedValue(claimRow({ status: 'RESOLVED_REPAIR' }));
+
+    await createService(prisma).service.transition(CLAIM_ID, { to: 'RESOLVED_REPAIR' }, ACTOR);
+
+    const data = prisma.__tx.warrantyClaim.update.mock.calls[0]![0].data;
+    expect(data.resolution).toBe('RESOLVED_REPAIR');
+  });
+
+  it('не записывает исход при переходах, которые им не являются', async () => {
+    prisma.warrantyClaim.findUnique.mockResolvedValue({
+      id: CLAIM_ID,
+      claimNo: 'РЕК-25-00001',
+      status: 'OPENED',
+      orderId: ORDER_ID,
+      order: { status: 'COMPLETED' },
+    });
+    prisma.__tx.warrantyClaim.update.mockResolvedValue(claimRow({ status: 'IN_REVIEW' }));
+
+    await createService(prisma).service.transition(CLAIM_ID, { to: 'IN_REVIEW' }, ACTOR);
+
+    // Взятие в работу — не исход: поле остаётся незаполненным.
+    const data = prisma.__tx.warrantyClaim.update.mock.calls[0]![0].data;
+    expect(data.resolution).toBeUndefined();
+  });
+
+  it('отдаёт читаемую формулировку исхода', async () => {
+    prisma.warrantyClaim.findUnique.mockResolvedValue(
+      claimRow({ status: 'CLOSED', resolution: 'RESOLVED_REFUND' }),
+    );
+
+    const claim = await createService(prisma).service.get(CLAIM_ID);
+
+    // После закрытия статус уже `CLOSED`, и подпись обязана браться из исхода.
+    expect(claim.resolutionLabel).toBe('Возврат денег');
+  });
+});
+
 describe('Реестр рекламаций', () => {
   let prisma: ReturnType<typeof createPrismaMock>;
 

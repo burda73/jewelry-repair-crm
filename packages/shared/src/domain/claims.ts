@@ -115,6 +115,12 @@ export function isClaimTerminal(status: ClaimStatus): boolean {
   return CLAIM_TRANSITIONS[status].length === 0;
 }
 
+/** Читаемая формулировка исхода для карточки и отчёта. */
+export const CLAIM_RESOLUTION_LABELS: Record<string, string> = {
+  [CLAIM_STATUS.RESOLVED_REPAIR]: 'Гарантийный ремонт',
+  [CLAIM_STATUS.RESOLVED_REFUND]: 'Возврат денег',
+};
+
 /**
  * Урегулирована ли рекламация по существу.
  *
