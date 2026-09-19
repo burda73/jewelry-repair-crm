@@ -23,7 +23,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { REPORT_NAME } from '@app/shared';
+import { REPORT_NAME, permissionForReport } from '@app/shared';
 import {
   RESTRICTED_TO_NOTHING,
   ReportsService,
@@ -1166,6 +1166,164 @@ describe('Отчёт «Предоплаты» (задача 5.5)', () => {
 // ---------------------------------------------------------------------------
 // Общее поведение
 // ---------------------------------------------------------------------------
+
+describe('Отчёт «Рекламации» (задача 6.7)', () => {
+  /** Рекламация с настраиваемыми полями. */
+  function claim(overrides: Record<string, unknown> = {}) {
+    return {
+      status: 'OPENED',
+      reason: 'Разошёлся шов',
+      openedAt: new Date('2025-09-15T09:00:00+03:00'),
+      dueAt: new Date('2025-09-29T09:00:00+03:00'),
+      resolvedAt: null,
+      closedAt: null,
+      order: { orderNo: 'MSK1-2509-000001', isWarranty: false },
+      ...overrides,
+    };
+  }
+
+  it('группирует рекламации по статусу', async () => {
+    const { service } = makeService({
+      warrantyClaim: {
+        findMany: vi.fn(async () => [
+          claim({ status: 'OPENED' }),
+          claim({ status: 'OPENED' }),
+          claim({ status: 'REJECTED', resolvedAt: null }),
+        ]),
+      },
+    });
+
+    const report = await service.build(REPORT_NAME.CLAIMS, query(), actor('ALL_STORES'));
+
+    const opened = report.rows.find((row) => row.group === 'Открыта');
+    expect(opened).toMatchObject({ claimsCount: 2 });
+  });
+
+  it('выводит статусы в порядке жизненного цикла, а не по алфавиту', async () => {
+    const { service } = makeService({
+      warrantyClaim: {
+        findMany: vi.fn(async () => [claim({ status: 'CLOSED' }), claim({ status: 'OPENED' })]),
+      },
+    });
+
+    const report = await service.build(REPORT_NAME.CLAIMS, query(), actor('ALL_STORES'));
+
+    // Алфавит поставил бы «Закрыта» раньше «Открыта», разорвав жизненный цикл.
+    expect(report.rows.map((row) => row.group)).toEqual(['Открыта', 'Закрыта']);
+  });
+
+  it('считает просрочку на момент построения отчёта', async () => {
+    const { service } = makeService({
+      warrantyClaim: {
+        findMany: vi.fn(async () => [
+          // Срок истёк: рекламация всё ещё открыта.
+          claim({ status: 'OPENED', dueAt: new Date('2025-09-20T09:00:00+03:00') }),
+          // Срок в будущем.
+          claim({ status: 'IN_REVIEW', dueAt: new Date('2099-01-01T09:00:00+03:00') }),
+        ]),
+      },
+    });
+
+    const report = await service.build(REPORT_NAME.CLAIMS, query(), actor('ALL_STORES'));
+
+    expect(report.totals.overdueCount).toBe(1);
+  });
+
+  it('не считает просроченной закрытую рекламацию', async () => {
+    const { service } = makeService({
+      warrantyClaim: {
+        findMany: vi.fn(async () => [
+          claim({ status: 'CLOSED', dueAt: new Date('2020-01-01T09:00:00+03:00') }),
+        ]),
+      },
+    });
+
+    const report = await service.build(REPORT_NAME.CLAIMS, query(), actor('ALL_STORES'));
+
+    // Срок относится к рассмотрению; закрытая рекламация — история.
+    expect(report.totals.overdueCount).toBe(0);
+  });
+
+  it('разделяет исходы: ремонт, возврат, отказ', async () => {
+    const { service } = makeService({
+      warrantyClaim: {
+        findMany: vi.fn(async () => [
+          claim({ status: 'RESOLVED_REPAIR', resolvedAt: new Date('2025-09-20T09:00:00+03:00') }),
+          claim({ status: 'RESOLVED_REFUND', resolvedAt: new Date('2025-09-21T09:00:00+03:00') }),
+          claim({ status: 'REJECTED' }),
+        ]),
+      },
+    });
+
+    const report = await service.build(REPORT_NAME.CLAIMS, query(), actor('ALL_STORES'));
+
+    expect(report.totals).toMatchObject({
+      resolvedRepairCount: 1,
+      resolvedRefundCount: 1,
+      rejectedCount: 1,
+    });
+  });
+
+  it('считает открытыми только незавершённые рекламации', async () => {
+    const { service } = makeService({
+      warrantyClaim: {
+        findMany: vi.fn(async () => [
+          claim({ status: 'OPENED' }),
+          claim({ status: 'IN_REVIEW' }),
+          claim({ status: 'CLOSED' }),
+          claim({ status: 'REJECTED' }),
+        ]),
+      },
+    });
+
+    const report = await service.build(REPORT_NAME.CLAIMS, query(), actor('ALL_STORES'));
+
+    // Закрытая и отклонённая — завершённые: работы по ним не осталось.
+    expect(report.totals.openCount).toBe(2);
+  });
+
+  it('не выводит строку статуса, под который не было рекламаций', async () => {
+    const { service } = makeService({
+      warrantyClaim: { findMany: vi.fn(async () => [claim({ status: 'OPENED' })]) },
+    });
+
+    const report = await service.build(REPORT_NAME.CLAIMS, query(), actor('ALL_STORES'));
+
+    // Пустые строки сделали бы отчёт длинным и нечитаемым.
+    expect(report.rows).toHaveLength(1);
+  });
+
+  it('не считает средний разбор, если решений не было', async () => {
+    const { service } = makeService({
+      warrantyClaim: { findMany: vi.fn(async () => [claim({ status: 'OPENED' })]) },
+    });
+
+    const report = await service.build(REPORT_NAME.CLAIMS, query(), actor('ALL_STORES'));
+
+    expect(report.rows[0]!.averageReviewDays).toBeNull();
+  });
+
+  it('считает средний разбор в РАБОЧИХ днях', async () => {
+    const { service } = makeService({
+      warrantyClaim: {
+        findMany: vi.fn(async () => [
+          // 15.09 (пн) → 20.09 (сб): рабочие вт, ср, чт, пт — 4 рабочих дня, а не
+          // 5 календарных.
+          claim({ status: 'RESOLVED_REPAIR', resolvedAt: new Date('2025-09-20T09:00:00+03:00') }),
+        ]),
+      },
+    });
+
+    const report = await service.build(REPORT_NAME.CLAIMS, query(), actor('ALL_STORES'));
+
+    expect(report.rows[0]!.averageReviewDays).toBe(4);
+  });
+
+  it('требует операционное право, а не денежное', async () => {
+    // Рекламации — отчёт о процессе, а не о выручке: права кассира не хватает.
+    expect(permissionForReport(REPORT_NAME.CLAIMS)).toBe('report:operational');
+  });
+});
 
 describe('Общее поведение отчётов (задача 5.1)', () => {
   it('неизвестное имя отчёта даёт ошибку со списком поддерживаемых', async () => {

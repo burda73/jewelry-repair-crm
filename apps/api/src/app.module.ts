@@ -22,6 +22,7 @@ import { StageNormsModule } from './modules/norms/stage-norms.module';
 import { BatchesModule } from './modules/batches/batches.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { EscalationsModule } from './modules/escalations/escalations.module';
+import { ClaimsModule } from './modules/claims/claims.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PublicStatusModule } from './modules/public-status/public-status.module';
@@ -107,6 +108,7 @@ function resolveEnvPaths(): string[] {
     BatchesModule,
     NotificationsModule,
     EscalationsModule,
+    ClaimsModule,
     ReportsCacheModule,
     ReportsModule,
     DashboardModule,

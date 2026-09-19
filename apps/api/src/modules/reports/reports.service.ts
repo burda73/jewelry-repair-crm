@@ -37,6 +37,12 @@ import {
   type ReportRow,
   type OrderStatus,
   type DataScope,
+  CLAIM_STATUS,
+  CLAIM_STATUS_LABELS,
+  isClaimOverdue,
+  isClaimTerminal,
+  workingDaysBetween,
+  type ClaimStatus,
 } from '@app/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
@@ -213,6 +219,8 @@ export class ReportsService {
         return this.revenue(query);
       case REPORT_NAME.PREPAYMENTS:
         return this.prepayments(query);
+      case REPORT_NAME.CLAIMS:
+        return this.claims(query);
       default:
         throw new BadRequestException({
           code: 'VALIDATION_ERROR',
@@ -220,6 +228,129 @@ export class ReportsService {
           details: { supported: Object.values(REPORT_NAME) },
         });
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // 6.7. Рекламации (ТЗ п. 2.9)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Отчёт по рекламациям: сколько обращений, как быстро их разбирают и какие
+   * исходы.
+   *
+   * ПОЧЕМУ ГРУППИРОВКА ПО СТАТУСУ, А НЕ ПО МЕСЯЦАМ ПО УМОЛЧАНИЮ. Главный вопрос
+   * руководителя — «что сейчас висит и не просрочено ли», а не «сколько было в
+   * марте». Разрез по периодам доступен через `groupBy` и строится по дате
+   * открытия, но по умолчанию отчёт отвечает на текущее состояние.
+   *
+   * ПОЧЕМУ ПРОСРОЧКА СЧИТАЕТСЯ НА МОМЕНТ ПОСТРОЕНИЯ, А НЕ ПО ДАТЕ ВЫГРУЗКИ.
+   * Просрочка — это состояние незавершённой рекламации относительно «сейчас».
+   * Если считать её по дате открытия периода, отчёт за прошлый месяц показывал
+   * бы просроченными рекламации, которые давно закрыты.
+   */
+  private async claims(query: ReportQuery): Promise<ComputedReport> {
+    const rows = await this.prisma.warrantyClaim.findMany({
+      where: { openedAt: { gte: query.from, lte: endOfPeriod(query.to) } },
+      select: {
+        status: true,
+        reason: true,
+        openedAt: true,
+        dueAt: true,
+        resolvedAt: true,
+        closedAt: true,
+        order: { select: { orderNo: true, isWarranty: true } },
+      },
+      orderBy: { openedAt: 'desc' },
+      take: 20_000,
+    });
+
+    const calendar = await this.workflow.loadCalendar();
+    const now = new Date();
+
+    const groups = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const key = row.status;
+      const group = groups.get(key) ?? [];
+      group.push(row);
+      groups.set(key, group);
+    }
+
+    /*
+     * Порядок статусов задан явно, а не алфавитом: список читают сверху вниз как
+     * жизненный цикл обращения (открыта → в работе → одобрена → урегулирована →
+     * закрыта), и алфавитный порядок перемешал бы его.
+     */
+    const statusOrder: string[] = [
+      CLAIM_STATUS.OPENED,
+      CLAIM_STATUS.IN_REVIEW,
+      CLAIM_STATUS.APPROVED,
+      CLAIM_STATUS.RESOLVED_REPAIR,
+      CLAIM_STATUS.RESOLVED_REFUND,
+      CLAIM_STATUS.REJECTED,
+      CLAIM_STATUS.CLOSED,
+    ];
+
+    const reportRows: ReportRow[] = statusOrder
+      .filter((status) => groups.has(status))
+      .map((status) => {
+        const group = groups.get(status)!;
+        const overdue = group.filter((row) => isClaimOverdue(row.status, row.dueAt, now)).length;
+
+        const decided = group.filter((row) => row.resolvedAt !== null);
+        /*
+         * Средний разбор считается в РАБОЧИХ днях — той же мерой, что и срок 10
+         * рабочих дней. Календарные дни в этом отчёте были бы несопоставимы со
+         * сроком: «разобрали за 8 дней» и «уложились в 10 рабочих» выглядели бы
+         * как одно и то же число при разном смысле.
+         */
+        const averageDays =
+          decided.length === 0
+            ? null
+            : Math.round(
+                (sum(
+                  decided.map((row) => workingDaysBetween(row.openedAt, row.resolvedAt!, calendar)),
+                ) /
+                  decided.length) *
+                  10,
+              ) / 10;
+
+        return {
+          group: CLAIM_STATUS_LABELS[status as ClaimStatus] ?? status,
+          claimsCount: group.length,
+          overdueCount: overdue,
+          averageReviewDays: averageDays,
+        } satisfies ReportRow;
+      });
+
+    const overdueTotal = rows.filter((row) => isClaimOverdue(row.status, row.dueAt, now)).length;
+
+    return {
+      columns: [
+        { key: 'group', title: 'Статус', type: REPORT_COLUMN_TYPE.STRING },
+        { key: 'claimsCount', title: 'Рекламаций', type: REPORT_COLUMN_TYPE.NUMBER },
+        { key: 'overdueCount', title: 'Просрочено', type: REPORT_COLUMN_TYPE.NUMBER },
+        {
+          key: 'averageReviewDays',
+          title: 'Средний разбор, дней',
+          type: REPORT_COLUMN_TYPE.NUMBER,
+        },
+      ],
+      rows: reportRows.slice(0, query.limit),
+      totals: {
+        claimsCount: rows.length,
+        overdueCount: overdueTotal,
+        /*
+         * Исходы отдельными итогами: «сколько вернули денег» — это разные по
+         * стоимости решения, и складывать их в одно число нельзя.
+         */
+        resolvedRepairCount: rows.filter((row) => row.status === CLAIM_STATUS.RESOLVED_REPAIR)
+          .length,
+        resolvedRefundCount: rows.filter((row) => row.status === CLAIM_STATUS.RESOLVED_REFUND)
+          .length,
+        rejectedCount: rows.filter((row) => row.status === CLAIM_STATUS.REJECTED).length,
+        openCount: rows.filter((row) => !isClaimTerminal(row.status)).length,
+      },
+    };
   }
 
   // -------------------------------------------------------------------------

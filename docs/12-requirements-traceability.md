@@ -133,10 +133,17 @@
 | 2.8 | **Условие выдачи — полная оплата** | `docs/02` §5.2 | guard `PAID_IN_FULL`, `isPaidInFull()` | `money-dates.spec.ts` |
 | 2.8 | Акт отказа при отказе от оплаты | `docs/03` §2 | `RefusalAct`, guard `REFUSAL_ACT_EXISTS` | `order-transitions.spec.ts` |
 | 2.8 | Статус «невостребовано» через 30 дней | `docs/02` §5.3 | guard `UNCLAIMED_THRESHOLD`, `addCalendarDays()` | `money-dates.spec.ts` |
-| 2.9 | Признак гарантийного заказа | `docs/03` §2 | `Order.isWarranty`, `parentOrderId` | — |
+| 2.9 | Признак гарантийного заказа | `docs/07` §11 | `Order.isWarranty`, `parentOrderId`; UI — `warranty-order.ts` | `warranty-order.spec.ts` (23 теста) |
+| 2.9 | Гарантийный заказ без исходного заказа не отправляется | `docs/07` §11 | `warrantyDraftError()` | `warranty-order.spec.ts` |
+| 2.9 | Исходным может быть только выданный заказ | `docs/07` §11 | `canBeWarrantySource()` | `warranty-order.spec.ts` |
 | 2.9 | Срок гарантии 6 мес. / 3 мес. (закрепка) | `docs/02` §5.4 | `computeWarrantyUntil()`, `warrantyMonths` | `money-dates.spec.ts` |
-| 2.9 | Срок рассмотрения рекламации 10 раб. дней | `docs/02` §5.5 | `WarrantyClaim.dueAt`, `addWorkingDays()` | `money-dates.spec.ts` |
-| 2.9 | Запись рекламации в основном заказе | `docs/03` §2 | `WarrantyClaim.orderId` → `Order.claims` | — |
+| 2.9 | Срок рассмотрения рекламации 10 РАБОЧИХ дней | `docs/07` §11.1 | `computeClaimDueAt()`, `addWorkingDays()` | `claims.spec.ts` (36), `claims.service.spec.ts` |
+| 2.9 | Закрытая рекламация не считается просроченной | `docs/07` §11.1 | `isClaimOverdue()` | `claims.spec.ts` |
+| 2.9 | Отказ требует причины; терминальные не переоткрываются | `docs/07` §11.3 | `claimTransitionDenial()` | `claims.spec.ts`, `claims.service.spec.ts` |
+| 2.9 | Запись рекламации в основном заказе | `docs/07` §11.4 | `orderStatusHistory.create` в `ClaimsService.transition()` | `claims.service.spec.ts` |
+| 2.9 | Предупреждение о сроке за 3 рабочих дня, один раз | `docs/07` §11.1 | `ClaimDeadlineService.run()`, `warningSentAt` | `claim-deadline.service.spec.ts` |
+| 2.9 | Отчёт по рекламациям | `docs/07` §12.3 | `ReportsService.claims()` | `reports.service.spec.ts` |
+| 2.9 | Средний разбор в рабочих днях, исходы раздельно | `docs/07` §12.3 | `workingDaysBetween()` в `claims()` | `reports.service.spec.ts` |
 | 2.10 | Роли и права доступа | `docs/02` §2, §4 | `packages/shared/src/domain/roles.ts` | `docs-sync.spec.ts` |
 | 2.11 | Отчёт «Сроки по этапам» | `docs/06` §1, `docs/07` §12.3 | `OrderStatusHistory.durationMinutes` | `reports.service.spec.ts`, `reports.spec.ts` |
 | 2.11 | Перцентиль совпадает с `percentile_cont` | `docs/06` §1 | `percentile()` | `reports.spec.ts` |

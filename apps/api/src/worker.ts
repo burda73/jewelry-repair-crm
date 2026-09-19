@@ -26,6 +26,7 @@ import { EscalationsService } from './modules/escalations/escalations.service';
 import { UnclaimedService } from './modules/escalations/unclaimed.service';
 import { NotificationSenderService } from './integrations/notifications/notification-sender.service';
 import { PublicStatusService } from './modules/public-status/public-status.service';
+import { ClaimDeadlineService } from './modules/claims/claim-deadline.service';
 
 interface WorkerDefinition {
   name: string;
@@ -74,6 +75,17 @@ const PUBLIC_CODE_CLEANUP_INTERVAL_MS = 60 * 60_000;
  */
 const NOTIFICATION_INTERVAL_MS = 30_000;
 
+/**
+ * Периодичность проверки сроков рекламаций (задача 6.6).
+ *
+ * Раз в час. Срок измеряется рабочими днями, и предупреждение наступает за три
+ * дня до него — часовая задержка внутри дня ничего не меняет, а прогон, который
+ * ничего не нашёл, стоит один запрос по индексу. Чаще означало бы нагрузку без
+ * пользы; реже — предупреждение могло бы прийти уже после начала рабочего дня,
+ * когда до срока осталось меньше времени, чем кажется.
+ */
+const CLAIM_DEADLINE_INTERVAL_MS = 60 * 60_000;
+
 const registeredWorkers: WorkerDefinition[] = [];
 
 /** Контейнер Nest: воркеры работают через те же сервисы, что и API. */
@@ -81,6 +93,7 @@ let escalations: EscalationsService | null = null;
 let unclaimed: UnclaimedService | null = null;
 let notificationSender: NotificationSenderService | null = null;
 let publicStatus: PublicStatusService | null = null;
+let claimDeadline: ClaimDeadlineService | null = null;
 
 const timers: NodeJS.Timeout[] = [];
 let shuttingDown = false;
@@ -154,6 +167,7 @@ async function bootstrap(): Promise<void> {
   unclaimed = app.get(UnclaimedService);
   notificationSender = app.get(NotificationSenderService);
   publicStatus = app.get(PublicStatusService);
+  claimDeadline = app.get(ClaimDeadlineService);
 
   registeredWorkers.push({
     name: 'escalations',
@@ -208,6 +222,27 @@ async function bootstrap(): Promise<void> {
         );
       }
       return result.sent;
+    },
+  });
+
+  registeredWorkers.push({
+    name: 'claim-deadlines',
+    intervalMs: CLAIM_DEADLINE_INTERVAL_MS,
+    run: async () => {
+      if (claimDeadline === null) return 0;
+      const result = await claimDeadline.run();
+      /*
+       * «Без рассматривающего» пишется даже когда предупреждений не было:
+       * рекламация, взятая в работу никем, — это проблема сама по себе, и
+       * заметить её нужно до истечения срока, а не после.
+       */
+      if (result.warned > 0 || result.withoutReviewer > 0) {
+        log(
+          `claim-deadlines: к сроку ${result.scanned}, предупреждено ${result.warned}, ` +
+            `без рассматривающего ${result.withoutReviewer}`,
+        );
+      }
+      return result.warned;
     },
   });
 

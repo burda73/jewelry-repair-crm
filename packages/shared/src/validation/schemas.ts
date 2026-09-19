@@ -1071,3 +1071,50 @@ export const publicOrderStatusQuerySchema = z.object({
 
 export type RequestPublicCodeInput = z.infer<typeof requestPublicCodeSchema>;
 export type PublicOrderStatusQuery = z.infer<typeof publicOrderStatusQuerySchema>;
+
+// ---------------------------------------------------------------------------
+// Рекламации (этап 6, ТЗ п. 2.9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Причина рекламации обязательна и не может состоять из пробелов.
+ *
+ * `.trim()` здесь, а не в сервисе: пробельная строка — это отсутствие причины,
+ * и отклонить её должна схема, единая для всех вызывающих. Иначе тот же
+ * `createBatchSchema`-стиль привёл бы к тому, что часть маршрутов проверяет
+ * заполненность сама, и правила разошлись бы.
+ */
+const claimReasonSchema = z.string().trim().min(1, 'Укажите причину').max(2000);
+
+export const openClaimSchema = z.object({
+  orderId: z.string().cuid('Некорректный идентификатор заказа'),
+  reason: claimReasonSchema,
+  clientStatement: z.string().trim().max(5000).nullable().optional(),
+});
+
+/**
+ * Смена статуса рекламации.
+ *
+ * Способ возмещения и причина отказа передаются как свободный текст: домен
+ * (`claimTransitionDenial`) решает, требуются ли они для конкретного перехода, а
+ * схема не дублирует карту переходов. Дублирование здесь означало бы, что
+ * добавление нового статуса требует правки в двух местах, и расхождение
+ * привело бы либо к разрешённому переходу без обоснования, либо к отказу в
+ * допустимом.
+ */
+export const transitionClaimSchema = z.object({
+  to: z.enum([
+    'OPENED',
+    'IN_REVIEW',
+    'APPROVED',
+    'REJECTED',
+    'RESOLVED_REPAIR',
+    'RESOLVED_REFUND',
+    'CLOSED',
+  ]),
+  resolution: z.string().trim().max(2000).nullable().optional(),
+  rejectionReason: z.string().trim().max(2000).nullable().optional(),
+});
+
+export type OpenClaimInput = z.infer<typeof openClaimSchema>;
+export type TransitionClaimInput = z.infer<typeof transitionClaimSchema>;

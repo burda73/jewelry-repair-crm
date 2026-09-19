@@ -7,6 +7,7 @@ export * from './domain/order-status.js';
 export * from './domain/order-transitions.js';
 export * from './domain/order-number.js';
 export * from './domain/batches.js';
+export * from './domain/claims.js';
 export * from './domain/tracking.js';
 export * from './domain/escalation.js';
 export * from './domain/notification-templates.js';

@@ -20,6 +20,7 @@ import {
   useCreateOrder,
   useCustomerSearch,
   usePriceListItems,
+  useOrders,
   useStores,
   useWorkshops,
   type CreateOrderVariables,
@@ -34,6 +35,15 @@ import { describeApiError } from '@/lib/api-client';
 import { t } from '@/lib/i18n';
 import { useDraftAutosave, type RestorableDraft } from '@/lib/draft-autosave';
 import { orderDraftHasContent } from '@/lib/order-draft';
+import {
+  EMPTY_WARRANTY_DRAFT,
+  warrantyDraftError,
+  warrantyPayloadFields,
+  warrantySourceCandidates,
+  describeWarrantySource,
+  formatDate,
+  type WarrantyOrderDraft,
+} from '@/lib/warranty-order';
 import {
   parseMoneyInput,
   multiplyMinor,
@@ -131,6 +141,12 @@ interface OrderDraft {
   description: string;
   requiresPrepayment: boolean;
   prepayment: string;
+  /*
+   * Гарантийный заказ (этап 6, ТЗ п. 2.9). Хранится в черновике, потому что
+   * приёмщик может отвлечься на середине: потерять выбор исходного заказа
+   * значило бы завести обычный заказ вместо гарантийного.
+   */
+  warranty: WarrantyOrderDraft;
 }
 
 const EMPTY_ITEM: DraftItem = {
@@ -187,6 +203,7 @@ export default function NewOrderPage(): ReactNode {
   const [description, setDescription] = useState('');
   const [requiresPrepayment, setRequiresPrepayment] = useState(false);
   const [prepayment, setPrepayment] = useState('');
+  const [warranty, setWarranty] = useState<WarrantyOrderDraft>(EMPTY_WARRANTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
 
   const { data: stores } = useStores();
@@ -195,6 +212,26 @@ export default function NewOrderPage(): ReactNode {
   const search = useCustomerSearch(term);
   const createCustomer = useCreateCustomer();
   const createOrder = useCreateOrder();
+
+  /*
+   * Заказы выбранного клиента — источник для выбора гарантийного случая.
+   *
+   * Запрос идёт по телефону, потому что список заказов фильтруется именно им
+   * (`GET /orders?customerPhone=…`): отдельного маршрута «заказы клиента» нет, а
+   * заводить его ради одного выпадающего списка значило бы расширять API под
+   * интерфейс. Запрос выполняется ТОЛЬКО когда гарантия отмечена: обычный приём
+   * заказа не должен тянуть лишние данные.
+   */
+  const customerPhone = selectedCustomer?.phoneNormalized ?? '';
+  const { data: customerOrders } = useOrders(
+    warranty.isWarranty && customerPhone !== '' ? { customerPhone } : {},
+    '',
+    null,
+  );
+  const warrantySources = useMemo(
+    () => warrantySourceCandidates(customerOrders?.items ?? []),
+    [customerOrders],
+  );
 
   /*
    * Автосохранение черновика (задача 1.7.3).
@@ -225,6 +262,7 @@ export default function NewOrderPage(): ReactNode {
       description,
       requiresPrepayment,
       prepayment,
+      warranty,
     }),
     [
       step,
@@ -243,6 +281,7 @@ export default function NewOrderPage(): ReactNode {
       description,
       requiresPrepayment,
       prepayment,
+      warranty,
     ],
   );
   /*
@@ -291,6 +330,12 @@ export default function NewOrderPage(): ReactNode {
     setDescription(data.description);
     setRequiresPrepayment(data.requiresPrepayment);
     setPrepayment(data.prepayment);
+    /*
+     * Отсутствие поля в черновике — это обычный заказ: черновик мог быть
+     * записан до появления гарантии. Значение по умолчанию берётся из константы,
+     * чтобы не создавать второе место, где описано «обычный заказ».
+     */
+    setWarranty(data.warranty ?? EMPTY_WARRANTY_DRAFT);
     /*
      * Клиент восстанавливается по сохранённым id и подписи, а не поиском:
      * повторный запрос к API мог бы вернуть изменённую карточку, и приёмщик
@@ -533,6 +578,15 @@ export default function NewOrderPage(): ReactNode {
       setError('Укажите сумму предоплаты или снимите отметку «Требуется предоплата»');
       return;
     }
+    /*
+     * Гарантийный заказ без исходного заказа не отправляется: работа оказалась
+     * бы бесплатной без причины, и в отчётности её нельзя было бы объяснить.
+     */
+    const warrantyError = warrantyDraftError(warranty);
+    if (warrantyError !== null) {
+      setError(warrantyError);
+      return;
+    }
 
     // Клиента создаём ДО заказа: если создание заказа не удастся, клиент
     // останется в базе — это безопасно (он реальный) и позволяет повторить
@@ -603,6 +657,7 @@ export default function NewOrderPage(): ReactNode {
         ...(work.durationHours === undefined ? {} : { durationHours: work.durationHours }),
       })),
       ...(customerId === undefined ? {} : { customerId }),
+      ...warrantyPayloadFields(warranty),
     };
 
     try {
@@ -1435,6 +1490,77 @@ export default function NewOrderPage(): ReactNode {
                 </span>
               </span>
             </label>
+
+            <label className="flex cursor-pointer items-center gap-3 rounded-md border border-slate-200 p-3 hover:bg-slate-50">
+              <input
+                type="checkbox"
+                checked={warranty.isWarranty}
+                onChange={(event) => {
+                  /*
+                   * Снятие отметки очищает ссылку: оставленная ссылка на
+                   * исходный заказ при обычном заказе не отправилась бы, но
+                   * всплыла бы при повторном включении гарантии — и приёмщик
+                   * отправил бы случай, выбранный для другого клиента.
+                   */
+                  setWarranty(
+                    event.target.checked
+                      ? { isWarranty: true, parentOrderId: '' }
+                      : EMPTY_WARRANTY_DRAFT,
+                  );
+                  setError(null);
+                }}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              <span className="text-sm text-slate-900">
+                Гарантийный заказ
+                <span className="ml-1 text-xs text-slate-500">
+                  (по рекламации: работа выполняется бесплатно)
+                </span>
+              </span>
+            </label>
+
+            {warranty.isWarranty ? (
+              customerPhone === '' ? (
+                <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  Сначала выберите клиента на шаге 1 — исходный заказ ищется по его телефону.
+                </p>
+              ) : warrantySources.length === 0 ? (
+                <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  У клиента нет выданных заказов. Гарантийный случай возможен только по выполненному
+                  заказу.
+                </p>
+              ) : (
+                <Field
+                  label="Заказ, по которому возник случай"
+                  htmlFor="parent-order"
+                  required
+                  error={warrantyDraftError(warranty) ?? undefined}
+                >
+                  <Select
+                    id="parent-order"
+                    value={warranty.parentOrderId}
+                    onChange={(event) => {
+                      setWarranty({ isWarranty: true, parentOrderId: event.target.value });
+                      setError(null);
+                    }}
+                  >
+                    <option value="">— выберите заказ —</option>
+                    {warrantySources.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>
+                        {candidate.orderNo} — {candidate.statusLabel} от{' '}
+                        {formatDate(candidate.readyAt ?? candidate.createdAt)}
+                      </option>
+                    ))}
+                  </Select>
+                  {describeWarrantySource(warrantySources, warranty.parentOrderId) ===
+                  null ? null : (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Работа будет записана в этот заказ как гарантийная.
+                    </p>
+                  )}
+                </Field>
+              )
+            ) : null}
 
             {requiresPrepayment ? (
               <Field

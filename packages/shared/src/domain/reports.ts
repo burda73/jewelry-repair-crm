@@ -34,6 +34,8 @@ export const REPORT_NAME = {
   OVERDUE: 'overdue',
   REVENUE: 'revenue',
   PREPAYMENTS: 'prepayments',
+  /** Рекламации и гарантия (задача 6.7). */
+  CLAIMS: 'claims',
 } as const;
 
 export type ReportName = (typeof REPORT_NAME)[keyof typeof REPORT_NAME];
@@ -59,6 +61,13 @@ export const REPORT_PERMISSION: Record<ReportName, string> = {
   [REPORT_NAME.OVERDUE]: 'report:operational',
   [REPORT_NAME.REVENUE]: 'report:revenue',
   [REPORT_NAME.PREPAYMENTS]: 'report:revenue',
+  /*
+   * Рекламации — операционный отчёт, а не денежный: он отвечает на вопрос «как
+   * мы разбираем обращения», а не «сколько заработали». Возвраты по рекламациям
+   * видны в отчёте по выручке, и дублировать их здесь с другим правилом подсчёта
+   * значило бы получить два разных ответа на один вопрос.
+   */
+  [REPORT_NAME.CLAIMS]: 'report:operational',
 };
 
 /** Права, дающие доступ хотя бы к одному отчёту. */

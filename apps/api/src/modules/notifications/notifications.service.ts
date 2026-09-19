@@ -72,6 +72,8 @@ export const TEMPLATE_CODE = {
   READY_FOR_PICKUP: 'READY_FOR_PICKUP',
   /** Заказ невостребован 30 дней. */
   ORDER_UNCLAIMED: 'ORDER_UNCLAIMED',
+  /** Приближается срок рассмотрения рекламации (задача 6.6). */
+  CLAIM_DEADLINE: 'CLAIM_DEADLINE',
 } as const;
 
 export type TemplateCode = (typeof TEMPLATE_CODE)[keyof typeof TEMPLATE_CODE];

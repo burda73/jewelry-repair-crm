@@ -44,6 +44,7 @@ describe('Шаблоны уведомлений: состав', () => {
       'ORDER_UNCLAIMED',
       'BATCH_RECEIVED',
       'BATCH_TRANSIT_LATE',
+      'CLAIM_DEADLINE',
     ]) {
       expect(emailCodes.has(code), `нет почтового текста для ${code}`).toBe(true);
     }
@@ -127,6 +128,7 @@ describe('Шаблоны уведомлений: состав', () => {
       'BATCH_RECEIVED',
       'BATCH_TRANSIT_LATE',
       'READY_FOR_PICKUP',
+      'CLAIM_DEADLINE',
     ]) {
       expect(codes.has(code), `шаблон ${code} отсутствует в списке`).toBe(true);
     }
