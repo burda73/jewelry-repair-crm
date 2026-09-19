@@ -30,6 +30,7 @@ import {
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { ReportsCacheService } from '../../common/cache/reports-cache.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import {
@@ -38,6 +39,7 @@ import {
   CLAIM_STATUS_LABELS,
   CLAIM_TRANSITION_DENIED,
   ORDER_STATUS,
+  REPORT_NAME,
   buildClaimNo,
   canTransitionClaim,
   claimTransitionDenial,
@@ -156,6 +158,7 @@ export class ClaimsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workflow: OrderWorkflowService,
+    private readonly cache: ReportsCacheService,
   ) {}
 
   /**
@@ -242,6 +245,14 @@ export class ClaimsService {
 
       return claim;
     });
+
+    /*
+     * Отчёт по рекламациям показывает открытые обращения и просрочку, поэтому
+     * новая рекламация меняет его цифры. Без сброса отчёт отдавал бы старую
+     * картину до истечения TTL (15 минут), и руководитель не понял бы, почему
+     * только что заведённого обращения в отчёте нет.
+     */
+    this.cache.invalidate([REPORT_NAME.CLAIMS]);
 
     return this.toDetail(created, calendar, now);
   }
@@ -416,6 +427,14 @@ export class ClaimsService {
 
       return claim;
     });
+
+    /*
+     * Переход меняет и статус, и просрочку, и исход — то есть все цифры отчёта
+     * по рекламациям. Сброс идёт ПОСЛЕ успешного перехода: отклонённый переход
+     * ничего не изменил, и сбрасывать кэш по нему значило бы заставлять
+     * следующий запрос считать отчёт заново без причины.
+     */
+    this.cache.invalidate([REPORT_NAME.CLAIMS]);
 
     return this.toDetail(updated, calendar, now);
   }

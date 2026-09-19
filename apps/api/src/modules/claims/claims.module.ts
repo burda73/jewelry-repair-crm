@@ -5,6 +5,7 @@ import { ClaimsService } from './claims.service';
 import { ClaimDeadlineService } from './claim-deadline.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
+import { ReportsCacheModule } from '../../common/cache/reports-cache.module';
 
 /**
  * Рекламации и гарантия (этап 6, ТЗ п. 2.9).
@@ -15,7 +16,7 @@ import { OrderWorkflowService } from '../../common/workflow/order-workflow.servi
  * предупреждений о приближении срока (задача 6.6).
  */
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, ReportsCacheModule],
   controllers: [ClaimsController],
   providers: [ClaimsService, ClaimDeadlineService, OrderWorkflowService],
   exports: [ClaimsService, ClaimDeadlineService],

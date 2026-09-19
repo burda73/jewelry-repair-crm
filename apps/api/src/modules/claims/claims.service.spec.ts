@@ -91,8 +91,9 @@ function createPrismaMock() {
 
 function createService(prisma: ReturnType<typeof createPrismaMock>) {
   const workflow = { loadCalendar: vi.fn(async () => CALENDAR) };
-  const service = new ClaimsService(prisma as never, workflow as never);
-  return { service, workflow };
+  const cache = { invalidate: vi.fn(() => 0) };
+  const service = new ClaimsService(prisma as never, workflow as never, cache as never);
+  return { service, workflow, cache };
 }
 
 describe('Открытие рекламации', () => {
@@ -395,6 +396,70 @@ describe('Сохранение исхода при закрытии (дефек�
 
     // После закрытия статус уже `CLOSED`, и подпись обязана браться из исхода.
     expect(claim.resolutionLabel).toBe('Возврат денег');
+  });
+});
+
+describe('Сброс кэша отчётов (дефект, найденный на живом сервере)', () => {
+  let prisma: ReturnType<typeof createPrismaMock>;
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+  });
+
+  it('сбрасывает кэш отчёта при открытии рекламации', async () => {
+    prisma.order.findUnique.mockResolvedValue({
+      id: ORDER_ID,
+      orderNo: 'MSK1-2509-000001',
+      status: 'COMPLETED',
+    });
+    prisma.__tx.counter.upsert.mockResolvedValue({ scope: 'CLAIM:2025', value: 1 });
+    prisma.__tx.warrantyClaim.create.mockResolvedValue(claimRow());
+
+    const { service, cache } = createService(prisma);
+    await service.open({ orderId: ORDER_ID, reason: 'Разошёлся шов' }, ACTOR);
+
+    /*
+     * Отчёт показывает открытые рекламации и просрочку, поэтому новая запись
+     * меняет его цифры. Без сброса отчёт отдавал бы старую картину до истечения
+     * TTL — именно это и наблюдалось на живом сервере: в реестре две рекламации,
+     * а в отчёте одна.
+     */
+    expect(cache.invalidate).toHaveBeenCalledWith(['claims']);
+  });
+
+  it('сбрасывает кэш отчёта при смене статуса', async () => {
+    prisma.warrantyClaim.findUnique.mockResolvedValue({
+      id: CLAIM_ID,
+      claimNo: 'РЕК-25-00001',
+      status: 'OPENED',
+      orderId: ORDER_ID,
+      order: { status: 'COMPLETED' },
+    });
+    prisma.__tx.warrantyClaim.update.mockResolvedValue(claimRow({ status: 'IN_REVIEW' }));
+
+    const { service, cache } = createService(prisma);
+    await service.transition(CLAIM_ID, { to: 'IN_REVIEW' }, ACTOR);
+
+    expect(cache.invalidate).toHaveBeenCalledWith(['claims']);
+  });
+
+  it('НЕ сбрасывает кэш при отклонённом переходе', async () => {
+    prisma.warrantyClaim.findUnique.mockResolvedValue({
+      id: CLAIM_ID,
+      claimNo: 'РЕК-25-00001',
+      status: 'CLOSED',
+      orderId: ORDER_ID,
+      order: { status: 'COMPLETED' },
+    });
+
+    const { service, cache } = createService(prisma);
+    await expect(service.transition(CLAIM_ID, { to: 'IN_REVIEW' }, ACTOR)).rejects.toMatchObject({
+      response: { code: 'CLAIM_TERMINAL' },
+    });
+
+    // Отклонённый переход ничего не изменил: сброс заставлял бы считать отчёт
+    // заново без причины.
+    expect(cache.invalidate).not.toHaveBeenCalled();
   });
 });
 
