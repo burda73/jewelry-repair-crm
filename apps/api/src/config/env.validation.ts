@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 
-const envSchema = z
+export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().positive().default(4000),
@@ -97,8 +97,53 @@ const envSchema = z
     S3_BUCKET_DOCS: z.string().default('repair-docs'),
     S3_SIGNED_URL_TTL: z.coerce.number().int().positive().default(900),
 
-    SMTP_HOST: z.string().default('localhost'),
-    SMTP_PORT: z.coerce.number().int().positive().default(1025),
+    /*
+     * Без значения по умолчанию НАМЕРЕННО.
+     *
+     * Раньше здесь стояло `localhost:1025` — адрес локального отладочного
+     * почтового сервера. Это делало состояние «почта не настроена» НЕДОСТИЖИМЫМ:
+     * `SMTP_HOST` всегда был непустым, проверка «канал не настроен» не срабатывала
+     * никогда, и продакшн молча пытался доставить письма на localhost. Ошибка
+     * выглядела как `ECONNREFUSED ::1:1025` — то есть как сломанная почта, а не как
+     * ненастроенный канал, и разбирались бы с ней не там.
+     *
+     * Теперь отсутствие `SMTP_HOST` означает ровно то, что означает: канал
+     * выключен. Уведомления остаются в базе со статусом `FAILED` и понятной
+     * причиной, а не уходят в никуда.
+     */
+    /*
+     * Пустая строка приводится к `undefined` НАМЕРЕННО.
+     *
+     * В `.env` «переменная не задана» и «переменная задана пустой» пишутся
+     * одинаково: `SMTP_HOST=""`. Если отвергать пустую строку, документированный
+     * способ выключить канал ронял бы приложение при старте — «Некорректная
+     * конфигурация окружения». Отвергать здесь нечего: пустое значение означает
+     * ровно то же, что и отсутствующее, — канал выключен.
+     *
+     * Значение с пробелами (`"   "`) тоже считается пустым: иначе оно прошло бы
+     * проверку и превратилось бы в попытку соединения с бессмысленным хостом.
+     */
+    SMTP_HOST: z
+      .string()
+      .optional()
+      .transform((value) => {
+        const trimmed = value?.trim();
+        return trimmed === undefined || trimmed === '' ? undefined : trimmed;
+      }),
+    /*
+     * Порт без значения по умолчанию. Пустое значение и нечисловая строка
+     * приводятся к `undefined`: порт имеет смысл только вместе с хостом, а
+     * `Number('')` даёт ноль и падал бы на проверке положительности.
+     */
+    SMTP_PORT: z
+      .string()
+      .optional()
+      .transform((value) => {
+        const trimmed = value?.trim();
+        if (trimmed === undefined || trimmed === '') return undefined;
+        const parsed = Number.parseInt(trimmed, 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+      }),
     SMTP_USER: z.string().optional(),
     SMTP_PASSWORD: z.string().optional(),
     SMTP_FROM: z.string().default('noreply@remixgold.ru'),

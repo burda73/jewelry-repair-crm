@@ -211,6 +211,7 @@
 | 3 | Порт не бросает исключений | `docs/05` §6.3 | `SendResult` | `notification-adapters.spec.ts` |
 | 3 | Неизвестный канал — постоянная ошибка, не исключение | `docs/05` §6.3 | `NotificationDispatcher.dispatch` | `notification-adapters.spec.ts` |
 | 3 | Без `SMTP_HOST` канал не настроен, приложение работает | `docs/05` §3 | `readSmtpSettings()` | `notification-adapters.spec.ts` (7 тестов) |
+| 3 | Дефект: умолчания `localhost:1025` делали «не настроено» недостижимым | `docs/05` §3 | `env.validation.ts` | `env.validation.spec.ts` (7 тестов) |
 | 3 | Шифрование SMTP не выводится из номера порта | `docs/05` §3 | `SMTP_SECURE` | `notification-adapters.spec.ts` |
 | 3 | Прочитанные уведомления не отправляются повторно | `docs/05` §6.3 | фильтр статусов воркера | `notification-sender.service.spec.ts` |
 | 3 | Ошибка одного уведомления не мешает остальным | `docs/05` §6.3 | цикл воркера | `notification-sender.service.spec.ts` |
