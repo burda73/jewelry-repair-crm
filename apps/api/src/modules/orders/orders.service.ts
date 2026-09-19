@@ -235,6 +235,27 @@ export interface OrderListQuery {
 }
 
 /** Сводка для дашборда: счётчики по группам статусов. */
+/**
+ * Статусы, которые в счётчик «просрочено» не попадают.
+ *
+ * `DRAFT` и `ACCEPTED` — заказ ещё не в производстве, срок по нему не начал
+ * идти: `dueAt` там либо пуст, либо относится к приёмке.
+ * `AWAITING_PREPAYMENT` ждёт клиента, а не сотрудника — напоминать некому.
+ * Терминальные закрыты, и просрочки у них быть не может.
+ *
+ * Список совпадает с набором воркера эскалаций и дашборда просрочек: три
+ * места, показывающие одну просрочку, обязаны считать её одинаково.
+ */
+const OVERDUE_EXCLUDED_STATUSES: readonly OrderStatus[] = [
+  ORDER_STATUS.DRAFT,
+  ORDER_STATUS.ACCEPTED,
+  ORDER_STATUS.AWAITING_PREPAYMENT,
+  ORDER_STATUS.COMPLETED,
+  ORDER_STATUS.REFUSED,
+  ORDER_STATUS.CANCELLED,
+  ORDER_STATUS.UNCLAIMED,
+];
+
 export interface OrderSummary {
   total: number;
   overdue: number;
@@ -899,7 +920,27 @@ export class OrdersService {
           where: scopeFilter,
           _count: { _all: true },
         }),
-        this.prisma.order.count({ where: { AND: [scopeFilter, { dueAt: { lt: now } }] } }),
+        /*
+         * ДЕФЕКТ, найденный при сверке с docs/06 §3: здесь считались ВСЕ заказы с
+         * прошедшим сроком, включая закрытые. Выданный заказ с истёкшим сроком
+         * изготовления попадал в «просрочено» навсегда: чем дольше работает
+         * сеть, тем больше счётчик, и руководитель видел растущую просрочку,
+         * которую невозможно закрыть — выполненные заказы в ней остаются.
+         *
+         * Спецификация (docs/06 §3, «Просрочено сейчас») требует исключать
+         * терминальные статусы, и отчёт `deadlines`/`overdue` их уже исключает.
+         * Здесь тот же список, что и в отчёте: дашборд и отчёт об одном и том же
+         * обязаны показывать одно число, иначе доверия не будет ни к одному.
+         */
+        this.prisma.order.count({
+          where: {
+            AND: [
+              scopeFilter,
+              { dueAt: { lt: now } },
+              { status: { notIn: [...OVERDUE_EXCLUDED_STATUSES] } },
+            ],
+          },
+        }),
         this.prisma.order.count({
           where: { AND: [scopeFilter, { status: ORDER_STATUS.UNCLAIMED }] },
         }),

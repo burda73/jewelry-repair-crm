@@ -827,7 +827,7 @@ CALENDAR_REDUNDANT_DAY`): запись, совпадающая с правило
 | GET | `/reports/revenue` | Выручка | MANAGER, ADMIN, CASHIER |
 | GET | `/reports/prepayments` | Предоплаты | MANAGER, ADMIN, CASHIER |
 | GET | `/reports/export` | Экспорт в XLSX/CSV | по правам отчёта |
-| GET | `/dashboard/summary` | Сводка для главного экрана | все |
+| GET | `/dashboard/summary` | Сводка для главного экрана (состав блоков — по правам) | все с доступом к заказам или отчётам |
 
 Все отчёты принимают `from`, `to`, `storeId[]`, `groupBy`, `limit` и возвращают готовые
 агрегаты (без вычислений на клиенте).

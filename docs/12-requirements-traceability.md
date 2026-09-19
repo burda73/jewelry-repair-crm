@@ -184,6 +184,17 @@
 | 2.11 | Платёж сбрасывает выручку и предоплаты | `docs/06` §6.2 | `invalidate([REVENUE, PREPAYMENTS])` | `payments.service.spec.ts` |
 | 2.11 | Платёж не сбрасывает сроки и загрузку цеха | `docs/06` §6.2 | сброс по списку отчётов | `payments.service.spec.ts` |
 | 2.11 | Идемпотентный повтор кэш не сбрасывает | `docs/07` §1.3 | ранний выход по ключу | `payments.service.spec.ts` |
+| 2.11 | Главный дашборд по ролям | `docs/06` §6.5, `docs/07` §12 | `DashboardService` | `dashboard.service.spec.ts` |
+| 2.11 | Блоки дашборда по правам, а не по роли | `docs/06` §6.5 | `visibleDashboardBlocks()` | `dashboard.spec.ts` (8 ролей) |
+| 2.11 | Кассир видит деньги, но не загрузку цеха | `docs/06` §6.5 | права блоков | `dashboard.spec.ts`, `dashboard.service.spec.ts` |
+| 2.11 | Недоступные блоки не запрашиваются | `docs/06` §6.5 | запрос только видимых | `dashboard.service.spec.ts` |
+| 2.11 | Числа дашборда совпадают с отчётами | `docs/06` §6.5 | `ReportsService.build` | `dashboard.service.spec.ts` |
+| 2.11 | Денежные блоки за календарный месяц | `docs/06` §6.5 | `currentMonthPeriod()` | `dashboard.service.spec.ts` (4 теста) |
+| 2.11 | Период включает текущие сутки целиком | `docs/06` §6.5 | `23:59:59.999` | `dashboard.service.spec.ts` |
+| 2.11 | Загрузка цеха — доля; нет данных → `null`, не 0 | `docs/06` §6.5 | `round4(fact/planned)` | `dashboard.service.spec.ts` |
+| 2.11 | Дефект: просрочка включала ЗАКРЫТЫЕ заказы | `docs/06` §3 | `OVERDUE_EXCLUDED_STATUSES` | `orders-summary.spec.ts` (3 теста) |
+| 2.11 | Набор исключённых статусов един для 4 мест | `docs/06` §3 | воркер, дашборд, отчёт, сводка | `orders-summary.spec.ts` |
+| 2.11 | Рекламации «в работе»: только открытые | `docs/06` §6.5 | `OPEN_CLAIM_STATUSES` | `dashboard.service.spec.ts` |
 | 2.11 | Выгрузка уважает права (`report:export`) | `docs/06` §6.4 | `assertCanExport()` | `reports-export.service.spec.ts` |
 | 2.11 | Кассир видит выручку, но не загрузку цеха | `docs/07` §12.2.1 | `REPORT_PERMISSION` | `reports.spec.ts` (4 теста) |
 | 2.11 | Отчёт «Предоплаты» | `docs/06` §5 | `Payment.kind = PREPAYMENT` | этап 5 |

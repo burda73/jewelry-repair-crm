@@ -23,6 +23,7 @@ import { BatchesModule } from './modules/batches/batches.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { EscalationsModule } from './modules/escalations/escalations.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ReportsCacheModule } from './common/cache/reports-cache.module';
 
 /**
@@ -106,6 +107,7 @@ function resolveEnvPaths(): string[] {
     EscalationsModule,
     ReportsCacheModule,
     ReportsModule,
+    DashboardModule,
   ],
   providers: [
     // Rate limit применяется глобально; отдельные эндпоинты переопределяют лимиты.
