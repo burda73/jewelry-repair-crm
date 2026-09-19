@@ -278,13 +278,14 @@ DATABASE_URL="…" node scripts/rotate-demo-passwords.mjs --apply \
 | [`docs/06-reporting.md`](docs/06-reporting.md) | 5 отчётов ТЗ, метрики, кэш, сверка с 1С |
 | [`docs/07-api-spec.md`](docs/07-api-spec.md) | REST API, коды ошибок, идемпотентность, пагинация |
 | [`docs/08-ui-ux.md`](docs/08-ui-ux.md) | Экраны, карточка заказа, мобильные сценарии, дизайн-система |
-| [`docs/09-roadmap.md`](docs/09-roadmap.md) | **План разработки:** 6 этапов, 20 недель, оценки, риски |
+| [`docs/09-roadmap.md`](docs/09-roadmap.md) | **План разработки:** этапы 0–7, оценки, риски |
 | [`docs/10-nfr-security.md`](docs/10-nfr-security.md) | Производительность, безопасность, 152-ФЗ, бэкапы, эксплуатация |
 | [`docs/11-open-questions.md`](docs/11-open-questions.md) | **Открытые вопросы к заказчику** (раздел A блокирует старт) |
 | [`docs/12-requirements-traceability.md`](docs/12-requirements-traceability.md) | **Трассировка ТЗ → код и тесты** — основание для приёмки |
 | [`docs/13-glossary.md`](docs/13-glossary.md) | Глоссарий: единая терминология бизнеса и кода |
 | [`docs/14-deployment.md`](docs/14-deployment.md) | **Развёртывание**: Proxmox, Docker в LXC, внешний nginx-proxy (UI), существующий PostgreSQL |
 | [`docs/15-known-issues.md`](docs/15-known-issues.md) | **Запуск и известные особенности**: дефекты, найденные при первом старте, ограничения |
+| [`docs/16-logistics-completion.md`](docs/16-logistics-completion.md) | **Задание на доработку логистики** (этап 7): интерфейс партий, статусы производства, критерии приёмки |
 | [`infra/db/README.md`](infra/db/README.md) | **Требования к внешнему PostgreSQL 16**: база, роль, расширения, бюджет соединений, бэкапы |
 | [`docs/adr/`](docs/adr/README.md) | Architecture Decision Records: почему решения приняты именно так |
 
