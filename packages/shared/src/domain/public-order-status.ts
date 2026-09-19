@@ -80,6 +80,9 @@ export const PUBLIC_VISIBLE_STATUSES = [
   'QUEUED_FOR_DISPATCH',
   'IN_TRANSIT_TO_PRODUCTION',
   'IN_PRODUCTION',
+  'ACCEPTED_BY_WORKSHOP',
+  'IN_WORK',
+  'WORK_COMPLETED',
   'IN_TRANSIT_TO_STORE',
   'READY_FOR_PICKUP',
   'UNCLAIMED',
@@ -112,6 +115,14 @@ export const PUBLIC_STATUS_LABELS: Record<PublicVisibleStatus, string> = {
   QUEUED_FOR_DISPATCH: 'Готовим к отправке в цех',
   IN_TRANSIT_TO_PRODUCTION: 'Изделие направлено в цех',
   IN_PRODUCTION: 'Идёт ремонт',
+  /*
+   * Три статуса производства для клиента НЕ различаются: ему неважно, распределена
+   * работа между мастерами или уже выполняется. «Идёт ремонт» — то же, что и
+   * `IN_PRODUCTION`: клиент видит непрерывный этап, а не внутреннюю кухню цеха.
+   */
+  ACCEPTED_BY_WORKSHOP: 'Идёт ремонт',
+  IN_WORK: 'Идёт ремонт',
+  WORK_COMPLETED: 'Ремонт завершён, готовим к отправке',
   IN_TRANSIT_TO_STORE: 'Изделие возвращается в магазин',
   READY_FOR_PICKUP: 'Готово к выдаче',
   UNCLAIMED: 'Ждёт вас в магазине',

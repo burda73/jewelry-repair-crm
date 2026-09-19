@@ -236,6 +236,28 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     label: 'Принят цехом',
   },
   {
+    /*
+     * Приём партии цехом ПОСЛЕ введения статусов производства (задача 7.3,
+     * переход 12a в docs/04-status-workflow.md §2.1).
+     *
+     * Переход 12 сохранён: заказы, принятые цехом до этой правки, остаются в
+     * `IN_PRODUCTION`, и лишить их пути дальше нельзя. Новые партии приходят
+     * сюда — в «Принят цехом», откуда менеджер распределяет работу.
+     *
+     * Номер 28: номера 23–27 заняты переходами распределения работы и возврата
+     * (задание §7.3), а этот переход в задании помечен как «12a» — дробный
+     * номер, который нельзя записать в числовой идентификатор.
+     */
+    id: 28,
+    from: ORDER_STATUS.IN_TRANSIT_TO_PRODUCTION,
+    to: ORDER_STATUS.ACCEPTED_BY_WORKSHOP,
+    actors: [ROLE.PRODUCTION_MANAGER],
+    guards: [GUARD.BATCH_RECEIVED_BY_WORKSHOP],
+    effects: [EFFECT.SET_PRODUCTION_STARTED_AT, EFFECT.SET_DUE_AT],
+    requiresReason: false,
+    label: 'Принят цехом',
+  },
+  {
     id: 13,
     from: ORDER_STATUS.IN_PRODUCTION,
     to: ORDER_STATUS.QUEUED_FOR_DISPATCH,
@@ -339,6 +361,88 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     effects: [EFFECT.CLEAR_ESCALATION],
     requiresReason: true,
     label: 'Отказ от оплаты (акт, невостребованный)',
+  },
+  {
+    /*
+     * Распределение работы: исполнитель назначен, изделие выдано ювелиру.
+     *
+     * Guard `PERFORMER_ASSIGNED` проверяет запись `OrderAssignment` со статусом
+     * `ASSIGNED`/`IN_PROGRESS`. До задачи 7.2 такие записи не создавались ничем,
+     * поэтому переход был бы недостижим — сейчас его создаёт маршрут назначения.
+     */
+    id: 23,
+    from: ORDER_STATUS.ACCEPTED_BY_WORKSHOP,
+    to: ORDER_STATUS.IN_WORK,
+    actors: [ROLE.PRODUCTION_MANAGER],
+    guards: [GUARD.PERFORMER_ASSIGNED],
+    /*
+     * Эффектов нет намеренно: запись об исполнителе в историю делает сервис
+     * назначения (задача 7.2) — она содержит ФИО и плановые часы, которых в
+     * таблице переходов нет. Эффект здесь дублировал бы эту запись.
+     */
+    effects: [],
+    requiresReason: false,
+    label: 'Выдано в работу',
+  },
+  {
+    /* Работа выполнена и принята менеджером: изделие готово к возврату. */
+    id: 24,
+    from: ORDER_STATUS.IN_WORK,
+    to: ORDER_STATUS.WORK_COMPLETED,
+    actors: [ROLE.PRODUCTION_MANAGER],
+    guards: [GUARD.WORK_FINISHED],
+    effects: [EFFECT.SET_PRODUCTION_FINISHED_AT],
+    requiresReason: false,
+    label: 'Работы завершены',
+  },
+  {
+    /*
+     * Отправка готового изделия в магазин. Без `PERFORMER_ASSIGNED`: работа уже
+     * принята на переходе 25, и повторное требование исполнителя блокировало бы
+     * отправку, если назначение успели закрыть.
+     */
+    id: 25,
+    from: ORDER_STATUS.WORK_COMPLETED,
+    to: ORDER_STATUS.IN_TRANSIT_TO_STORE,
+    actors: [ROLE.PRODUCTION_MANAGER],
+    guards: [],
+    effects: [EFFECT.SET_DUE_AT],
+    requiresReason: false,
+    label: 'Отправить в магазин',
+  },
+  {
+    /*
+     * Возврат БЕЗ РАБОТ: клиент отказался на этапе согласования, изделие ещё не
+     * отдавали в работу (решение заказчика, docs/00-decisions.md §7.2).
+     *
+     * Отдельный статус отказа не вводится: изделие возвращается обычной партией
+     * «в магазин», принимает его магазин, и уже там заказ переводится в
+     * `CANCELLED`. Причина обязательна — по ней в истории видно, что отказ
+     * клиента произошёл до начала работ.
+     */
+    id: 26,
+    from: ORDER_STATUS.ACCEPTED_BY_WORKSHOP,
+    to: ORDER_STATUS.IN_TRANSIT_TO_STORE,
+    actors: [ROLE.PRODUCTION_MANAGER],
+    guards: [GUARD.REASON_REQUIRED],
+    effects: [EFFECT.SET_DUE_AT],
+    requiresReason: true,
+    label: 'Вернуть в магазин без работ',
+  },
+  {
+    /*
+     * Возврат без работ, когда работа уже начата: ювелир остановлен, изделие
+     * едет в магазин. Причина обязательна — по ней видно, что работа была
+     * прервана, а не завершена.
+     */
+    id: 27,
+    from: ORDER_STATUS.IN_WORK,
+    to: ORDER_STATUS.IN_TRANSIT_TO_STORE,
+    actors: [ROLE.PRODUCTION_MANAGER],
+    guards: [GUARD.REASON_REQUIRED],
+    effects: [EFFECT.SET_PRODUCTION_FINISHED_AT, EFFECT.SET_DUE_AT],
+    requiresReason: true,
+    label: 'Вернуть в магазин без работ (работа прервана)',
   },
 ];
 

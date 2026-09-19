@@ -1615,14 +1615,20 @@ describe('BatchesService: отправка и приём партии (зада�
     expect(target).toBe('IN_TRANSIT_TO_STORE');
   });
 
-  it('приём переводит заказы в IN_PRODUCTION', async () => {
+  it('приём рейса в цех переводит заказы в «Принят цехом»', async () => {
+    /*
+     * Приём ведёт в `ACCEPTED_BY_WORKSHOP`, а не в `IN_PRODUCTION` (задача 7.1):
+     * менеджер должен видеть, какие заказы получены, но ещё не распределены.
+     * Прежний `IN_PRODUCTION` не различал «принят цехом», «в работе» и «работа
+     * сдана», поэтому вопрос «сколько заказов реально в работе» не имел ответа.
+     */
     const prisma = createPrismaMock();
     prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT'));
 
     await makeService(prisma).receive(BATCH_ID, LOGIST);
 
     const target = (workflowMock.transition.mock.calls[0]?.[0] as { to: string }).to;
-    expect(target).toBe('IN_PRODUCTION');
+    expect(target).toBe('ACCEPTED_BY_WORKSHOP');
   });
 
   it('приём рейса из цеха переводит заказы в READY_FOR_PICKUP', async () => {

@@ -21,14 +21,21 @@ import {
 import { ROLE } from './roles.js';
 
 describe('Статусная модель: целостность', () => {
-  it('содержит ровно 22 перехода, как в docs/04-status-workflow.md §2', () => {
-    expect(ORDER_TRANSITIONS).toHaveLength(22);
+  it('содержит 28 переходов: 22 базовых (docs/04 §2) и 6 этапа производства (§2.1)', () => {
+    /*
+     * 1–22 — базовые переходы таблицы §2; 23–27 и 28 — распределение работы,
+     * возврат без работ и приём партии цехом по новым статусам (задача 7.3).
+     * Они описаны в docs/04-status-workflow.md §2.1, а не в таблице §2: та
+     * построчно сверяется с кодом тестом `docs-sync.spec.ts`, и нереализованные
+     * переходы в ней лишили бы стража силы.
+     */
+    expect(ORDER_TRANSITIONS).toHaveLength(28);
   });
 
-  it('идентификаторы переходов уникальны и идут по порядку 1..22', () => {
+  it('идентификаторы переходов уникальны и покрывают 1..28', () => {
     const ids = ORDER_TRANSITIONS.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect([...ids].sort((a, b) => a - b)).toEqual(Array.from({ length: 22 }, (_, i) => i + 1));
+    expect([...ids].sort((a, b) => a - b)).toEqual(Array.from({ length: 28 }, (_, i) => i + 1));
   });
 
   it('нет дублирующихся пар «из → в»', () => {

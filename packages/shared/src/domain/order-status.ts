@@ -10,7 +10,20 @@ export const ORDER_STATUS = {
   ACCEPTED: 'ACCEPTED',
   QUEUED_FOR_DISPATCH: 'QUEUED_FOR_DISPATCH',
   IN_TRANSIT_TO_PRODUCTION: 'IN_TRANSIT_TO_PRODUCTION',
+  /**
+   * Заказ физически в цехе; работа ещё не распределена.
+   *
+   * Сохраняется ради заказов, которые уже прошли приём цехом до введения
+   * отдельных статусов производства (задача 7.1). Новые заказы идут через
+   * `ACCEPTED_BY_WORKSHOP` → `IN_WORK` → `WORK_COMPLETED`.
+   */
   IN_PRODUCTION: 'IN_PRODUCTION',
+  /** Партия принята цехом: менеджер получил изделия и распределяет работу. */
+  ACCEPTED_BY_WORKSHOP: 'ACCEPTED_BY_WORKSHOP',
+  /** Исполнитель назначен, работа идёт. */
+  IN_WORK: 'IN_WORK',
+  /** Работа выполнена и принята менеджером: изделие готово к возврату. */
+  WORK_COMPLETED: 'WORK_COMPLETED',
   IN_TRANSIT_TO_STORE: 'IN_TRANSIT_TO_STORE',
   READY_FOR_PICKUP: 'READY_FOR_PICKUP',
   UNCLAIMED: 'UNCLAIMED',
@@ -48,6 +61,9 @@ export const STATUS_STAGE: Record<OrderStatus, OrderStage> = {
   QUEUED_FOR_DISPATCH: ORDER_STAGE.QUEUE,
   IN_TRANSIT_TO_PRODUCTION: ORDER_STAGE.LOGISTICS_OUT,
   IN_PRODUCTION: ORDER_STAGE.PRODUCTION,
+  ACCEPTED_BY_WORKSHOP: ORDER_STAGE.PRODUCTION,
+  IN_WORK: ORDER_STAGE.PRODUCTION,
+  WORK_COMPLETED: ORDER_STAGE.PRODUCTION,
   IN_TRANSIT_TO_STORE: ORDER_STAGE.LOGISTICS_IN,
   READY_FOR_PICKUP: ORDER_STAGE.PICKUP,
   UNCLAIMED: ORDER_STAGE.PICKUP,
@@ -73,11 +89,25 @@ export const ACTIVE_STATUSES: readonly OrderStatus[] = ALL_ORDER_STATUSES.filter
   (s) => !isTerminalStatus(s) && s !== ORDER_STATUS.DRAFT,
 );
 
-/** Статусы, в которых заказ физически находится в производстве. */
+/**
+ * Статусы, в которых заказ физически находится в производстве.
+ *
+ * `IN_PRODUCTION` сохранён в наборе наравне с новыми статусами: заказы,
+ * принятые цехом до задачи 7.1, остаются в нём, и исключение его из набора
+ * сделало бы их невидимыми для загрузки производства и отчётов.
+ */
 export const IN_PRODUCTION_STATUSES: readonly OrderStatus[] = [
   ORDER_STATUS.IN_PRODUCTION,
+  ORDER_STATUS.ACCEPTED_BY_WORKSHOP,
+  ORDER_STATUS.IN_WORK,
+  ORDER_STATUS.WORK_COMPLETED,
   ORDER_STATUS.REWORK,
 ];
+
+/** Находится ли заказ в производстве (в цехе). */
+export function isInProduction(status: OrderStatus): boolean {
+  return IN_PRODUCTION_STATUSES.includes(status);
+}
 
 /** Статусы, в которых заказ находится на стороне магазина (можно выдать клиенту). */
 export const AT_STORE_STATUSES: readonly OrderStatus[] = [
@@ -94,6 +124,9 @@ export const STATUS_LABELS: Record<OrderStatus, string> = {
   QUEUED_FOR_DISPATCH: 'В очереди на отправку',
   IN_TRANSIT_TO_PRODUCTION: 'В пути в цех',
   IN_PRODUCTION: 'В производстве',
+  ACCEPTED_BY_WORKSHOP: 'Принят цехом',
+  IN_WORK: 'Выдано в работу',
+  WORK_COMPLETED: 'Работы завершены',
   IN_TRANSIT_TO_STORE: 'В пути в магазин',
   READY_FOR_PICKUP: 'Готов к выдаче',
   UNCLAIMED: 'Невостребовано',
@@ -132,6 +165,9 @@ export const STATUS_COLORS: Record<OrderStatus, StatusTone> = {
   QUEUED_FOR_DISPATCH: 'blue',
   IN_TRANSIT_TO_PRODUCTION: 'violet',
   IN_PRODUCTION: 'cyan',
+  ACCEPTED_BY_WORKSHOP: 'cyan',
+  IN_WORK: 'cyan',
+  WORK_COMPLETED: 'cyan',
   IN_TRANSIT_TO_STORE: 'violet',
   READY_FOR_PICKUP: 'green',
   UNCLAIMED: 'orange',

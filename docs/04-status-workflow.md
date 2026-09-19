@@ -28,12 +28,6 @@
 
 ## 2. Допустимые переходы
 
-> **Статусы `ACCEPTED_BY_WORKSHOP`, `IN_WORK`, `WORK_COMPLETED` и переходы 12a, 23–27 —
-> планируемые (этап 7).** Они описаны в задании `docs/16-logistics-completion.md` и на
-> момент написания этого документа в коде отсутствуют. `IN_PRODUCTION` сохраняется:
-> в нём находятся заказы, принятые цехом до введения новых статусов, и переходы 12
-> и 14 продолжают для них работать.
-
 Для каждого перехода указаны: требуемая роль (или `SYSTEM`), проверяемые условия (guard)
 и побочные эффекты.
 
@@ -61,31 +55,20 @@
 | 20 | `READY_FOR_PICKUP` | `REFUSED` | RECEIVER, MANAGER, ADMIN | Есть `RefusalAct` | Изделие на ответном хранении |
 | 21 | `UNCLAIMED` | `COMPLETED` | RECEIVER, CASHIER, ADMIN | `paidAmount >= totalAmount` | `completedAt` |
 | 22 | `UNCLAIMED` | `REFUSED` | MANAGER, ADMIN | Есть `RefusalAct` | — |
+| 23 | `ACCEPTED_BY_WORKSHOP` | `IN_WORK` | PRODUCTION_MANAGER | Назначен исполнитель (`OrderAssignment`) | Запись в историю: ФИО исполнителя |
+| 24 | `IN_WORK` | `WORK_COMPLETED` | PRODUCTION_MANAGER | Работа принята менеджером | `productionFinishedAt` |
+| 25 | `WORK_COMPLETED` | `IN_TRANSIT_TO_STORE` | PRODUCTION_MANAGER | — | `dueAt` по нормативу доставки |
+| 26 | `ACCEPTED_BY_WORKSHOP` | `IN_TRANSIT_TO_STORE` | PRODUCTION_MANAGER | Причина обязательна | Возврат **без работ** (отказ клиента); `dueAt` |
+| 27 | `IN_WORK` | `IN_TRANSIT_TO_STORE` | PRODUCTION_MANAGER | Причина обязательна | Возврат **без работ**, работа прерывается; `productionFinishedAt`; `dueAt` |
+| 28 | `IN_TRANSIT_TO_PRODUCTION` | `ACCEPTED_BY_WORKSHOP` | PRODUCTION_MANAGER | Партия фактически принята цехом | `productionStartedAt`; `dueAt` по нормативу производства |
+
+Переходы 12 и 14 сохранены: заказы, принятые цехом до введения статусов производства,
+остаются в `IN_PRODUCTION` и продолжают идти прежним путём. Новые партии приходят
+в `ACCEPTED_BY_WORKSHOP` (переход 28) и далее по 23–27.
 
 **Запрещено по умолчанию:** любой переход из терминального статуса, «прыжок» через этап
 (например `DRAFT` → `IN_PRODUCTION`), изменение статуса без прав на него.
 Все запрещённые попытки логируются в аудит с пометкой `denied`.
-
-### 2.1. Планируемые переходы этапа 7 (в коде ещё отсутствуют)
-
-Таблица §2 — **зеркало кода**: её построчно сверяет с `ORDER_TRANSITIONS` тест
-`packages/shared/src/domain/docs-sync.spec.ts`. Планируемые переходы в неё не
-добавляются, иначе страж потерял бы силу (сверял бы документ с документом).
-Они описаны здесь и в задании `docs/16-logistics-completion.md` §7.3.
-
-| Из | В | Кто | Условия | Эффекты |
-|----|---|-----|---------|---------|
-| `IN_TRANSIT_TO_PRODUCTION` | `ACCEPTED_BY_WORKSHOP` | PRODUCTION_MANAGER | партия принята цехом | `productionStartedAt`; `dueAt` по нормативу производства |
-| `ACCEPTED_BY_WORKSHOP` | `IN_WORK` | PRODUCTION_MANAGER | назначен исполнитель | запись в историю: ФИО исполнителя |
-| `IN_WORK` | `WORK_COMPLETED` | PRODUCTION_MANAGER | работа принята менеджером | `productionFinishedAt` |
-| `WORK_COMPLETED` | `IN_TRANSIT_TO_STORE` | PRODUCTION_MANAGER | — | `dueAt` по нормативу доставки |
-| `ACCEPTED_BY_WORKSHOP` | `IN_TRANSIT_TO_STORE` | PRODUCTION_MANAGER | причина обязательна | возврат **без работ** (отказ клиента); `dueAt` |
-| `IN_WORK` | `IN_TRANSIT_TO_STORE` | PRODUCTION_MANAGER | причина обязательна | возврат **без работ**, работа прерывается; `dueAt` |
-
-Переходы 12 (`IN_TRANSIT_TO_PRODUCTION → IN_PRODUCTION`) и 14
-(`IN_PRODUCTION → IN_TRANSIT_TO_STORE`) **сохраняются** для заказов, уже находящихся
-в `IN_PRODUCTION`: приём партии цехом переключается на `ACCEPTED_BY_WORKSHOP` только
-после ввода новых статусов, а старые заказы продолжают идти прежним путём.
 
 ## 3. Нормативы этапов (ТЗ п. 2.7)
 

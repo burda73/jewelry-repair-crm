@@ -545,16 +545,23 @@ describe('Отправка и приём партии (задача 2.5)', () =>
     expect(batchReceiveLockReason(BATCH_STATUS.IN_TRANSIT)).toBeNull();
   });
 
-  it('рейс в цех: отправка даёт IN_TRANSIT_TO_PRODUCTION, приём — IN_PRODUCTION', () => {
+  it('рейс в цех: отправка даёт IN_TRANSIT_TO_PRODUCTION, приём — ACCEPTED_BY_WORKSHOP', () => {
     /*
      * Ключевое различие: «в пути» для рейса в цех и из цеха — РАЗНЫЕ статусы, и
      * заказы этих рейсов движутся по разным веткам. Перепутать их значит
      * отправить заказ в цех, который ждёт его из цеха.
+     *
+     * Приём ведёт в «Принят цехом», а не в `IN_PRODUCTION` (задача 7.1): менеджер
+     * должен видеть, какие заказы он получил, но ещё не распределил. Прежний
+     * `IN_PRODUCTION` означал «в производстве вообще» и не различал «принят»,
+     * «в работе» и «работа сдана» (дефект 63).
      */
     expect(batchOrderTargetStatus(BATCH_DIRECTION.TO_PRODUCTION, 'DISPATCH')).toBe(
       'IN_TRANSIT_TO_PRODUCTION',
     );
-    expect(batchOrderTargetStatus(BATCH_DIRECTION.TO_PRODUCTION, 'RECEIVE')).toBe('IN_PRODUCTION');
+    expect(batchOrderTargetStatus(BATCH_DIRECTION.TO_PRODUCTION, 'RECEIVE')).toBe(
+      'ACCEPTED_BY_WORKSHOP',
+    );
   });
 
   it('рейс в магазин: отправка даёт IN_TRANSIT_TO_STORE, приём — READY_FOR_PICKUP', () => {

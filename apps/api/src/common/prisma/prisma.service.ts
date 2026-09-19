@@ -102,7 +102,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         };
 
       case 'PRODUCTION':
-        // Всё, что в производстве, логистике или ожидает их.
+        /*
+         * Всё, что в производстве, логистике или ожидает их.
+         *
+         * Список ведётся строками, а не константой из домена: у этого фильтра
+         * тип Prisma, и строка перечисления здесь — часть запроса. Поэтому при
+         * добавлении статуса производства его нужно внести и сюда; тест
+         * `prisma-scope.spec.ts` сверяет список с `IN_PRODUCTION_STATUSES`,
+         * чтобы «забытый статус» ловился, а не прятался.
+         */
         return {
           OR: [
             {
@@ -111,6 +119,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
                   'QUEUED_FOR_DISPATCH',
                   'IN_TRANSIT_TO_PRODUCTION',
                   'IN_PRODUCTION',
+                  'ACCEPTED_BY_WORKSHOP',
+                  'IN_WORK',
+                  'WORK_COMPLETED',
                   'REWORK',
                   'IN_TRANSIT_TO_STORE',
                 ],

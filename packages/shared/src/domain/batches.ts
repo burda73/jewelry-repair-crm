@@ -457,9 +457,16 @@ export function batchOrderTargetStatus(
   phase: 'DISPATCH' | 'RECEIVE',
 ): OrderStatus | null {
   if (direction === BATCH_DIRECTION.TO_PRODUCTION) {
+    /*
+     * Приём партии цехом ведёт в `ACCEPTED_BY_WORKSHOP`, а не в `IN_PRODUCTION`:
+     * менеджер должен видеть, какие заказы он получил, но ещё не распределил
+     * (задача 7.1, дефект 63). `IN_PRODUCTION` остаётся статусом заказов,
+     * принятых цехом до введения новых статусов; переход в него сохранён как
+     * правило 12, но партиями больше не выставляется.
+     */
     return phase === 'DISPATCH'
       ? ORDER_STATUS.IN_TRANSIT_TO_PRODUCTION
-      : ORDER_STATUS.IN_PRODUCTION;
+      : ORDER_STATUS.ACCEPTED_BY_WORKSHOP;
   }
   if (direction === BATCH_DIRECTION.TO_STORE) {
     return phase === 'DISPATCH' ? ORDER_STATUS.IN_TRANSIT_TO_STORE : ORDER_STATUS.READY_FOR_PICKUP;
