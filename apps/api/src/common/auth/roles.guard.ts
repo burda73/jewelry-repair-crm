@@ -1,6 +1,6 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ROLES_KEY, PERMISSIONS_KEY } from './roles.decorator';
+import { ROLES_KEY, PERMISSIONS_KEY, STRICT_PERMISSION_KEY } from './roles.decorator';
 import { ROLE, permissionsFor, type RoleCode, type Permission } from '@app/shared';
 import type { RequestWithUser } from './jwt-auth.guard';
 
@@ -23,6 +23,16 @@ export class RolesGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+    /*
+     * Требовать право строго — без безусловного пропуска администратора. Нужно
+     * там, где право существует ради РАЗДЕЛЕНИЯ обязанностей: если администратор
+     * правит цены и он же их утверждает, подпись под ценами перестаёт что-либо
+     * значить. См. `RequireStrictPermission`.
+     */
+    const strictPermission = this.reflector.getAllAndOverride<boolean>(STRICT_PERMISSION_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
     // Эндпоинт не ограничен — пропускаем.
     if (!requiredRoles?.length && !requiredPermissions?.length) return true;
@@ -37,8 +47,15 @@ export class RolesGuard implements CanActivate {
       });
     }
 
-    // Администратор имеет полный доступ (каждое действие фиксируется в аудите).
-    if (user.roles.includes(ROLE.ADMIN)) return true;
+    /*
+     * Администратор имеет полный доступ (каждое действие фиксируется в аудите),
+     * КРОМЕ проверок, помеченных как строгие. Безусловный пропуск здесь стоял
+     * раньше проверки прав, поэтому «прочерк» в матрице прав для администратора
+     * не действовал: администратор утверждал прейскурант, хотя по матрице
+     * (`docs/02-domain-and-roles.md` §4) этого права у него нет, — а контрольная
+     * функция без разделения обязанностей контролем не является.
+     */
+    if (user.roles.includes(ROLE.ADMIN) && strictPermission !== true) return true;
 
     if (requiredRoles?.length) {
       const hasRole = requiredRoles.some((role) => user.roles.includes(role));

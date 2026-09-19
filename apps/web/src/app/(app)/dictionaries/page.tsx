@@ -20,6 +20,7 @@ import {
   useUpdateWorkCategory,
   useUpdateWorkshop,
 } from '@/lib/queries';
+import { PriceListSection } from './price-list-section';
 import { describeApiError } from '@/lib/api-client';
 import { formatMinor } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
@@ -56,8 +57,19 @@ const SETTINGS_MANAGE = 'settings:manage';
  */
 const PERFORMER_MANAGE = 'performer:manage';
 
-/** Вкладки экрана. Исполнители выделены: у них отдельное право. */
-type Tab = 'stores' | 'workshops' | 'performers' | 'categories' | 'stones';
+/** Вкладки экрана. Исполнители и прейскурант выделены: у них отдельные права. */
+type Tab = 'stores' | 'workshops' | 'performers' | 'categories' | 'stones' | 'priceList';
+
+/**
+ * Права прейскуранта.
+ *
+ * Вкладку ведут две роли с РАЗНЫМИ правами: администратор правит и отправляет
+ * версии (`pricelist:edit`), руководитель и главный бухгалтер их утверждают
+ * (`pricelist:approve`). Доступ к вкладке открывается по любому из двух — иначе
+ * утверждающий не смог бы дойти до версии, которую должен подписать.
+ */
+const PRICELIST_EDIT = 'pricelist:edit';
+const PRICELIST_APPROVE = 'pricelist:approve';
 
 /**
  * Справочники: магазины, цеха, исполнители, категории работ и типы камней
@@ -90,25 +102,50 @@ export default function DictionariesPage(): ReactNode {
 
   const canSettings = can(SETTINGS_MANAGE);
   const canPerformers = can(PERFORMER_MANAGE);
+  const canPriceList = can(PRICELIST_EDIT) || can(PRICELIST_APPROVE);
 
-  // Если прав на исполнителей нет, а вкладка открыта (например, права изменили
-  // в другой вкладке), экран не должен оставаться на недоступном разделе.
-  const effectiveTab: Tab = tab === 'performers' && !canPerformers ? 'stores' : tab;
+  /*
+   * Показывать вкладку, на которую нет прав, нельзя: «показать и запретить» хуже,
+   * чем не показывать. Поэтому вкладка «Прейскурант» есть только у тех, кто
+   * может что-то с ней сделать, — а `settings:manage` даёт права на остальные
+   * справочники.
+   */
+  const canTab = (id: Tab): boolean => {
+    if (id === 'performers') return canPerformers;
+    if (id === 'priceList') return canPriceList;
+    // Остальные вкладки — административные справочники, право `settings:manage`.
+    return canSettings;
+  };
 
+  // Если права на вкладку нет, а она открыта (например, права изменили в другой
+  // вкладке), экран не должен оставаться на недоступном разделе.
+  const effectiveTab: Tab = canTab(tab) ? tab : canSettings ? 'stores' : 'priceList';
+
+  /*
+   * Порядок вкладок: сначала справочники для приёма заказа, затем прейскурант.
+   * Прейскурант стоит последним намеренно — его открывают реже, чем магазины и
+   * категории, а на узком экране (от 360px) до него нужно долистать.
+   */
   const tabs = useMemo<{ id: Tab; label: string }[]>(() => {
-    const list: { id: Tab; label: string }[] = [
-      { id: 'stores', label: t.dictionaries.tabStores },
-      { id: 'workshops', label: t.dictionaries.tabWorkshops },
-    ];
+    const list: { id: Tab; label: string }[] = [];
+    if (canSettings) {
+      list.push(
+        { id: 'stores', label: t.dictionaries.tabStores },
+        { id: 'workshops', label: t.dictionaries.tabWorkshops },
+      );
+    }
     if (canPerformers) list.push({ id: 'performers', label: t.dictionaries.tabPerformers });
-    list.push(
-      { id: 'categories', label: t.dictionaries.tabCategories },
-      { id: 'stones', label: t.dictionaries.tabStones },
-    );
+    if (canSettings) {
+      list.push(
+        { id: 'categories', label: t.dictionaries.tabCategories },
+        { id: 'stones', label: t.dictionaries.tabStones },
+      );
+    }
+    if (canPriceList) list.push({ id: 'priceList', label: t.priceList.tab });
     return list;
-  }, [canPerformers]);
+  }, [canSettings, canPerformers, canPriceList]);
 
-  if (!canSettings && !canPerformers) {
+  if (!canSettings && !canPerformers && !canPriceList) {
     return <EmptyState title={t.errors.forbidden} hint={t.dictionaries.forbidden} />;
   }
 
@@ -139,15 +176,19 @@ export default function DictionariesPage(): ReactNode {
           ))}
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-slate-600">
-          <input
-            type="checkbox"
-            checked={showInactive}
-            onChange={(event) => setShowInactive(event.target.checked)}
-            className="h-4 w-4 rounded border-slate-300"
-          />
-          {t.dictionaries.showInactive}
-        </label>
+        {/* Прейскурант — список версий со статусами, а не записей с признаком
+            активности: отключать в нём нечего, поэтому фильтр не показываем. */}
+        {effectiveTab === 'priceList' ? null : (
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={showInactive}
+              onChange={(event) => setShowInactive(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            {t.dictionaries.showInactive}
+          </label>
+        )}
       </div>
 
       {effectiveTab === 'stores' ? <StoresSection showInactive={showInactive} /> : null}
@@ -155,6 +196,7 @@ export default function DictionariesPage(): ReactNode {
       {effectiveTab === 'performers' ? <PerformersSection showInactive={showInactive} /> : null}
       {effectiveTab === 'categories' ? <CategoriesSection showInactive={showInactive} /> : null}
       {effectiveTab === 'stones' ? <StonesSection showInactive={showInactive} /> : null}
+      {effectiveTab === 'priceList' ? <PriceListSection /> : null}
     </div>
   );
 }

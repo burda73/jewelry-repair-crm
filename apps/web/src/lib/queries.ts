@@ -28,7 +28,10 @@ import type {
   CustomerDetail,
   CustomerSearchItem,
   PaymentResult,
+  PriceListItemEditorInput,
   PriceListItemOption,
+  PriceListVersionDetail,
+  PriceListVersionItem,
   SearchResultItem,
   StoneTypeOption,
   StoreOption,
@@ -532,6 +535,129 @@ export function usePriceListItems(): UseQueryResult<PriceListItemOption[]> {
     queryKey: ['dictionaries', 'price-list-items'],
     queryFn: () => api.get<PriceListItemOption[]>('/price-list-items'),
     staleTime: DICTIONARY_STALE_TIME,
+  });
+}
+
+/** Ключи запросов прейскуранта: список версий и карточка редактора. */
+export const priceListKeys = {
+  all: ['price-lists'] as const,
+  list: ['price-lists', 'list'] as const,
+  detail: (id: string) => ['price-lists', 'detail', id] as const,
+};
+
+/**
+ * Версии прейскуранта для экрана администратора.
+ *
+ * `staleTime: 0`: в отличие от справочников для мастера приёма, этот список
+ * меняется в ходе работы — администратор создаёт версию и сразу видит её.
+ * Кэшировать на 10 минут значило бы показывать устаревшее состояние сразу
+ * после собственного действия.
+ */
+export function usePriceListVersions(): UseQueryResult<PriceListVersionItem[]> {
+  return useQuery<PriceListVersionItem[], Error>({
+    queryKey: priceListKeys.list,
+    queryFn: () => api.get<PriceListVersionItem[]>('/price-lists'),
+  });
+}
+
+/** Версия прейскуранта с позициями для редактора (`GET /price-lists/:id/editor`). */
+export function usePriceListVersion(id: string | null): UseQueryResult<PriceListVersionDetail> {
+  return useQuery<PriceListVersionDetail, Error>({
+    queryKey: priceListKeys.detail(id ?? ''),
+    queryFn: () => api.get<PriceListVersionDetail>(`/price-lists/${id ?? ''}/editor`),
+    enabled: id !== null,
+  });
+}
+
+/** Обновлять список версий и карточку редактора после любого изменения. */
+function useInvalidatePriceLists(): () => void {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: priceListKeys.all });
+    // Действующий прейскурант меняется при утверждении, поэтому мастер приёма
+    // должен получить новые цены, а не показывать старые до истечения кэша.
+    void queryClient.invalidateQueries({ queryKey: ['dictionaries', 'price-list-items'] });
+  };
+}
+
+export function useCreatePriceListVersion(): UseMutationResult<
+  PriceListVersionItem,
+  Error,
+  { storeId?: string; effectiveFrom: string; comment?: string }
+> {
+  const invalidate = useInvalidatePriceLists();
+  return useMutation({
+    mutationFn: (input: { storeId?: string; effectiveFrom: string; comment?: string }) =>
+      api.post<PriceListVersionItem>('/price-lists', input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdatePriceListVersion(): UseMutationResult<
+  PriceListVersionItem,
+  Error,
+  { id: string; input: Record<string, unknown> }
+> {
+  const invalidate = useInvalidatePriceLists();
+  return useMutation({
+    mutationFn: (variables: { id: string; input: Record<string, unknown> }) =>
+      api.patch<PriceListVersionItem>(`/price-lists/${variables.id}`, variables.input),
+    onSuccess: invalidate,
+  });
+}
+
+export function usePriceListAction(): UseMutationResult<
+  PriceListVersionItem,
+  Error,
+  { id: string; action: string; body?: Record<string, unknown> }
+> {
+  const invalidate = useInvalidatePriceLists();
+  return useMutation({
+    mutationFn: (variables: { id: string; action: string; body?: Record<string, unknown> }) =>
+      api.post<PriceListVersionItem>(
+        `/price-lists/${variables.id}/${variables.action}`,
+        variables.body ?? {},
+      ),
+    onSuccess: invalidate,
+  });
+}
+
+export function useCreatePriceListItem(): UseMutationResult<
+  { id: string },
+  Error,
+  { versionId: string; input: PriceListItemEditorInput }
+> {
+  const invalidate = useInvalidatePriceLists();
+  return useMutation({
+    mutationFn: (variables: { versionId: string; input: PriceListItemEditorInput }) =>
+      api.post<{ id: string }>(`/price-lists/${variables.versionId}/items`, variables.input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdatePriceListItem(): UseMutationResult<
+  { id: string },
+  Error,
+  { itemId: string; input: PriceListItemEditorInput }
+> {
+  const invalidate = useInvalidatePriceLists();
+  return useMutation({
+    mutationFn: (variables: { itemId: string; input: PriceListItemEditorInput }) =>
+      api.patch<{ id: string }>(`/price-list-items/${variables.itemId}`, variables.input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeactivatePriceListItem(): UseMutationResult<
+  { id: string; isActive: boolean },
+  Error,
+  string
+> {
+  const invalidate = useInvalidatePriceLists();
+  return useMutation({
+    mutationFn: (itemId: string) =>
+      api.post<{ id: string; isActive: boolean }>(`/price-list-items/${itemId}/deactivate`, {}),
+    onSuccess: invalidate,
   });
 }
 

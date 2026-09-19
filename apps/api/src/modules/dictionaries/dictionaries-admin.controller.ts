@@ -1,4 +1,5 @@
-import { Body, Controller, HttpCode, HttpStatus, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post } from '@nestjs/common';
+import { PriceListAdminService } from './price-list-admin.service';
 import { ApiTags, ApiOperation, ApiCookieAuth } from '@nestjs/swagger';
 import { PERMISSION } from '@app/shared';
 import { DictionariesAdminService } from './dictionaries-admin.service';
@@ -9,7 +10,8 @@ import type {
   WorkCategoryDto,
   WorkshopDto,
 } from './dictionaries.service';
-import { RequirePermission } from '../../common/auth/roles.decorator';
+import type { PriceListVersionDetail, PriceListVersionListItem } from './dictionaries.service';
+import { RequirePermission, RequireStrictPermission } from '../../common/auth/roles.decorator';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 
@@ -43,7 +45,10 @@ import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 @ApiCookieAuth()
 @Controller()
 export class DictionariesAdminController {
-  constructor(private readonly adminService: DictionariesAdminService) {}
+  constructor(
+    private readonly adminService: DictionariesAdminService,
+    private readonly priceListService: PriceListAdminService,
+  ) {}
 
   // -------------------------------------------------------------------------
   // Магазины
@@ -178,5 +183,168 @@ export class DictionariesAdminController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<StoneTypeDto> {
     return this.adminService.updateStoneType(id, body, user);
+  }
+
+  // -------------------------------------------------------------------------
+  // Прейскурант (задачи 1.4.2–1.4.3)
+  // -------------------------------------------------------------------------
+
+  /*
+   * Права разделены намеренно, по матрице `docs/02-domain-and-roles.md` §4:
+   *
+   *  * `PRICELIST_EDIT` — ADMIN. Правит и отправляет на утверждение;
+   *  * `PRICELIST_APPROVE` — MANAGER и CHIEF_ACCOUNTANT. Достаточно ОДНОЙ
+   *    подписи (ответ A2, `docs/00-decisions.md` §1.2), поэтому право есть у
+   *    обеих ролей, и approving фиксируется в аудите по конкретному сотруднику.
+   *
+   * Администратор по матрице прейскурант НЕ утверждает. Это не случайность:
+   * подпись под ценами — контрольная функция, и совмещать её с правом правки
+   * значило бы позволить одному человеку и назначить цену, и её утвердить.
+   */
+  @Post('price-lists')
+  @RequirePermission(PERMISSION.PRICELIST_EDIT)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Создать черновик версии прейскуранта' })
+  createPriceList(
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PriceListVersionListItem> {
+    return this.priceListService.createVersion(body, user);
+  }
+
+  @Get('price-lists/:id/editor')
+  @RequirePermission(PERMISSION.PRICELIST_EDIT)
+  @ApiOperation({ summary: 'Версия прейскуранта с позициями для редактора' })
+  findPriceListForEdit(@Param('id') id: string): Promise<PriceListVersionDetail> {
+    return this.priceListService.findVersion(id);
+  }
+
+  @Patch('price-lists/:id')
+  @RequirePermission(PERMISSION.PRICELIST_EDIT)
+  @ApiOperation({ summary: 'Изменить черновик версии (даты, примечание, магазин)' })
+  updatePriceList(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PriceListVersionListItem> {
+    return this.priceListService.updateVersion(id, body, user);
+  }
+
+  @Post('price-lists/:id/items')
+  @RequirePermission(PERMISSION.PRICELIST_EDIT)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Добавить позицию в черновик прейскуранта' })
+  createPriceListItem(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ id: string }> {
+    return this.priceListService.createItem(id, body, user);
+  }
+
+  @Patch('price-list-items/:itemId')
+  @RequirePermission(PERMISSION.PRICELIST_EDIT)
+  @ApiOperation({ summary: 'Изменить позицию прейскуранта (цена, ставки по металлам)' })
+  updatePriceListItem(
+    @Param('itemId') itemId: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ id: string }> {
+    return this.priceListService.updateItem(itemId, body, user);
+  }
+
+  /**
+   * Отключить позицию. `DELETE` отсутствует: на позицию ссылаются работы уже
+   * принятых заказов, и удаление разорвало бы историю расчётов.
+   */
+  @Post('price-list-items/:itemId/deactivate')
+  @RequirePermission(PERMISSION.PRICELIST_EDIT)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Отключить позицию прейскуранта (isActive: false)' })
+  deactivatePriceListItem(
+    @Param('itemId') itemId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ id: string; isActive: boolean }> {
+    return this.priceListService.deactivateItem(itemId, user);
+  }
+
+  /**
+   * Отправить версию на утверждение.
+   *
+   * `PRICELIST_EDIT`: отправляет тот, кто правил. Утверждает уже другая роль —
+   * см. пояснение о разделении прав выше.
+   */
+  @Post('price-lists/:id/submit')
+  @RequirePermission(PERMISSION.PRICELIST_EDIT)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Отправить версию прейскуранта на утверждение' })
+  submitPriceList(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PriceListVersionListItem> {
+    return this.priceListService.applyAction(id, 'SUBMIT', {}, user);
+  }
+
+  @Post('price-lists/:id/approve')
+  @RequireStrictPermission(PERMISSION.PRICELIST_APPROVE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Утвердить версию прейскуранта (одной подписи достаточно)' })
+  approvePriceList(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PriceListVersionListItem> {
+    return this.priceListService.applyAction(id, 'APPROVE', {}, user);
+  }
+
+  @Post('price-lists/:id/reject')
+  @RequireStrictPermission(PERMISSION.PRICELIST_APPROVE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Отклонить версию прейскуранта с причиной' })
+  rejectPriceList(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PriceListVersionListItem> {
+    return this.priceListService.applyAction(id, 'REJECT', body, user);
+  }
+
+  @Post('price-lists/:id/restore-to-draft')
+  @RequirePermission(PERMISSION.PRICELIST_EDIT)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Вернуть версию из «на утверждении» в черновик' })
+  restorePriceListToDraft(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PriceListVersionListItem> {
+    return this.priceListService.applyAction(id, 'RESTORE_TO_DRAFT', {}, user);
+  }
+
+  @Post('price-lists/:id/archive')
+  @RequireStrictPermission(PERMISSION.PRICELIST_APPROVE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Отправить утверждённую версию в архив' })
+  archivePriceList(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PriceListVersionListItem> {
+    return this.priceListService.applyAction(id, 'ARCHIVE', {}, user);
+  }
+
+  /**
+   * Создать новую версию на основе существующей.
+   *
+   * Это и есть способ изменить утверждённые цены: правка их запрещена
+   * (задача 1.4.3), а новая версия начинается с уже набранных позиций.
+   */
+  @Post('price-lists/:id/copy')
+  @RequirePermission(PERMISSION.PRICELIST_EDIT)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Создать новую версию прейскуранта на основе этой' })
+  copyPriceList(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PriceListVersionListItem> {
+    return this.priceListService.applyAction(id, 'COPY', body, user);
   }
 }

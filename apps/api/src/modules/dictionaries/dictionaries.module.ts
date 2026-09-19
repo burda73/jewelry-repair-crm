@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { DictionariesService } from './dictionaries.service';
 import { DictionariesAdminService } from './dictionaries-admin.service';
+import { PriceListAdminService } from './price-list-admin.service';
 import { DictionariesController } from './dictionaries.controller';
 import { DictionariesAdminController } from './dictionaries-admin.controller';
 
@@ -19,7 +20,7 @@ import { DictionariesAdminController } from './dictionaries-admin.controller';
  */
 @Module({
   controllers: [DictionariesController, DictionariesAdminController],
-  providers: [DictionariesService, DictionariesAdminService],
+  providers: [DictionariesService, DictionariesAdminService, PriceListAdminService],
   exports: [DictionariesService],
 })
 export class DictionariesModule {}

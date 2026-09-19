@@ -758,3 +758,86 @@ export interface BatchItem {
 export interface BatchDetail extends Batch {
   items: BatchItem[];
 }
+
+/**
+ * Версия прейскуранта в списке (`GET /price-lists`).
+ *
+ * `status` — из набора `PRICE_LIST_STATUS` в `@app/shared`. Здесь строкой:
+ * сервер отдаёт значение перечисления, а сверять его с набором должен код,
+ * который показывает статус, — так новая версия интерфейса не «застрянет»
+ * на неизвестном статусе.
+ */
+export interface PriceListVersionItem {
+  id: string;
+  version: number;
+  storeId: string | null;
+  status: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  comment: string | null;
+  approvedAt: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+  store: { id: string; code: string; name: string } | null;
+  _count: { items: number };
+}
+
+/** Ставка цены по металлу внутри позиции прейскуранта. */
+export interface PriceListRate {
+  metal: string;
+  priceMinor: number;
+  isFrom: boolean;
+}
+
+/** Позиция прейскуранта в редакторе. */
+export interface PriceListItemEditor {
+  id: string;
+  priceListId: string;
+  categoryId: string | null;
+  code: string;
+  name: string;
+  description: string | null;
+  unit: string;
+  priceMinor: number;
+  priceFrom: boolean;
+  metalCostSeparate: boolean;
+  durationHours: number | null;
+  warrantyMonths: number;
+  requiresPrepayment: boolean;
+  isActive: boolean;
+  category: { id: string; code: string; name: string } | null;
+  rates: PriceListRate[];
+}
+
+/** Версия прейскуранта с позициями для редактора. */
+export interface PriceListVersionDetail {
+  id: string;
+  version: number;
+  storeId: string | null;
+  status: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  comment: string | null;
+  approvedAt: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+  store: { id: string; code: string; name: string } | null;
+  items: PriceListItemEditor[];
+}
+
+/** Ввод позиции прейскуранта при создании и правке. */
+export interface PriceListItemEditorInput {
+  categoryId?: string;
+  code?: string;
+  name?: string;
+  description?: string;
+  unit?: string;
+  priceMinor?: number;
+  priceFrom?: boolean;
+  metalCostSeparate?: boolean;
+  rates?: { metal: string; priceMinor: number; isFrom?: boolean }[];
+  durationHours?: number | null;
+  warrantyMonths?: number;
+  requiresPrepayment?: boolean;
+  isActive?: boolean;
+}

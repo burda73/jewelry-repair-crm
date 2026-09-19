@@ -73,7 +73,7 @@ export const STONE_TYPE_SELECT = Prisma.validator<Prisma.StoneTypeSelect>()({
  * приёма не сможет посчитать заказ по металлу сданного изделия и возьмёт
  * цену по умолчанию, то есть серебряное изделие посчитает по золотому тарифу.
  */
-const PRICE_LIST_ITEM_SELECT = Prisma.validator<Prisma.PriceListItemSelect>()({
+export const PRICE_LIST_ITEM_SELECT = Prisma.validator<Prisma.PriceListItemSelect>()({
   id: true,
   priceListId: true,
   categoryId: true,
@@ -96,12 +96,11 @@ const PRICE_LIST_ITEM_SELECT = Prisma.validator<Prisma.PriceListItemSelect>()({
 });
 
 /** Порядок позиций: по категории прейскуранта, внутри — по артикулу. */
-const PRICE_LIST_ITEM_ORDER = Prisma.validator<Prisma.PriceListItemOrderByWithRelationInput[]>()([
-  { category: { sortOrder: 'asc' } },
-  { code: 'asc' },
-]);
+export const PRICE_LIST_ITEM_ORDER = Prisma.validator<
+  Prisma.PriceListItemOrderByWithRelationInput[]
+>()([{ category: { sortOrder: 'asc' } }, { code: 'asc' }]);
 
-const PRICE_LIST_SELECT = Prisma.validator<Prisma.PriceListVersionSelect>()({
+export const PRICE_LIST_SELECT = Prisma.validator<Prisma.PriceListVersionSelect>()({
   id: true,
   version: true,
   storeId: true,
@@ -121,7 +120,7 @@ const PRICE_LIST_SELECT = Prisma.validator<Prisma.PriceListVersionSelect>()({
  * Отдаются ВСЕ позиции, включая неактивные: администратор должен видеть,
  * какие работы выведены из обращения, а не обнаруживать их пропажу.
  */
-const PRICE_LIST_DETAIL_INCLUDE = Prisma.validator<Prisma.PriceListVersionInclude>()({
+export const PRICE_LIST_DETAIL_INCLUDE = Prisma.validator<Prisma.PriceListVersionInclude>()({
   store: { select: { id: true, code: true, name: true } },
   items: { orderBy: PRICE_LIST_ITEM_ORDER, select: PRICE_LIST_ITEM_SELECT },
 });

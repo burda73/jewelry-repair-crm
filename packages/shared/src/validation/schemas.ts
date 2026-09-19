@@ -449,6 +449,87 @@ export const createPriceListSchema = z.object({
   comment: z.string().max(1000).optional(),
 });
 
+/**
+ * Изменение черновика версии прейскуранта.
+ *
+ * Правится только «шапка»: дата начала действия и примечание. Состав позиций
+ * меняется отдельными запросами — иначе сохранение одной цены отправляло бы весь
+ * документ целиком, и одновременная работа двух администраторов затирала бы
+ * изменения друг друга.
+ */
+export const updatePriceListSchema = z
+  .object({
+    storeId: z.string().cuid().nullable().optional(),
+    effectiveFrom: z.coerce.date(),
+    effectiveTo: z.coerce.date().nullable().optional(),
+    comment: z.string().max(1000).nullable().optional(),
+  })
+  .partial()
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'Укажите хотя бы одно поле для изменения',
+  })
+  .refine(
+    (data) =>
+      data.effectiveTo === undefined ||
+      data.effectiveTo === null ||
+      data.effectiveFrom === undefined ||
+      data.effectiveTo > data.effectiveFrom,
+    {
+      // `effectiveTo` без `effectiveFrom` проверить нельзя — это частичное
+      // изменение; тогда проверку выполнит сервис по текущему значению в базе.
+      message: 'Дата окончания должна быть позже даты начала',
+      path: ['effectiveTo'],
+    },
+  );
+
+/**
+ * Правка позиции прейскуранта: любое подмножество полей.
+ *
+ * `innerType()` достаёт объектную часть полной схемы, поэтому проверка
+ * дублей металлов из `priceListItemSchema` здесь ТЕРЯЕТСЯ — она задана через
+ * `superRefine`. Дубль пришлось бы отклонять нарушением уникального
+ * ограничения БД, а это 500 или невнятная ошибка Prisma вместо указания на
+ * конкретную строку. Поэтому проверка повторена явно.
+ */
+export const updatePriceListItemSchema = priceListItemSchema
+  .innerType()
+  .partial()
+  .refine((data) => Object.values(data).some((value) => value !== undefined), {
+    message: 'Укажите хотя бы одно поле для изменения',
+  })
+  .superRefine((value, ctx) => {
+    if (value.rates === undefined) return;
+    const seen = new Set<string>();
+    value.rates.forEach((rate, index) => {
+      if (seen.has(rate.metal)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['rates', index, 'metal'],
+          message: `Металл ${rate.metal} указан дважды`,
+        });
+      }
+      seen.add(rate.metal);
+    });
+  });
+
+/**
+ * Отклонение версии руководителем.
+ *
+ * Причина обязательна: без неё администратор не знает, что исправлять, и
+ * отправляет ту же версию повторно — отклонение превращается в переписку.
+ */
+export const rejectPriceListSchema = z.object({
+  reason: z.string().min(3, 'Опишите причину отклонения').max(1000),
+});
+
+/** Создание новой версии на основе существующей (действие `COPY`). */
+export const copyPriceListSchema = z.object({
+  effectiveFrom: z.coerce.date(),
+  comment: z.string().max(1000).optional(),
+  /** Копировать ли состав позиций вместе со ставками по металлам. */
+  withItems: z.boolean().default(true),
+});
+
 // ---------------------------------------------------------------------------
 // Гарантия и рекламация (ТЗ п. 2.9)
 // ---------------------------------------------------------------------------
@@ -913,6 +994,11 @@ export type BatchListQueryInput = z.infer<typeof batchListQuerySchema>;
 export type PerformerInput = z.infer<typeof performerSchema>;
 export type AssignmentInput = z.infer<typeof assignmentSchema>;
 export type PriceListItemInput = z.infer<typeof priceListItemSchema>;
+export type CreatePriceListInput = z.infer<typeof createPriceListSchema>;
+export type UpdatePriceListInput = z.infer<typeof updatePriceListSchema>;
+export type UpdatePriceListItemInput = z.infer<typeof updatePriceListItemSchema>;
+export type RejectPriceListInput = z.infer<typeof rejectPriceListSchema>;
+export type CopyPriceListInput = z.infer<typeof copyPriceListSchema>;
 export type WarrantyClaimInput = z.infer<typeof warrantyClaimSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
