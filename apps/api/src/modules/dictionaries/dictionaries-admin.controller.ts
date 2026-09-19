@@ -212,8 +212,20 @@ export class DictionariesAdminController {
     return this.priceListService.createVersion(body, user);
   }
 
+  /*
+   * Чтение карточки разрешено И правом правки, И правом утверждения.
+   *
+   * Утверждающий обязан видеть то, что подписывает: руководитель и главный
+   * бухгалтер права `pricelist:edit` не имеют, а без этой строки они получали
+   * 403 на карточке версии — то есть утверждали бы вслепую, по одному номеру
+   * версии. Маршрут только читает (GET), поэтому расширение доступа ничего не
+   * ослабляет: правка по-прежнему требует `pricelist:edit`.
+   *
+   * `RolesGuard` пропускает при ЛЮБОМ из перечисленных прав — сюда и добавлено
+   * второе.
+   */
   @Get('price-lists/:id/editor')
-  @RequirePermission(PERMISSION.PRICELIST_EDIT)
+  @RequirePermission(PERMISSION.PRICELIST_EDIT, PERMISSION.PRICELIST_APPROVE)
   @ApiOperation({ summary: 'Версия прейскуранта с позициями для редактора' })
   findPriceListForEdit(@Param('id') id: string): Promise<PriceListVersionDetail> {
     return this.priceListService.findVersion(id);
