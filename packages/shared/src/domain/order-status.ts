@@ -104,10 +104,27 @@ export const STATUS_LABELS: Record<OrderStatus, string> = {
 };
 
 /**
+ * Тона, которыми можно закодировать статус (docs/08-ui-ux.md §6).
+ *
+ * Тип-объединение, а НЕ `string`, и это существенно. Каждый тон превращается
+ * компонентом `Badge` в конкретный набор классов Tailwind
+ * (`bg-blue-100 text-blue-800 …`), а неизвестный тон молча даёт серый бейдж:
+ * `TONES[tone]` вернёт `undefined`, склейка классов не изменится. С `string`
+ * опечатка (`'gren'` вместо `'green'`) компилировалась бы без единой ошибки, и
+ * готовый к выдаче заказ выглядел бы так же, как черновик — без всякого сигнала
+ * о поломке. С объединением такая опечатка не собирается.
+ *
+ * Список обязан совпадать с ключами `TONES` в `apps/web/src/components/ui/badge.tsx`.
+ * Совпадение проверяется тестом (`packages/shared/src/domain/order-status.spec.ts`).
+ */
+export type StatusTone =
+  'gray' | 'amber' | 'blue' | 'violet' | 'cyan' | 'green' | 'orange' | 'emerald' | 'red' | 'slate';
+
+/**
  * Цветовая кодировка статусов для UI. Единый словарь, чтобы бейдж в списке
  * и в карточке заказа выглядели одинаково (docs/08-ui-ux.md §6).
  */
-export const STATUS_COLORS: Record<OrderStatus, string> = {
+export const STATUS_COLORS: Record<OrderStatus, StatusTone> = {
   DRAFT: 'gray',
   AWAITING_APPROVAL: 'amber',
   AWAITING_PREPAYMENT: 'amber',

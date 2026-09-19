@@ -63,7 +63,20 @@ export function StatusBadge({
   label: string;
   className?: string;
 }): ReactNode {
-  const tone = (STATUS_COLORS[status] ?? 'slate') as Tone;
+  /*
+   * Приведение типа здесь БОЛЬШЕ НЕ НУЖНО, и это не мелочь. Раньше
+   * `STATUS_COLORS` был `Record<OrderStatus, string>`, и без `as Tone` этот
+   * вызов не собирался — но приведение заодно гасило и опечатку в тоне:
+   * `'gren'` проходило как валидный `string`, превращалось в `Tone` и давало
+   * серый бейдж без единого признака ошибки.
+   *
+   * Теперь `STATUS_COLORS` типизирован как `Record<OrderStatus, StatusTone>`, а
+   * набор тонов компонента ему соответствует, поэтому линтер
+   * (`no-unnecessary-type-assertion`) прямо говорит, что приведение ничего не
+   * меняет. Расхождение словарей ловит
+   * `packages/shared/src/domain/status-colors-sync.spec.ts`.
+   */
+  const tone = STATUS_COLORS[status] ?? 'slate';
   return (
     <Badge tone={tone} className={className} dot>
       {label}
