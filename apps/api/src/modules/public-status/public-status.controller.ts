@@ -4,7 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import { BadRequestException } from '@nestjs/common';
 
 import { PublicStatusService } from './public-status.service';
-import type { RequestCodeResult, VerifyCodeResult } from './public-status.service';
+import type { PublicOrderStatusView } from '@app/shared';
 import { Public } from '../../common/auth/public.decorator';
 import {
   PUBLIC_CODE_DIGITS,
@@ -66,7 +66,7 @@ export class PublicStatusController {
   @HttpCode(HttpStatus.OK)
   @Throttle({ short: { limit: 20, ttl: PUBLIC_CODE_REQUEST_WINDOW_MS } })
   @ApiOperation({ summary: 'Запросить код проверки статуса заказа' })
-  async requestCode(@Body() body: unknown, @Ip() ip: string): Promise<RequestCodeResult> {
+  async requestCode(@Body() body: unknown, @Ip() ip: string): Promise<{ sent: boolean }> {
     const parsed = requestPublicCodeSchema.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException({
@@ -77,15 +77,31 @@ export class PublicStatusController {
     }
 
     /*
-     * Ответ ВСЕГДА `{ sent: true }` — см. объяснение в сервисе. `reason` уходит
-     * наружу только в виде признака «код отправлен»: различать причины в ответе
-     * значило бы вернуть тот самый оракул.
+     * ОТВЕТ СОБИРАЕТСЯ ЗДЕСЬ ЗАНОВО, А НЕ ВОЗВРАЩАЕТСЯ ЦЕЛИКОМ.
+     *
+     * Первый вариант возвращал результат сервиса как есть — вместе с полем
+     * `reason`. Комментарий утверждал, что наружу уходит только признак
+     * «отправлено», а код отдавал внутреннюю причину: `ORDER_NOT_FOUND`,
+     * `PHONE_MISMATCH`, `RATE_LIMITED`. Это ТОТ САМЫЙ ОРАКУЛ, против которого
+     * построена вся защита: перебором номеров заказов можно было бы выяснить,
+     * какие из них существуют, — утечка сама по себе, без показа статуса.
+     *
+     * Дефект был найден на ЖИВОЙ проверке развёрнутого сервера: в ответе
+     * `curl` стояло `"reason":"ORDER_NOT_FOUND"`. Тесты его пропускали, потому
+     * что сравнивали результат СЕРВИСА и намеренно исключали `reason` из
+     * сравнения, — а проверять надо было то, что получает клиент.
+     *
+     * Поэтому из результата берётся ТОЛЬКО `sent`, и структура ответа задана
+     * здесь явным литералом. Новое поле в сервисе не сможет просочиться наружу
+     * само собой — его придётся добавить в этот литерал осознанно.
      */
-    return this.publicStatus.requestCode({
+    const result = await this.publicStatus.requestCode({
       orderNo: parsed.data.orderNo,
       phone: parsed.data.phone,
       ip: ip ?? null,
     });
+
+    return { sent: result.sent };
   }
 
   /**
@@ -111,7 +127,9 @@ export class PublicStatusController {
   @Get()
   @Throttle({ short: { limit: 30, ttl: 60_000 } })
   @ApiOperation({ summary: 'Статус заказа по номеру и коду' })
-  async status(@Query() query: unknown): Promise<VerifyCodeResult> {
+  async status(
+    @Query() query: unknown,
+  ): Promise<{ ok: boolean; view: PublicOrderStatusView | null }> {
     const parsed = publicOrderStatusQuerySchema.safeParse(query);
     if (!parsed.success) {
       throw new BadRequestException({
@@ -130,11 +148,22 @@ export class PublicStatusController {
      * Неудача отдаётся как 200 с `ok: false`, а не как 404 или 401. Причина та
      * же: код ответа — это тоже информация. `404` на несуществующий заказ и
      * `401` на неверный код позволили бы перебором отличить существующие заказы
-     * от несуществующих. Клиент различает случаи по `reason`, но `reason`
-     * описывает только ввод (формат, срок, число попыток) и не сообщает,
-     * существует ли заказ.
+     * от несуществующих.
+     *
+     * ПОЧЕМУ ВНУТРЕННЯЯ ПРИЧИНА НЕ ОТДАЁТСЯ И ЗДЕСЬ. Раньше возвращался результат
+     * сервиса целиком, вместе с `reason`. Комментарий утверждал, что причина
+     * «описывает только ввод», но это неверно: `MISMATCH` против `NOT_FOUND`
+     * сообщает, что по заказу ВЫДАН код. Клиент, знающий номер чужого заказа, но
+     * не телефон, мог бы по этому различию узнать, что владелец недавно
+     * запрашивал код, — то есть что заказ существует и активен. Причины для
+     * перебора номеров достаточно.
+     *
+     * Поэтому наружу уходит только то, что нужно интерфейсу: получилось или нет
+     * и сам статус. Клиент показывает одно нейтральное сообщение на любой отказ —
+     * этого хватает, а различать «нет кода» и «код не подошёл» можно и нужно
+     * только в журнале сервера.
      */
-    return result;
+    return { ok: result.ok, view: result.view };
   }
 
   /**
