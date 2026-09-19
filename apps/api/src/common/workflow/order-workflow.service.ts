@@ -27,6 +27,7 @@ import {
 } from '@app/shared';
 import type { Prisma, StageNorm } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { ReportsCacheService } from '../../common/cache/reports-cache.service';
 
 /**
  * Результат перехода: заказ вместе с последней записью истории статусов.
@@ -118,7 +119,10 @@ interface OrderGuardData {
 export class OrderWorkflowService {
   private readonly logger = new Logger(OrderWorkflowService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: ReportsCacheService,
+  ) {}
 
   /**
    * Доступные переходы для пользователя — для отображения кнопок в UI.
@@ -197,7 +201,24 @@ export class OrderWorkflowService {
 
     // 5. Применение в одной транзакции с аудитом и историей.
     const calendar = await this.loadCalendar();
-    return this.applyTransition(order, ctx, check.rule.effects, calendar, ctx.tx);
+    const result = await this.applyTransition(order, ctx, check.rule.effects, calendar, ctx.tx);
+
+    /*
+     * Сброс кэша отчётов (задача 5.7). Переход меняет и просрочки, и сроки
+     * этапов, и загрузку цеха — то есть ЛЮБОЙ отчёт, поэтому сбрасывается всё.
+     *
+     * Сброс идёт ПОСЛЕ успешного применения: отклонённый переход (не выполнено
+     * условие, устаревшая версия) ничего не изменил, и сбрасывать кэш по нему
+     * значило бы заставлять следующий запрос считать отчёты заново без причины.
+     *
+     * Стоит здесь, а не в вызывающем коде: переходов несколько (карточка
+     * заказа, системный переход в «Невостребовано», массовый перевод партии), и
+     * каждый новый вызывающий мог бы забыть сброс. Забытый сброс не проявился бы
+     * как ошибка — отчёт просто показывал бы старые данные до истечения TTL.
+     */
+    this.cache.invalidate();
+
+    return result;
   }
 
   // -------------------------------------------------------------------------

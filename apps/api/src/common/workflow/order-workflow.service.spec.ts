@@ -25,6 +25,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { computeDueAt, OrderWorkflowService } from './order-workflow.service';
+import { ReportsCacheService } from '../cache/reports-cache.service';
 import {
   ALL_NORM_STAGES,
   ORDER_STATUS,
@@ -34,7 +35,7 @@ import {
   toDateKey,
   type WorkingCalendar,
 } from '@app/shared';
-import { ORDER_TRANSITIONS } from '@app/shared';
+import { ORDER_TRANSITIONS, REPORT_NAME } from '@app/shared';
 
 /** Календарь без исключений: будни рабочие, праздники — по ТК РФ. */
 const CALENDAR: WorkingCalendar = { overrides: new Map(), defaultHours: 8 };
@@ -253,7 +254,7 @@ describe('Системный переход: actorId обязателен как
    * переходов с актором `'SYSTEM'` несколько, и каждый новый вызывающий мог бы
    * повторить ту же ошибку.
    */
-  const service = new OrderWorkflowService({} as never);
+  const service = new OrderWorkflowService({} as never, new ReportsCacheService());
 
   it('системный переход со строкой вместо null отклоняется', async () => {
     await expect(
@@ -288,5 +289,158 @@ describe('Системный переход: actorId обязателен как
       .catch((e: unknown) => e);
 
     expect((error as { response?: { code?: string } }).response?.code).not.toBe('INVALID_ACTOR');
+  });
+});
+
+describe('Сброс кэша отчётов при переходе (задача 5.7)', () => {
+  /**
+   * Переход статуса меняет и просрочки, и сроки этапов, и загрузку цеха — то
+   * есть любой отчёт. Без сброса руководитель видел бы старую картину до
+   * истечения TTL и не понял бы, почему только что переведённый заказ в отчёте
+   * не появился.
+   */
+  function makeService(order: Record<string, unknown> | null) {
+    const cache = new ReportsCacheService();
+    cache.set(`${REPORT_NAME.OVERDUE}|x`, reportStub(), 60_000);
+
+    const prisma = {
+      order: { findFirst: async () => order },
+      workingCalendar: { findMany: async () => [] },
+    };
+    const service = new OrderWorkflowService(prisma as never, cache);
+    return { service, cache };
+  }
+
+  function reportStub() {
+    return {
+      meta: {
+        from: '2025-09-01',
+        to: '2025-09-30',
+        generatedAt: '2025-09-30T12:00:00.000Z',
+        cached: false,
+        rowCount: 0,
+      },
+      columns: [],
+      rows: [],
+      totals: {},
+    };
+  }
+
+  it('отклонённый переход НЕ сбрасывает кэш', async () => {
+    /*
+     * Переход не состоялся (не выполнено условие, устаревшая версия) — данные не
+     * изменились, и сбрасывать кэш значило бы заставлять следующий запрос
+     * считать отчёты заново без причины.
+     */
+    const { service, cache } = makeService(null);
+    await service
+      .transition({
+        orderId: 'o-1',
+        to: ORDER_STATUS.IN_PRODUCTION,
+        actorId: 'u-1',
+        actorRole: 'RECEIVER',
+        version: 1,
+        scope: 'ALL_STORES',
+        storeIds: [],
+      })
+      .catch(() => undefined);
+
+    // Заказ не найден — переход не применён, кэш не тронут.
+    expect(cache.size()).toBe(1);
+  });
+
+  it('УСПЕШНЫЙ переход сбрасывает кэш', async () => {
+    /*
+     * Это и есть настоящая проверка защиты. Тесты выше проверяют лишь то, что
+     * отклонённый переход кэш не трогает, — а если убрать сам вызов сброса, они
+     * всё равно проходят. Только доведённый до успеха переход доказывает, что
+     * сброс выполняется.
+     *
+     * Берётся переход 13 (`IN_PRODUCTION → QUEUED_FOR_DISPATCH`): у него нет
+     * guard-условий, кроме обязательной причины, поэтому двойник Prisma может
+     * быть маленьким.
+     */
+    const cache = new ReportsCacheService();
+    cache.set(`${REPORT_NAME.OVERDUE}|x`, reportStub(), 60_000);
+    cache.set(`${REPORT_NAME.REVENUE}|y`, reportStub(), 60_000);
+
+    const order = {
+      id: 'o-1',
+      status: 'IN_PRODUCTION',
+      version: 1,
+      worksTotalMinor: 100000,
+      stonesTotalMinor: 0,
+      discountMinor: 0,
+      totalAmountMinor: 100000,
+      paidAmountMinor: 0,
+      prepaymentRequiredMinor: 0,
+      requiresPrepayment: false,
+      pickupSignatureFileId: null,
+      warrantyMonths: 12,
+      complexity: 'SIMPLE',
+      dueAt: null,
+      readyAt: null,
+      items: [{ id: 'i-1' }],
+      works: [{ id: 'w-1', warrantyMonths: 12 }],
+      approvals: [],
+      refusalAct: null,
+      claims: [],
+      batchItems: [],
+      assignments: [{ id: 'as-1', status: 'DONE' }],
+      customer: { consentCallRecording: true },
+    };
+
+    const tx = {
+      order: {
+        updateMany: async () => ({ count: 1 }),
+        findUniqueOrThrow: async () => ({
+          ...order,
+          status: 'QUEUED_FOR_DISPATCH',
+          statusHistory: [],
+        }),
+      },
+      orderStatusHistory: {
+        findFirst: async () => null,
+        create: async () => ({ id: 'h-1' }),
+      },
+      auditLog: { create: async () => ({ id: 'a-1' }) },
+    };
+
+    const prisma = {
+      buildOrderScopeFilter: () => ({}),
+      order: { findFirst: async () => order },
+      stageNorm: { findMany: async () => [] },
+      workingCalendar: { findMany: async () => [] },
+      runInTransaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+    };
+
+    const service = new OrderWorkflowService(prisma as never, cache);
+
+    await service.transition({
+      orderId: 'o-1',
+      to: ORDER_STATUS.QUEUED_FOR_DISPATCH,
+      actorId: 'u-1',
+      actorRole: 'PRODUCTION_MANAGER',
+      version: 1,
+      scope: 'ALL_STORES',
+      storeIds: [],
+      reason: 'Возврат на очередь: нужны запчасти',
+    });
+
+    // Переход состоялся — кэш обоих отчётов пуст.
+    expect(cache.size()).toBe(0);
+  });
+
+  it('кэш сбрасывается тем же экземпляром, что читают отчёты', () => {
+    /*
+     * Проверка на уровне сервиса: кэш должен быть ОДИН на процесс. Если бы
+     * каждый модуль создавал свой экземпляр, сброс из переходов не доходил бы до
+     * отчётов — и это не проявилось бы как ошибка: отчёт просто показывал бы
+     * старые данные до истечения TTL. Поэтому модуль кэша объявлен `@Global()`.
+     */
+    const shared = new ReportsCacheService();
+    shared.set(`${REPORT_NAME.REVENUE}|x`, reportStub(), 60_000);
+    expect(shared.invalidate()).toBe(1);
+    expect(shared.size()).toBe(0);
   });
 });

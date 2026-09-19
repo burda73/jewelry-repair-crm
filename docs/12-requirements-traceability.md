@@ -173,6 +173,17 @@
 | 2.11 | Числа остаются числами (Excel суммирует) | `docs/07` §12.3 | `cellValue()` | `reports-export.service.spec.ts` |
 | 2.11 | CSV: BOM, `;`, CRLF, экранирование | `docs/07` §12.3 | `toCsv()`, `csvEscape()` | `reports-export.service.spec.ts` (7 тестов) |
 | 2.11 | XLSX читается обратно как книга Excel | `docs/07` §12.3 | `toXlsx()` | `reports-export.service.spec.ts` |
+| 2.11 | Кэш отчётов: TTL по типу отчёта | `docs/06` §6.2 | `REPORT_TTL_MS` | `reports-cache.service.spec.ts` |
+| 2.11 | Годовой срез кэшируется на сутки | `docs/06` §6.2 | `ttlForReport()` по длине периода | `reports-cache.service.spec.ts` |
+| 2.11 | Область видимости входит в ключ кэша | `docs/06` §6.2 | `reportCacheKey()` | `reports-cache.service.spec.ts` (утечка при снятии) |
+| 2.11 | Порядок магазинов не создаёт лишних записей | `docs/06` §6.2 | `.sort()` в ключе | `reports-cache.service.spec.ts` |
+| 2.11 | Просроченная запись не отдаётся | `docs/06` §6.2 | `expiresAt <= now` | `reports-cache.service.spec.ts` |
+| 2.11 | Предел размера кэша, вытеснение старых | `docs/06` §6.2 | `MAX_ENTRIES` | `reports-cache.service.spec.ts` (3 теста) |
+| 2.11 | Переход статуса сбрасывает кэш | `docs/06` §6.2 | `cache.invalidate()` в `transition` | `order-workflow.service.spec.ts` |
+| 2.11 | Отклонённый переход кэш НЕ сбрасывает | `docs/06` §6.2 | сброс после `applyTransition` | `order-workflow.service.spec.ts` |
+| 2.11 | Платёж сбрасывает выручку и предоплаты | `docs/06` §6.2 | `invalidate([REVENUE, PREPAYMENTS])` | `payments.service.spec.ts` |
+| 2.11 | Платёж не сбрасывает сроки и загрузку цеха | `docs/06` §6.2 | сброс по списку отчётов | `payments.service.spec.ts` |
+| 2.11 | Идемпотентный повтор кэш не сбрасывает | `docs/07` §1.3 | ранний выход по ключу | `payments.service.spec.ts` |
 | 2.11 | Выгрузка уважает права (`report:export`) | `docs/06` §6.4 | `assertCanExport()` | `reports-export.service.spec.ts` |
 | 2.11 | Кассир видит выручку, но не загрузку цеха | `docs/07` §12.2.1 | `REPORT_PERMISSION` | `reports.spec.ts` (4 теста) |
 | 2.11 | Отчёт «Предоплаты» | `docs/06` §5 | `Payment.kind = PREPAYMENT` | этап 5 |

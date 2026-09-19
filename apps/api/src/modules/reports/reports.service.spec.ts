@@ -32,6 +32,7 @@ import {
   toDateKey,
 } from './reports.service';
 import { parseReportQuery } from './reports.controller';
+import { ReportsCacheService } from '../../common/cache/reports-cache.service';
 
 const STORE_A = 'cmu5p70yu0002bm7pzqlcawsw';
 const STORE_B = 'cmu5p70yu0003bm7pzqlcawsw';
@@ -76,7 +77,7 @@ function makeService(overrides: Record<string, unknown> = {}) {
   const workflow = {
     loadCalendar: vi.fn(async () => ({ overrides: new Map(), defaultHours: 9 })),
   };
-  const service = new ReportsService(client as never, workflow as never);
+  const service = new ReportsService(client as never, workflow as never, new ReportsCacheService());
   return { service, client, workflow };
 }
 
@@ -334,6 +335,7 @@ describe('Отчёт «Сроки по этапам» (задача 5.1)', () =>
     const custom = new ReportsService(
       (service as unknown as { prisma: unknown }).prisma as never,
       workflow as never,
+      new ReportsCacheService(),
     );
     const result = await custom.build(REPORT_NAME.STAGE_DURATIONS, query(), actor('ALL_STORES'));
 
@@ -1213,5 +1215,106 @@ describe('Общее поведение отчётов (задача 5.1)', () =
     );
 
     expect(result.rows).toHaveLength(3);
+  });
+});
+
+describe('Кэширование отчётов в сервисе (задача 5.7)', () => {
+  it('второй запрос с теми же параметрами не считает отчёт заново', async () => {
+    /*
+     * Смысл кэша: руководитель открывает дашборд несколько раз в день и должен
+     * получать мгновенный ответ, а база — не пересчитывать одно и то же.
+     */
+    const { service, client } = makeService();
+    await service.build(REPORT_NAME.OVERDUE, query(), actor('ALL_STORES'));
+    const first = client.order.findMany.mock.calls.length;
+
+    await service.build(REPORT_NAME.OVERDUE, query(), actor('ALL_STORES'));
+
+    expect(client.order.findMany.mock.calls.length).toBe(first);
+  });
+
+  it('повторный ответ помечен как взятый из кэша', async () => {
+    // Клиент должен отличать свежий расчёт от закэшированного, чтобы понимать
+    // возраст данных.
+    const { service } = makeService();
+    const fresh = await service.build(REPORT_NAME.OVERDUE, query(), actor('ALL_STORES'));
+    const second = await service.build(REPORT_NAME.OVERDUE, query(), actor('ALL_STORES'));
+
+    expect(fresh.meta.cached).toBe(false);
+    expect(second.meta.cached).toBe(true);
+  });
+
+  it('время построения отчёта не подменяется временем выдачи', async () => {
+    /*
+     * `generatedAt` — момент РАСЧЁТА. Если бы при выдаче из кэша он обновлялся,
+     * по нему нельзя было бы понять, насколько данные свежи, и «отчёт построен
+     * только что» вводило бы в заблуждение.
+     *
+     * Время сдвигается принудительно: два вызова подряд укладываются в одну
+     * миллисекунду, и без сдвига подмена `generatedAt` на текущий момент
+     * выглядела бы как совпадение — тест проходил бы при снятой защите.
+     */
+    const { service } = makeService();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-09-30T12:00:00.000Z'));
+    const fresh = await service.build(REPORT_NAME.OVERDUE, query(), actor('ALL_STORES'));
+
+    /*
+     * Сдвиг — ДВЕ минуты, а не больше: у «просрочек» TTL пять минут, и при
+     * большем сдвиге запись просто истечёт, запрос пересчитается, и тест
+     * проверял бы не кэш, а истечение срока.
+     */
+    vi.setSystemTime(new Date('2025-09-30T12:02:00.000Z'));
+    const second = await service.build(REPORT_NAME.OVERDUE, query(), actor('ALL_STORES'));
+    vi.useRealTimers();
+
+    expect(fresh.meta.generatedAt).toBe('2025-09-30T12:00:00.000Z');
+    expect(second.meta.generatedAt).toBe('2025-09-30T12:00:00.000Z');
+    expect(second.meta.cached).toBe(true);
+  });
+
+  it('разные роли НЕ получают отчёт друг друга из кэша', async () => {
+    /*
+     * Главная проверка безопасности кэша. Приёмщик одного магазина не должен
+     * получить из кэша отчёт, посчитанный руководителем для всей сети: чужие
+     * суммы, чужие сроки, чужая выручка. Утечка не видна на экране — числа
+     * правдоподобны.
+     */
+    const { service, client } = makeService();
+    const receiver = actor('STORE', ['store-1']);
+
+    await service.build(REPORT_NAME.OVERDUE, query(), receiver);
+    const callsAfterFirst = client.order.findMany.mock.calls.length;
+
+    // Руководитель видит всю сеть — это ДРУГОЙ набор магазинов, другой ключ.
+    await service.build(REPORT_NAME.OVERDUE, query(), actor('ALL_STORES'));
+
+    expect(client.order.findMany.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+  });
+
+  it('сброс кэша заставляет пересчитать отчёт', async () => {
+    // Событие изменения данных обязано отражаться на следующем же запросе:
+    // иначе руководитель не увидит только что переведённый заказ.
+    const { service, client } = makeService();
+    await service.build(REPORT_NAME.OVERDUE, query(), actor('ALL_STORES'));
+    const callsAfterFirst = client.order.findMany.mock.calls.length;
+
+    service.invalidateCache();
+    await service.build(REPORT_NAME.OVERDUE, query(), actor('ALL_STORES'));
+
+    expect(client.order.findMany.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+  });
+
+  it('разные отчёты не делят одну запись кэша', async () => {
+    // «Выручка» и «просрочки» — разные данные: общая запись отдала бы числа
+    // одного отчёта под именем другого.
+    const { service, client } = makeService();
+    await service.build(REPORT_NAME.OVERDUE, query(), actor('ALL_STORES'));
+    const callsAfterFirst = client.order.findMany.mock.calls.length;
+
+    await service.build(REPORT_NAME.REVENUE, query(), actor('ALL_STORES'));
+
+    expect(client.payment.findMany.mock.calls.length).toBeGreaterThan(0);
+    expect(client.order.findMany.mock.calls.length).toBe(callsAfterFirst);
   });
 });

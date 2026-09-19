@@ -39,6 +39,11 @@ import {
   type DataScope,
 } from '@app/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import {
+  ReportsCacheService,
+  reportCacheKey,
+  ttlForReport,
+} from '../../common/cache/reports-cache.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 
@@ -123,6 +128,7 @@ export class ReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workflow: OrderWorkflowService,
+    private readonly cache: ReportsCacheService,
   ) {}
 
   /**
@@ -146,8 +152,26 @@ export class ReportsService {
         actor.scope === 'PRODUCTION' && query.workshopIds.length === 0 ? [] : query.workshopIds,
     };
 
+    /*
+     * Ключ строится ПОСЛЕ наложения области видимости и включает её: разные роли
+     * не могут попасть в одну запись. Ключ по одним лишь параметрам запроса
+     * означал бы, что приёмщик получит из кэша отчёт по всей сети.
+     */
+    const key = reportCacheKey(name, scoped);
+
+    const cached = this.cache.get(key);
+    if (cached !== null) {
+      /*
+       * `generatedAt` остаётся моментом ПОСТРОЕНИЯ отчёта, а не моментом выдачи:
+       * иначе по нему нельзя было бы понять, насколько данные свежи, и «отчёт
+       * построен только что» вводило бы в заблуждение. Признак `cached`
+       * показывает, что ответ взят из кэша.
+       */
+      return { ...cached, meta: { ...cached.meta, cached: true } };
+    }
+
     const computed = await this.compute(name, scoped);
-    return {
+    const result: ReportResult = {
       meta: {
         from: toDateKey(query.from),
         to: toDateKey(query.to),
@@ -159,6 +183,22 @@ export class ReportsService {
       rows: computed.rows,
       totals: computed.totals,
     };
+
+    const periodDays = (query.to.getTime() - query.from.getTime()) / 86_400_000;
+    this.cache.set(key, result, ttlForReport(name, periodDays));
+    return result;
+  }
+
+  /**
+   * Сбросить кэш отчётов.
+   *
+   * Вызывается при изменении данных: переход статуса меняет и просрочки, и
+   * сроки, и загрузку цеха, поэтому сбрасывается всё. Без сброса руководитель
+   * видел бы старую картину до истечения TTL и не понял бы, почему только что
+   * переведённый заказ в отчёте не появился.
+   */
+  invalidateCache(): number {
+    return this.cache.invalidate();
   }
 
   private async compute(name: string, query: ReportQuery): Promise<ComputedReport> {

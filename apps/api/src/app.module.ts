@@ -23,6 +23,7 @@ import { BatchesModule } from './modules/batches/batches.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { EscalationsModule } from './modules/escalations/escalations.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { ReportsCacheModule } from './common/cache/reports-cache.module';
 
 /**
  * Найти файл `.env`.
@@ -103,6 +104,7 @@ function resolveEnvPaths(): string[] {
     BatchesModule,
     NotificationsModule,
     EscalationsModule,
+    ReportsCacheModule,
     ReportsModule,
   ],
   providers: [

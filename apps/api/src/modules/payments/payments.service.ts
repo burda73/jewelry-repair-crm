@@ -14,8 +14,10 @@ import {
   remainingToPay,
   DATA_SCOPE,
   ROLE,
+  REPORT_NAME,
 } from '@app/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { ReportsCacheService } from '../../common/cache/reports-cache.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 import { Prisma } from '@prisma/client';
 
@@ -97,7 +99,10 @@ export interface PaymentListQuery {
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: ReportsCacheService,
+  ) {}
 
   /**
    * Принять платёж по заказу.
@@ -259,6 +264,17 @@ export class PaymentsService {
       this.logger.log(
         `Платёж ${paymentId}: ${data.kind} ${data.amountMinor} коп. по заказу ${orderId}`,
       );
+
+      /*
+       * Сброс кэша отчётов о ДЕНЬГАХ (задача 5.7). Платёж меняет выручку и
+       * предоплаты, но не сроки этапов и не загрузку цеха — сбрасывать их
+       * значило бы заставлять следующий запрос считать заново без причины.
+       *
+       * Сброс идёт после успешной записи: при гонке по ключу идемпотентности
+       * платёж создан первым запросом, и он уже сбросил кэш.
+       */
+      this.cache.invalidate([REPORT_NAME.REVENUE, REPORT_NAME.PREPAYMENTS]);
+
       return this.buildResult(orderId, paymentId);
     } catch (error: unknown) {
       // Гонка двух одновременных запросов с одним ключом: второй ловит
