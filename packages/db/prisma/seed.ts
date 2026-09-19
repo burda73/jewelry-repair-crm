@@ -137,6 +137,16 @@ async function seedUsers(stores: { id: string; code: string }[]) {
     role: RoleCode;
     storeId?: string;
     scope: DataScope;
+    /**
+     * Дополнительные роли.
+     *
+     * Мультироль — не украшение, а рабочий сценарий: приёмщик магазина создаёт
+     * партии в производство и принимает обратные (решение заказчика: «где
+     * приняли, там и выдаём»). Матрицу прав `RECEIVER` для этого НЕ расширяют —
+     * иначе право создавать партии получил бы и тот приёмщик, которому это не
+     * поручено; вместо этого ему выдают вторую роль `LOGISTICIAN`.
+     */
+    extraRoles?: { role: RoleCode; scope: DataScope }[];
   }[] = [
     {
       email: 'admin@remixgold.ru',
@@ -159,6 +169,8 @@ async function seedUsers(stores: { id: string; code: string }[]) {
       role: RoleCode.RECEIVER,
       storeId: msk1.id,
       scope: DataScope.STORE_PLUS_GLOBAL_SEARCH,
+      // Вторая роль: ведёт партии «магазин → производство» и принимает обратные.
+      extraRoles: [{ role: RoleCode.LOGISTICIAN, scope: DataScope.PRODUCTION }],
     },
     {
       email: 'receiver2@remixgold.ru',
@@ -228,6 +240,27 @@ async function seedUsers(stores: { id: string; code: string }[]) {
       await prisma.userRole.create({
         data: { userId: created.id, role: user.role, storeId: user.storeId, scope: user.scope },
       });
+    }
+
+    /*
+     * Дополнительные роли. Проверка на существование та же, что у основной:
+     * seed обязан быть идемпотентным, иначе повторный запуск падал бы на
+     * уникальности или плодил дубли ролей.
+     */
+    for (const extra of user.extraRoles ?? []) {
+      const existingExtra = await prisma.userRole.findFirst({
+        where: { userId: created.id, role: extra.role, storeId: null },
+      });
+      if (!existingExtra) {
+        await prisma.userRole.create({
+          data: {
+            userId: created.id,
+            role: extra.role,
+            storeId: null,
+            scope: extra.scope,
+          },
+        });
+      }
     }
 
     if (user.storeId) {

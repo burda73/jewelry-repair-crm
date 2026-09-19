@@ -1117,6 +1117,7 @@ export class BatchesService {
             to: target,
             actorId: actor.id,
             actorRole: actor.primaryRole,
+            actorRoles: actor.roles,
             version: current.version,
             scope: actor.scope,
             storeIds: actor.storeIds ?? [],

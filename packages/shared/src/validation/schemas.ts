@@ -373,6 +373,29 @@ export const assignmentSchema = z.object({
   comment: z.string().max(1000).optional(),
 });
 
+/**
+ * Акт отказа от оплаты (ТЗ п. 2.8, задача 7.5).
+ *
+ * Причина обязательна и содержательна (`min(3)`): акт — документ, по которому
+ * изделие уходит на ответственное хранение, и запись «нет» в графе причины
+ * сделала бы его бесполезным при разбирательстве.
+ *
+ * Сумма — то, что клиент отказался платить: она печатается в акте и объясняет,
+ * почему изделие не выдано. Ноль здесь допустим: отказ возможен и до расчёта
+ * стоимости, и запрещать его значило бы не дать оформить реальный случай.
+ *
+ * Срок ответственного хранения необязателен: он определяется договором
+ * магазина, и подставлять произвольное значение по умолчанию нельзя — неверный
+ * срок в акте имел бы юридические последствия.
+ */
+export const refusalActSchema = z.object({
+  reason: z.string().min(3, 'Укажите причину отказа').max(1000),
+  amountMinor: minorAmountSchema,
+  storageUntil: z.coerce.date().optional(),
+  /** Файл подписанного акта, если его уже загрузили (см. `POST /photos`). */
+  fileId: z.string().cuid().optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Прейскурант (ТЗ п. 2.2)
 // ---------------------------------------------------------------------------
@@ -1004,6 +1027,7 @@ export type RemoveBatchOrderInput = z.infer<typeof removeBatchOrderSchema>;
 export type BatchListQueryInput = z.infer<typeof batchListQuerySchema>;
 export type PerformerInput = z.infer<typeof performerSchema>;
 export type AssignmentInput = z.infer<typeof assignmentSchema>;
+export type RefusalActInput = z.infer<typeof refusalActSchema>;
 export type PriceListItemInput = z.infer<typeof priceListItemSchema>;
 export type CreatePriceListInput = z.infer<typeof createPriceListSchema>;
 export type UpdatePriceListInput = z.infer<typeof updatePriceListSchema>;

@@ -288,7 +288,26 @@ export interface OrderDetail {
   approvals: OrderApproval[];
   adjustments: OrderAdjustment[];
   statusHistory: OrderStatusHistoryEntry[];
+  /**
+   * Акт отказа от оплаты (ТЗ п. 2.8, задача 7.5).
+   *
+   * Нужен интерфейсу, чтобы отличить «отказ уже оформлен» от «можно оформить»:
+   * без этого поля форма предлагала бы создать второй акт и получала бы ошибку.
+   */
+  refusalAct: OrderRefusalAct | null;
   availableTransitions: AvailableTransition[];
+}
+
+/** Акт отказа от оплаты в карточке заказа. */
+export interface OrderRefusalAct {
+  id: string;
+  actNo: string;
+  reason: string;
+  amountMinor: number;
+  storageUntil: string | null;
+  signedAt: string | null;
+  createdAt: string;
+  createdById: string;
 }
 
 /** Запись единой ленты событий (`GET /orders/:id/timeline`). */

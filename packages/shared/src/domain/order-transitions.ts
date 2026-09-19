@@ -465,14 +465,31 @@ export function findTransition(
 /**
  * Проверка перехода по статусу, роли и наличию причины.
  * Проверка guard-условий выполняется отдельно — они требуют данных из БД.
+ *
+ * ## Почему `actorRoles`, а не одна `actorRole`
+ *
+ * Мультироль в системе поддержана: у сотрудника может быть несколько ролей
+ * (`UserRole[]`), и права объединяются. Но переходы сверялись только с
+ * `primaryRole` — ролью, которая в наборе первая. Приёмщик, которому выдали
+ * ВТОРУЮ роль логиста (решение заказчика: «где приняли, там и выдаём»), не мог
+ * отправить партию в цех: `primaryRole` остаётся `RECEIVER`, а правило 11
+ * допускает `PRODUCTION_MANAGER`/`LOGISTICIAN`. Проверено на домене: переход
+ * давал `FORBIDDEN_ROLE`, хотя право `logistics:manage` у сотрудника есть —
+ * то есть роли расходились с правами, и выданная роль не давала ничего.
+ *
+ * `actorRole` оставлен для обратной совместимости и системных переходов
+ * (`'SYSTEM'`): если `actorRoles` не задан, проверяется только он.
  */
 export function checkTransition(params: {
   from: OrderStatus | null;
   to: OrderStatus;
   actorRole: TransitionActor;
+  /** Полный набор ролей сотрудника. Если задан, `actorRole` — только запасной. */
+  actorRoles?: readonly TransitionActor[];
   reason?: string | null;
 }): TransitionCheck {
   const { from, to, actorRole, reason } = params;
+  const roles = params.actorRoles ?? [actorRole];
 
   if (from !== null && isTerminalStatus(from)) {
     return {
@@ -491,7 +508,14 @@ export function checkTransition(params: {
     };
   }
 
-  if (!rule.actors.includes(actorRole) && actorRole !== ROLE.ADMIN) {
+  /*
+   * Роль администратора открывает любой переход — проверяется по всему набору:
+   * администратор с дополнительной ролью не должен получать меньше прав, чем
+   * администратор с одной.
+   */
+  const isAllowedActor =
+    rulesAllow(rule, roles) || roles.includes(ROLE.ADMIN) || actorRole === ROLE.ADMIN;
+  if (!isAllowedActor) {
     return {
       allowed: false,
       code: 'FORBIDDEN_ROLE',
@@ -510,13 +534,28 @@ export function checkTransition(params: {
   return { allowed: true, rule };
 }
 
+/**
+ * Допускает ли правило хотя бы одну из ролей сотрудника.
+ *
+ * Отдельная функция, потому что то же условие нужно `availableTransitions`:
+ * список доступных действий и фактический переход ОБЯЗАНЫ отвечать одинаково.
+ * Расхождение дало бы кнопку, которая видна, но не работает, — а это худший вид
+ * дефекта прав: пользователь считает, что действует неправильно он, а не код.
+ */
+function rulesAllow(rule: TransitionRule, roles: readonly TransitionActor[]): boolean {
+  return roles.some((role) => rule.actors.includes(role));
+}
+
 /** Все переходы, доступные из текущего статуса указанной роли (для UI). */
 export function availableTransitions(
   from: OrderStatus | null,
   actorRole: TransitionActor,
+  /** Полный набор ролей сотрудника. Если задан, `actorRole` — только запасной. */
+  actorRoles?: readonly TransitionActor[],
 ): readonly TransitionRule[] {
   if (from !== null && isTerminalStatus(from)) return [];
+  const roles = actorRoles ?? [actorRole];
   return ORDER_TRANSITIONS.filter(
-    (t) => t.from === from && (t.actors.includes(actorRole) || actorRole === ROLE.ADMIN),
+    (t) => t.from === from && (rulesAllow(t, roles) || roles.includes(ROLE.ADMIN)),
   );
 }

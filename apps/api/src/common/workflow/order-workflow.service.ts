@@ -56,6 +56,16 @@ export interface TransitionContext {
    */
   actorId: string | null;
   actorRole: TransitionActor;
+  /**
+   * Полный набор ролей сотрудника.
+   *
+   * Нужен потому, что мультироль поддержана: приёмщик с ВТОРОЙ ролью логиста
+   * обязан уметь отправлять партию в цех. Проверка только по `actorRole`
+   * (`primaryRole`) отказывала ему с `FORBIDDEN_ROLE`, хотя право
+   * `logistics:manage` у него есть, — роль не давала ничего. Необязательное
+   * поле: системные переходы и внутренние вызовы передают одну роль.
+   */
+  actorRoles?: readonly TransitionActor[];
   reason?: string;
   version: number;
   payload?: Record<string, unknown>;
@@ -158,8 +168,9 @@ export class OrderWorkflowService {
   getAvailableTransitions(
     status: OrderStatus,
     actorRole: TransitionActor,
+    actorRoles?: readonly TransitionActor[],
   ): readonly TransitionRule[] {
-    return availableTransitions(status, actorRole);
+    return availableTransitions(status, actorRole, actorRoles);
   }
 
   /**
@@ -215,6 +226,7 @@ export class OrderWorkflowService {
       from: order.status,
       to: ctx.to,
       actorRole: ctx.actorRole,
+      actorRoles: ctx.actorRoles,
       reason: ctx.reason ?? null,
     });
 

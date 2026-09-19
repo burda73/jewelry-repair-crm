@@ -10,10 +10,12 @@ import {
   createOrderSchema,
   approvalSchema,
   calcAdjustmentSchema,
+  refusalActSchema,
   normalizePhone,
   normalizeScanInput,
   buildOrderQrPayload,
   buildOrderNo,
+  buildRefusalActNo,
   documentDateParts,
   calcOrderTotal,
   discountForTotal,
@@ -98,6 +100,12 @@ const ORDER_CARD_INCLUDE = Prisma.validator<Prisma.OrderInclude>()({
     orderBy: { createdAt: 'asc' },
   },
   claims: true,
+  /*
+   * Акт отказа (задача 7.5): без него карточка не показала бы, что отказ уже
+   * оформлен, и интерфейс предлагал бы оформить второй — с ошибкой вместо
+   * подсказки.
+   */
+  refusalAct: { include: { document: { include: { file: true } } } },
   callRecordings: { orderBy: { startedAt: 'desc' } },
 });
 
@@ -848,7 +856,13 @@ export class OrdersService {
     }
 
     // Доступные действия для текущего пользователя — UI не дублирует матрицу прав.
-    const availableActions = this.workflow.getAvailableTransitions(order.status, user.primaryRole);
+    // Передаётся весь набор ролей: у сотрудника их может быть несколько, и
+    // кнопка обязана совпадать с тем, что разрешит сервер при переходе.
+    const availableActions = this.workflow.getAvailableTransitions(
+      order.status,
+      user.primaryRole,
+      user.roles,
+    );
 
     return {
       ...order,
@@ -1234,6 +1248,146 @@ export class OrdersService {
       acceptedBy: order.createdBy.fullName,
       copyNumber: order.receiptPrintCount,
     };
+  }
+
+  /**
+   * Оформить акт отказа от оплаты (ТЗ п. 2.8, задача 7.5).
+   *
+   * ## Дефект, который здесь закрывается
+   *
+   * Переходы в «Отказ от оплаты» (20 и 22) требуют акт: guard
+   * `REFUSAL_ACT_EXISTS` смотрит наличие строки в `RefusalAct`. Записи в эту
+   * таблицу не производил никто — по всему репозиторию только чтение
+   * (дефект 61). Следствие: статус «Отказ от оплаты» **недостижим**, и сценарий
+   * «клиент отказался от ремонта» невозможно завершить, хотя ТЗ п. 2.8 прямо
+   * требует акт отказа.
+   *
+   * ## Почему акт создаётся ОТДЕЛЬНЫМ шагом, а не вместе с переходом
+   *
+   * Акт — документ, который печатают и подписывают. Если бы он возникал
+   * автоматически при переходе, номер присваивался бы даже тогда, когда отказ
+   * отменили в последний момент, а в журнале нумерации остались бы дыры. К тому
+   * же заказчик может передумать уже после подписания: акт остаётся документом
+   * о состоявшемся отказе, а статус переводится сознательно и отдельно.
+   */
+  async createRefusalAct(
+    orderId: string,
+    input: unknown,
+    user: AuthenticatedUser,
+  ): Promise<OrderCard> {
+    const parsed = refusalActSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Проверьте правильность заполнения полей',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const data = parsed.data;
+
+    await this.prisma.runInTransaction(async (tx) => {
+      const order = await tx.order.findFirst({
+        where: {
+          AND: [
+            { id: orderId },
+            this.prisma.buildOrderScopeFilter({
+              scope: user.scope,
+              storeIds: user.storeIds,
+              userId: user.id,
+            }),
+          ],
+        },
+        select: { id: true, orderNo: true, status: true, refusalAct: { select: { id: true } } },
+      });
+
+      if (order === null) {
+        // Не найдено ИЛИ вне области видимости → 404, не 403 (защита от IDOR).
+        throw new NotFoundException({ code: 'NOT_FOUND', message: 'Заказ не найден' });
+      }
+
+      /*
+       * Отказ оформляют только там, где изделие готово к выдаче: акт фиксирует,
+       * что клиент отказался ЗАБИРАТЬ и ПЛАТИТЬ. Для незавершённого ремонта
+       * отказ оформляется как «отмена до начала работ» (переход в `CANCELLED`) —
+       * так решено заказчиком, и отдельного статуса для этого не вводится.
+       */
+      if (
+        order.status !== ORDER_STATUS.READY_FOR_PICKUP &&
+        order.status !== ORDER_STATUS.UNCLAIMED
+      ) {
+        throw new ConflictException({
+          code: 'BUSINESS_RULE_VIOLATION',
+          message:
+            'Акт отказа оформляется для готового к выдаче или невостребованного заказа. ' +
+            'До начала работ отказ оформляется отменой заказа',
+        });
+      }
+
+      /*
+       * Второй акт на заказ запрещён связью `@unique` на `orderId`. Проверяем
+       * заранее, чтобы вернуть понятную ошибку, а не нарушение ограничения БД.
+       */
+      if (order.refusalAct !== null) {
+        throw new ConflictException({
+          code: 'BUSINESS_RULE_VIOLATION',
+          message: 'Акт отказа по этому заказу уже оформлен',
+        });
+      }
+
+      const now = new Date();
+      const { year } = documentDateParts(now);
+      /*
+       * Номер акта — годовой (`АО-25-000007`), как у акта партии и как задано в
+       * docs/03 §6. Счётчик тот же (`ACT:${year}`): нумерация актов сквозная по
+       * году, и отдельная последовательность дала бы два разных документа с
+       * одним номером.
+       */
+      const counter = await tx.counter.upsert({
+        where: { scope: `ACT:${year}` },
+        update: { value: { increment: 1 } },
+        create: { scope: `ACT:${year}`, value: 1 },
+      });
+
+      const act = await tx.refusalAct.create({
+        data: {
+          orderId: order.id,
+          actNo: buildRefusalActNo(now, counter.value),
+          reason: data.reason,
+          amountMinor: data.amountMinor,
+          storageUntil: data.storageUntil ?? null,
+          fileId: data.fileId ?? null,
+          createdById: user.id,
+        },
+        select: { id: true, actNo: true },
+      });
+
+      /*
+       * Аудит обязателен: акт закрывает заказ отказом, и в журнале должно быть
+       * видно, кто его оформил. Номер попадает в `after` — по нему акт ищется
+       * в бумажном архиве магазина.
+       */
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          actorRole: user.primaryRole,
+          action: 'REFUSAL_ACT_CREATED',
+          entity: 'RefusalAct',
+          entityId: act.id,
+          after: {
+            orderId: order.id,
+            orderNo: order.orderNo,
+            actNo: act.actNo,
+            reason: data.reason,
+            amountMinor: data.amountMinor,
+            storageUntil: data.storageUntil?.toISOString() ?? null,
+          },
+        },
+      });
+    });
+
+    // Как и прочие операции над заказом, отдаём карточку целиком: клиент
+    // подставляет ответ в кэш и не должен получать объект другой формы.
+    return this.findOne(orderId, user);
   }
 
   /**

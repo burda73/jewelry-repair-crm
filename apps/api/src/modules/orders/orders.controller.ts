@@ -244,6 +244,7 @@ export class OrdersController {
       to: parsed.data.to as OrderStatus,
       actorId: user.id,
       actorRole: user.primaryRole,
+      actorRoles: user.roles,
       reason: parsed.data.reason,
       version: parsed.data.version,
       payload: parsed.data.payload,
@@ -279,6 +280,7 @@ export class OrdersController {
       to: 'CANCELLED',
       actorId: user.id,
       actorRole: user.primaryRole,
+      actorRoles: user.roles,
       reason: parsed.data.reason,
       version: parsed.data.version,
       scope: user.scope,
@@ -320,6 +322,27 @@ export class OrdersController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<OrderCard> {
     return this.ordersService.createAdjustment(id, body, user);
+  }
+
+  /**
+   * Оформить акт отказа от оплаты (ТЗ п. 2.8, задача 7.5).
+   *
+   * Право — `order:transition`, а не отдельное: акт существует ровно для того,
+   * чтобы стал возможен переход в «Отказ от оплаты», и выдавать его кому-то,
+   * кто не может перевести заказ, значило бы создавать документ, которым нельзя
+   * воспользоваться. Кто именно вправе отказать, решает таблица переходов
+   * (20 — приёмщик, менеджер, администратор; 22 — менеджер, администратор).
+   */
+  @Post(':id/refusal-act')
+  @RequirePermission(PERMISSION.ORDER_TRANSITION)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Оформить акт отказа от оплаты' })
+  createRefusalAct(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderCard> {
+    return this.ordersService.createRefusalAct(id, body, user);
   }
 
   /**

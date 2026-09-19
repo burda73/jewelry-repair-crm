@@ -186,6 +186,80 @@ describe('Проверка переходов', () => {
   });
 });
 
+describe('Мультироль: переходы учитывают ВЕСЬ набор ролей (задача 7.7)', () => {
+  /**
+   * РЕАЛЬНЫЙ РАЗРЫВ, найденный при вводе второй роли. Мультироль в системе
+   * поддержана (`UserRole[]`, права объединяются), но переходы сверялись только
+   * с `primaryRole` — ролью, которая в наборе первая. Приёмщик, которому выдали
+   * ВТОРУЮ роль логиста (решение заказчика: «где приняли, там и выдаём»), не мог
+   * отправить партию в цех: `primaryRole` остаётся `RECEIVER`, а правило 11
+   * допускает `PRODUCTION_MANAGER`/`LOGISTICIAN`.
+   *
+   * Дефект коварный: право `logistics:manage` у сотрудника ЕСТЬ, интерфейс
+   * раздел показывает, партию создать даёт — и только последний шаг падал с
+   * `FORBIDDEN_ROLE`. Выданная роль не давала ничего, а причина выглядела как
+   * «что-то не так с правами», а не как дефект проверки роли.
+   */
+  const RECEIVER_AND_LOGISTICIAN = [ROLE.RECEIVER, ROLE.LOGISTICIAN] as const;
+
+  it('приёмщик со второй ролью логиста может отправить партию в цех', () => {
+    const result = checkTransition({
+      from: ORDER_STATUS.QUEUED_FOR_DISPATCH,
+      to: ORDER_STATUS.IN_TRANSIT_TO_PRODUCTION,
+      actorRole: ROLE.RECEIVER,
+      actorRoles: RECEIVER_AND_LOGISTICIAN,
+    });
+    expect(result.allowed).toBe(true);
+  });
+
+  it('без второй роли тот же переход по-прежнему закрыт', () => {
+    // Обратная половина: исправление не должно открыть переход всем приёмщикам.
+    const result = checkTransition({
+      from: ORDER_STATUS.QUEUED_FOR_DISPATCH,
+      to: ORDER_STATUS.IN_TRANSIT_TO_PRODUCTION,
+      actorRole: ROLE.RECEIVER,
+      actorRoles: [ROLE.RECEIVER],
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.allowed === false && result.code).toBe('FORBIDDEN_ROLE');
+  });
+
+  it('если набор ролей не задан, проверяется только actorRole', () => {
+    // Системные переходы и внутренние вызовы передают одну роль: поведение
+    // не должно измениться.
+    const result = checkTransition({
+      from: ORDER_STATUS.QUEUED_FOR_DISPATCH,
+      to: ORDER_STATUS.IN_TRANSIT_TO_PRODUCTION,
+      actorRole: ROLE.RECEIVER,
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  it('список действий в UI совпадает с фактически разрешёнными переходами', () => {
+    /*
+     * Расхождение дало бы кнопку, которая видна, но не работает. Проверяются
+     * ОБА направления: список не должен ни терять доступное действие, ни
+     * показывать недоступное.
+     */
+    const rules = availableTransitions(
+      ORDER_STATUS.QUEUED_FOR_DISPATCH,
+      ROLE.RECEIVER,
+      RECEIVER_AND_LOGISTICIAN,
+    );
+    expect(rules.map((r) => r.to)).toContain(ORDER_STATUS.IN_TRANSIT_TO_PRODUCTION);
+
+    for (const rule of rules) {
+      const check = checkTransition({
+        from: ORDER_STATUS.QUEUED_FOR_DISPATCH,
+        to: rule.to,
+        actorRole: ROLE.RECEIVER,
+        actorRoles: RECEIVER_AND_LOGISTICIAN,
+      });
+      expect(check.allowed, `показанный переход ${rule.label} должен быть разрешён`).toBe(true);
+    }
+  });
+});
+
 describe('Доступные переходы для UI', () => {
   it('приёмщик в статусе READY_FOR_PICKUP видит выдачу, отказ и не видит невостребовано', () => {
     const rules = availableTransitions(ORDER_STATUS.READY_FOR_PICKUP, ROLE.RECEIVER);
