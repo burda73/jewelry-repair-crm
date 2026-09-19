@@ -220,8 +220,14 @@ export class NotificationSenderService {
     }));
   }
 
-  /** Состояние каналов: подключён ли адаптер и настроен ли он. */
-  channelsState(): { channel: string; configured: boolean }[] {
+  /**
+   * Состояние каналов: подключён ли адаптер и настроен ли он.
+   *
+   * `reason` объясняет причину, а не только факт: вопрос «почему клиент не
+   * получил SMS» имеет ответ «канал выключен настройкой», и он должен быть виден
+   * администратору, а не только в журнале сервера.
+   */
+  channelsState(): { channel: string; configured: boolean; reason: string }[] {
     return this.dispatcher.channelsState();
   }
 }

@@ -204,7 +204,8 @@
 | 3 | Внешние каналы выключены по умолчанию | `docs/05` §3.2 | `NOTIFICATIONS_SMS_ENABLED`, `NOTIFICATIONS_MESSENGER_ENABLED` = `false` | `env.validation.spec.ts` (16 тестов) |
 | 3 | Канал требует флага И адреса шлюза | `docs/05` §3.2 | `readSmsSettings()` возвращает `null` при отсутствии любого из условий | `sms-notification.adapter.spec.ts` |
 | 3 | Выключенный канал не берётся воркером | `docs/05` §3.1 | `supportedChannels()` без выключенных каналов | `sms-notification.adapter.spec.ts` |
-| 3 | Причина выключения видна администратору | `docs/07` §14 | `channelsState()` возвращает `reason`, а не только флаг | `sms-notification.adapter.spec.ts` |
+| 3 | Причина выключения видна администратору | `docs/07` §14 | `GET /notifications/channels`, `channelsState()` возвращает `reason` | `notifications.controller.spec.ts` (5 тестов), `sms-notification.adapter.spec.ts` |
+| 3 | Список исчерпавших попытки доступен администратору | `docs/07` §14 | `GET /notifications/exhausted`, право `settings:manage` | `notifications.controller.spec.ts` |
 | 3 | Номер приводится к E.164 перед отправкой | `docs/05` §6.3 | `normalizePhone()` в адаптере | `sms-notification.adapter.spec.ts` |
 | 3 | Неверный номер — постоянная ошибка без запроса к шлюзу | `docs/05` §6.3 | проверка до `fetch`, `retryable: false` | `sms-notification.adapter.spec.ts` |
 | 3 | Классификатор ошибки HTTP не переиспользует SMTP-логику | `docs/05` §3.1 | `isRetryableHttpStatus()` отдельно от `isRetryableByCode()` | `notification.port.spec.ts` (21 тест) |
