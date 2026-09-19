@@ -293,7 +293,11 @@ export interface OrderDetail {
 
 /** Запись единой ленты событий (`GET /orders/:id/timeline`). */
 export interface TimelineEntry {
-  type: 'STATUS' | 'PAYMENT' | 'APPROVAL' | 'ADJUSTMENT';
+  /**
+   * `ASSIGNMENT` — выдача работы исполнителю (задача 7.2). Отдельный тип, а не
+   * статус: заказчик требует видеть в истории ФИО ювелира, а у статуса его нет.
+   */
+  type: 'STATUS' | 'PAYMENT' | 'APPROVAL' | 'ADJUSTMENT' | 'ASSIGNMENT';
   at: string;
   title: string;
   actor: string | null;

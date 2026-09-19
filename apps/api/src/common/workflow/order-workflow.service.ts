@@ -738,7 +738,17 @@ export class OrderWorkflowService {
       if (effects.includes('SET_PRODUCTION_FINISHED_AT')) updateData.productionFinishedAt = now;
       if (effects.includes('SET_READY_AT')) updateData.readyAt = now;
       if (effects.includes('SET_COMPLETED_AT')) updateData.completedAt = now;
-      if (effects.includes('RESET_PERFORMER')) updateData.productionManagerId = null;
+      /*
+       * `RESET_PERFORMER` закрывает НАЗНАЧЕНИЯ исполнителей, а не сбрасывает
+       * ответственного менеджера.
+       *
+       * Прежде здесь стояло `updateData.productionManagerId = null`: эффект
+       * назывался «сбросить исполнителя», но очищал поле, в котором хранится
+       * менеджер производства, — то есть при перераспределении работы заказ
+       * терял ответственного, а исполнитель оставался назначенным (дефект 60).
+       * Теперь менеджер не трогается, а назначения закрываются статусом
+       * `RETURNED` ниже, в той же транзакции.
+       */
 
       /*
        * ТЗ п. 2.9: срок гарантии рассчитывается при выдаче.
@@ -766,6 +776,24 @@ export class OrderWorkflowService {
         throw new ConflictException({
           code: 'STALE_VERSION',
           message: 'Заказ был изменён другим сотрудником. Обновите страницу.',
+        });
+      }
+
+      /*
+       * Закрытие активных назначений при перераспределении (дефект 60).
+       *
+       * Статус `RETURNED`, а не удаление: назначение — это факт «ювелир держал
+       * изделие», и он должен остаться в истории. Удаление строки стёрло бы
+       * след, а `PERFORMER_ASSIGNED` снова увидел бы исполнителя и пропустил
+       * повторное назначение поверх прежнего.
+       *
+       * В той же транзакции, что и смена статуса: иначе заказ мог бы уйти из
+       * производства, оставив назначение активным.
+       */
+      if (effects.includes('RESET_PERFORMER')) {
+        await tx.orderAssignment.updateMany({
+          where: { orderId: order.id, status: { in: ['ASSIGNED', 'IN_PROGRESS'] } },
+          data: { status: 'RETURNED', finishedAt: now },
         });
       }
 

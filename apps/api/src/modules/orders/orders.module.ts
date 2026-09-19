@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
+import { AssignmentsService } from './assignments.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import { ReceiptService } from './receipt.service';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -10,7 +11,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
   // эффект `NOTIFY_CUSTOMER` требует шаблонов, которые даёт этот модуль.
   imports: [NotificationsModule],
   controllers: [OrdersController],
-  providers: [OrdersService, OrderWorkflowService, ReceiptService],
-  exports: [OrdersService, OrderWorkflowService, ReceiptService],
+  providers: [OrdersService, AssignmentsService, OrderWorkflowService, ReceiptService],
+  exports: [OrdersService, AssignmentsService, OrderWorkflowService, ReceiptService],
 })
 export class OrdersModule {}

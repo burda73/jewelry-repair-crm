@@ -13,6 +13,8 @@ import {
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiCookieAuth, ApiQuery } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
+import { AssignmentsService } from './assignments.service';
+import type { OrderAssignmentDto } from './assignments.service';
 import { ReceiptService } from './receipt.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
@@ -55,6 +57,7 @@ interface ValidationErrorResponse {
 export class OrdersController {
   constructor(
     private readonly ordersService: OrdersService,
+    private readonly assignmentsService: AssignmentsService,
     private readonly workflow: OrderWorkflowService,
     private readonly receiptService: ReceiptService,
   ) {}
@@ -178,6 +181,45 @@ export class OrdersController {
    * `availableTransitions.length`. Форма ответа того же эндпоинта, что и
    * `GET /orders/:id`, избавляет клиент от склейки данных из двух источников.
    */
+  /**
+   * Выдать работу исполнителю производства (задача 7.2).
+   *
+   * Создаёт назначение и переводит заказ в «Выдано в работу» одной операцией.
+   * Право `production:manage` — то же, что у менеджера производства на переводы
+   * в цехе.
+   */
+  @Post(':id/assignments')
+  @RequirePermission(PERMISSION.PRODUCTION_MANAGE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Назначить исполнителя производства' })
+  assignPerformer(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderAssignmentDto> {
+    return this.assignmentsService.assign(id, body, user);
+  }
+
+  /**
+   * Принять работу у исполнителя: заказ переходит в «Работы завершены».
+   *
+   * Путь `:assignmentId` вложен в заказ намеренно: он проверяется на
+   * принадлежность заказу, иначе менеджер одного цеха мог бы закрыть назначение
+   * чужого заказа, зная только идентификатор назначения.
+   */
+  @Post(':id/assignments/:assignmentId/finish')
+  @RequirePermission(PERMISSION.PRODUCTION_MANAGE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Принять работу у исполнителя' })
+  finishAssignment(
+    @Param('id') id: string,
+    @Param('assignmentId') assignmentId: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderAssignmentDto> {
+    return this.assignmentsService.finish(id, assignmentId, body, user);
+  }
+
   @Post(':id/transition')
   @RequirePermission(PERMISSION.ORDER_TRANSITION)
   @HttpCode(HttpStatus.OK)

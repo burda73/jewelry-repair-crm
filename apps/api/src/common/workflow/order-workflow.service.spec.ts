@@ -23,7 +23,7 @@
  * `dueAt = NULL`, при заполненном справочнике из 9 нормативов.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { computeDueAt, OrderWorkflowService } from './order-workflow.service';
 import { ReportsCacheService } from '../cache/reports-cache.service';
 import {
@@ -447,6 +447,12 @@ describe('Сброс кэша отчётов при переходе (задач
           statusHistory: [],
         }),
       },
+      /*
+       * Переход 13 несёт эффект `RESET_PERFORMER`, который закрывает активные
+       * назначения исполнителей (дефект 60). Без `orderAssignment` в двойнике
+       * переход падал бы на обращении к отсутствующей модели.
+       */
+      orderAssignment: { updateMany: async () => ({ count: 1 }) },
       orderStatusHistory: {
         findFirst: async () => null,
         create: async () => ({ id: 'h-1' }),
@@ -495,6 +501,143 @@ describe('Сброс кэша отчётов при переходе (задач
     shared.set(`${REPORT_NAME.REVENUE}|x`, reportStub(), 60_000);
     expect(shared.invalidate()).toBe(1);
     expect(shared.size()).toBe(0);
+  });
+});
+
+describe('Перераспределение работы: RESET_PERFORMER (дефект 60)', () => {
+  /**
+   * ДЕФЕКТ 60. Эффект назывался «сбросить исполнителя», но очищал
+   * `productionManagerId` — поле, в котором хранится ОТВЕТСТВЕННЫЙ МЕНЕДЖЕР, а
+   * не исполнитель. Перераспределение работы (переход 13) стирало ответственного
+   * и при этом оставляло `OrderAssignment` активным, поэтому:
+   *
+   *  * заказ терял менеджера, который за него отвечает;
+   *  * `PERFORMER_ASSIGNED` продолжал видеть прежнего ювелира, и повторное
+   *    назначение проходило поверх незакрытого.
+   *
+   * Тест доводит переход 13 до успеха: без этого проверка была бы ложной —
+   * отклонённый переход тоже ничего не пишет, и мутация «вернуть сброс
+   * менеджера» осталась бы незамеченной (проверено: до этого теста она
+   * проходила).
+   */
+  function makeService(assignments: Array<{ id: string; status: string }>) {
+    const order = {
+      id: 'o-1',
+      status: 'IN_PRODUCTION',
+      version: 1,
+      worksTotalMinor: 100000,
+      stonesTotalMinor: 0,
+      discountMinor: 0,
+      totalAmountMinor: 100000,
+      prepaymentRequiredMinor: 0,
+      requiresPrepayment: false,
+      paidAmountMinor: 0,
+      warrantyMonths: 12,
+      complexity: 'SIMPLE',
+      dueAt: null,
+      readyAt: null,
+      items: [{ id: 'i-1' }],
+      works: [{ id: 'w-1', warrantyMonths: 12 }],
+      approvals: [],
+      refusalAct: null,
+      claims: [],
+      batchItems: [],
+      assignments,
+      customer: { consentCallRecording: true },
+    };
+
+    const updateManyAssignment = vi.fn(async () => ({ count: assignments.length }));
+    const orderUpdateMany = vi.fn(async (args: { data: Record<string, unknown> }) => {
+      capturedOrderUpdate = args.data;
+      return { count: 1 };
+    });
+    let capturedOrderUpdate: Record<string, unknown> = {};
+
+    const tx = {
+      order: {
+        updateMany: orderUpdateMany,
+        findUniqueOrThrow: async () => ({
+          ...order,
+          status: 'QUEUED_FOR_DISPATCH',
+          statusHistory: [],
+        }),
+      },
+      orderAssignment: { updateMany: updateManyAssignment },
+      orderStatusHistory: {
+        findFirst: async () => null,
+        create: async () => ({ id: 'h-1' }),
+      },
+      auditLog: { create: async () => ({ id: 'a-1' }) },
+    };
+
+    const prisma = {
+      buildOrderScopeFilter: () => ({}),
+      order: { findFirst: async () => order },
+      stageNorm: { findMany: async () => [] },
+      workingCalendar: { findMany: async () => [] },
+      runInTransaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+    };
+
+    const service = new OrderWorkflowService(
+      prisma as never,
+      new ReportsCacheService(),
+      notificationsStub() as never,
+      configStub() as never,
+    );
+
+    return {
+      service,
+      updateManyAssignment,
+      getOrderUpdate: () => capturedOrderUpdate,
+    };
+  }
+
+  it('закрывает активные назначения статусом RETURNED', async () => {
+    const { service, updateManyAssignment } = makeService([
+      { id: 'as-1', status: 'ASSIGNED' },
+      { id: 'as-2', status: 'IN_PROGRESS' },
+    ]);
+
+    await service.transition({
+      orderId: 'o-1',
+      to: ORDER_STATUS.QUEUED_FOR_DISPATCH,
+      actorId: 'u-1',
+      actorRole: 'PRODUCTION_MANAGER',
+      version: 1,
+      scope: 'ALL_STORES',
+      storeIds: [],
+      reason: 'Возврат на очередь: нужны запчасти',
+    });
+
+    expect(updateManyAssignment).toHaveBeenCalledTimes(1);
+    const call = updateManyAssignment.mock.calls[0]?.[0] as {
+      where: { orderId: string; status: { in: string[] } };
+      data: { status: string; finishedAt: Date };
+    };
+    expect(call.where).toEqual({ orderId: 'o-1', status: { in: ['ASSIGNED', 'IN_PROGRESS'] } });
+    expect(call.data.status).toBe('RETURNED');
+    expect(call.data.finishedAt).toBeInstanceOf(Date);
+  });
+
+  it('НЕ трогает ответственного менеджера', async () => {
+    /*
+     * Это и есть дефект 60. Очистка `productionManagerId` лишала заказ
+     * ответственного, хотя перераспределялась только работа ювелира.
+     */
+    const { service, getOrderUpdate } = makeService([{ id: 'as-1', status: 'ASSIGNED' }]);
+
+    await service.transition({
+      orderId: 'o-1',
+      to: ORDER_STATUS.QUEUED_FOR_DISPATCH,
+      actorId: 'u-1',
+      actorRole: 'PRODUCTION_MANAGER',
+      version: 1,
+      scope: 'ALL_STORES',
+      storeIds: [],
+      reason: 'Возврат на очередь: нужны запчасти',
+    });
+
+    expect(getOrderUpdate()).not.toHaveProperty('productionManagerId');
   });
 });
 

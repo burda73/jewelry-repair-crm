@@ -24,6 +24,7 @@ import {
   addWorkingDays,
   formatPhone,
   ORDER_STATUS,
+  IN_PRODUCTION_STATUSES,
   type OrderStatus,
 } from '@app/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -88,7 +89,14 @@ const ORDER_CARD_INCLUDE = Prisma.validator<Prisma.OrderInclude>()({
     orderBy: { createdAt: 'desc' },
     include: { changedBy: { select: { fullName: true } } },
   },
-  assignments: { include: { performer: true } },
+  assignments: {
+    include: {
+      performer: true,
+      // Автор назначения нужен ленте: видно, кто выдал работу, а не только кому.
+      assignedBy: { select: { id: true, fullName: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  },
   claims: true,
   callRecordings: { orderBy: { startedAt: 'desc' } },
 });
@@ -211,7 +219,7 @@ export type OrderSearchItem = Prisma.OrderGetPayload<{ select: typeof ORDER_SEAR
 
 /** Запись единой ленты событий заказа: статусы, платежи, согласования, корректировки. */
 export interface TimelineEntry {
-  type: 'STATUS' | 'PAYMENT' | 'APPROVAL' | 'ADJUSTMENT';
+  type: 'STATUS' | 'PAYMENT' | 'APPROVAL' | 'ADJUSTMENT' | 'ASSIGNMENT';
   at: Date;
   title: string;
   actor: string | null;
@@ -890,6 +898,28 @@ export class OrdersService {
         actor: adj.adjustedBy?.fullName ?? null,
         details: { reason: adj.reason, before: adj.amountBeforeMinor, after: adj.amountAfterMinor },
       })),
+      /*
+       * Работа, выданная исполнителю (задача 7.2).
+       *
+       * Отдельный тип записи, а не статус: заказчик требует видеть в истории
+       * ФИО ювелира, а `OrderStatusHistory` хранит только статусы. Запись
+       * события — в аудите (действие `ASSIGNMENT`), здесь она превращается в
+       * понятную строку ленты.
+       */
+      ...order.assignments.map((a) => ({
+        type: 'ASSIGNMENT' as const,
+        at: a.createdAt,
+        title: `Работа выдана: ${a.performer.fullName}`,
+        actor: a.assignedBy?.fullName ?? null,
+        details: {
+          performerId: a.performerId,
+          performerName: a.performer.fullName,
+          specialization: a.performer.specialization,
+          plannedHours: a.plannedHours,
+          status: a.status,
+          comment: a.comment,
+        },
+      })),
     ];
 
     return entries.sort((a, b) => b.at.getTime() - a.at.getTime());
@@ -959,7 +989,16 @@ export class OrdersService {
       overdue: overdueCount,
       unclaimed: unclaimedCount,
       awaitingPrepayment: awaitingPrepaymentCount,
-      inProduction: counts.get(ORDER_STATUS.IN_PRODUCTION) ?? 0,
+      /*
+       * «В производстве» — это ВСЕ статусы цеха, а не только `IN_PRODUCTION`.
+       *
+       * После введения статусов производства (задача 7.1) заказы в цехе
+       * находятся в `ACCEPTED_BY_WORKSHOP`, `IN_WORK` и `WORK_COMPLETED`;
+       * `IN_PRODUCTION` остался только у заказов, принятых до этой правки.
+       * Подсчёт по одному статусу показывал бы «в производстве: 0» при полном
+       * цехе заказов — дашборд врал бы в самую заметную сторону.
+       */
+      inProduction: IN_PRODUCTION_STATUSES.reduce((sum, s) => sum + (counts.get(s) ?? 0), 0),
       readyForPickup: counts.get(ORDER_STATUS.READY_FOR_PICKUP) ?? 0,
       awaitingApproval: counts.get(ORDER_STATUS.AWAITING_APPROVAL) ?? 0,
       inTransit:
