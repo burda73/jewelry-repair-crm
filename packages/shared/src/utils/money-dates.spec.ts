@@ -306,6 +306,16 @@ describe('Даты: гарантия (ТЗ п. 2.9)', () => {
     const completed = new Date('2025-01-15T12:00:00Z');
     expect(toDateKey(computeWarrantyUntil(completed, []))).toBe('2025-07-15');
   });
+
+  it('срок по умолчанию приходит параметром, а не жёсткой шестёркой', () => {
+    /*
+     * `WARRANTY_MONTHS_DEFAULT` объявлена в схеме окружения с самого начала, но
+     * в коде стояла жёсткая «6»: изменение переменной не меняло ничего. Тот же
+     * класс дефекта, что «Дефект 41», 50, 51 и 52.
+     */
+    const completed = new Date('2025-01-15T12:00:00Z');
+    expect(toDateKey(computeWarrantyUntil(completed, [], 12))).toBe('2026-01-15');
+  });
 });
 
 describe('Даты: просрочки и эскалации (ТЗ п. 2.7)', () => {

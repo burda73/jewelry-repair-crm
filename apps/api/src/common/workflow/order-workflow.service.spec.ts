@@ -50,6 +50,17 @@ const FRIDAY = new Date('2027-09-17T12:00:00Z');
  * перехода проверяют сам переход, и без этой заглушки конструктор сервиса
  * требовал бы настоящий модуль уведомлений.
  */
+/**
+ * Подделка `ConfigService` для бизнес-настроек.
+ *
+ * Возвращает значения по умолчанию, если тест не задал своё: сервис читает
+ * `WARRANTY_MONTHS_DEFAULT`, и без двойника обращение к нему падало бы.
+ */
+function configStub(values: Record<string, unknown> = {}) {
+  const defaults: Record<string, unknown> = { WARRANTY_MONTHS_DEFAULT: 6, ...values };
+  return { get: (key: string) => defaults[key] };
+}
+
 function notificationsStub() {
   const calls: { code: string; phone: string | null; orderId: string | null }[] = [];
   return {
@@ -284,6 +295,7 @@ describe('Системный переход: actorId обязателен как
     {} as never,
     new ReportsCacheService(),
     notificationsStub() as never,
+    configStub() as never,
   );
 
   it('системный переход со строкой вместо null отклоняется', async () => {
@@ -337,7 +349,12 @@ describe('Сброс кэша отчётов при переходе (задач
       order: { findFirst: async () => order },
       workingCalendar: { findMany: async () => [] },
     };
-    const service = new OrderWorkflowService(prisma as never, cache, notificationsStub() as never);
+    const service = new OrderWorkflowService(
+      prisma as never,
+      cache,
+      notificationsStub() as never,
+      configStub() as never,
+    );
     return { service, cache };
   }
 
@@ -402,10 +419,11 @@ describe('Сброс кэша отчётов при переходе (задач
       stonesTotalMinor: 0,
       discountMinor: 0,
       totalAmountMinor: 100000,
-      paidAmountMinor: 0,
       prepaymentRequiredMinor: 0,
       requiresPrepayment: false,
-      pickupSignatureFileId: null,
+      // Оба условия выдачи выполнены: заказ оплачен и подпись клиента есть.
+      pickupSignatureFileId: 'f-1',
+      paidAmountMinor: 120_000,
       warrantyMonths: 12,
       complexity: 'SIMPLE',
       dueAt: null,
@@ -444,7 +462,12 @@ describe('Сброс кэша отчётов при переходе (задач
       runInTransaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
     };
 
-    const service = new OrderWorkflowService(prisma as never, cache, notificationsStub() as never);
+    const service = new OrderWorkflowService(
+      prisma as never,
+      cache,
+      notificationsStub() as never,
+      configStub() as never,
+    );
 
     await service.transition({
       orderId: 'o-1',
@@ -488,6 +511,10 @@ describe('Уведомление клиента при переходе (зад�
     customer?: Record<string, unknown> | null;
     orderRow?: Record<string, unknown> | null;
     withEffect?: boolean;
+    /** Значение настройки `WARRANTY_MONTHS_DEFAULT` в двойнике ConfigService. */
+    warrantyMonthsDefault?: number;
+    /** Перехват данных, с которыми сервис обновляет заказ. */
+    onUpdate?: (data: Record<string, unknown>) => void;
   }) {
     const order = {
       id: 'o-1',
@@ -512,7 +539,10 @@ describe('Уведомление клиента при переходе (зад�
 
     const tx = {
       order: {
-        updateMany: async () => ({ count: 1 }),
+        updateMany: async (args: { data: Record<string, unknown> }) => {
+          options.onUpdate?.(args.data);
+          return { count: 1 };
+        },
         findUniqueOrThrow: async () => ({
           ...order,
           status: 'READY_FOR_PICKUP',
@@ -551,6 +581,11 @@ describe('Уведомление клиента при переходе (зад�
       prisma as never,
       new ReportsCacheService(),
       notifications as never,
+      configStub(
+        options.warrantyMonthsDefault === undefined
+          ? {}
+          : { WARRANTY_MONTHS_DEFAULT: options.warrantyMonthsDefault },
+      ) as never,
     );
     return { service, notifications };
   }
@@ -691,5 +726,148 @@ describe('Уведомление клиента при переходе (зад�
 
     const result = await transition(service);
     expect(result).toBeDefined();
+  });
+});
+
+describe('Срок гарантии по умолчанию из настройки WARRANTY_MONTHS_DEFAULT (дефект 53)', () => {
+  /*
+   * Настройка была объявлена в схеме окружения и в `.env.example` с
+   * комментарием «6 обычный, 3 закрепка», но не читалась нигде: в коде стояла
+   * жёсткая «6». Изменение переменной не меняло ничего.
+   */
+  function makeServiceWithWarranty(defaultMonths?: number) {
+    const order = {
+      id: 'o-1',
+      orderNo: 'MSK1-2509-000001',
+      // Гарантия считается при ВЫДАЧЕ клиенту: переход 18 «Готов к выдаче →
+      // Выдан» содержит эффект COMPUTE_WARRANTY.
+      status: 'READY_FOR_PICKUP',
+      version: 1,
+      storeId: 's-1',
+      complexity: 'SIMPLE',
+      dueAt: new Date('2026-09-25T00:00:00.000Z'),
+      readyAt: null,
+      items: [{ id: 'i-1' }],
+      // Работ у заказа нет: именно тогда применяется значение по умолчанию.
+      works: [],
+      customerId: 'c-1',
+      totalAmountMinor: 120_000,
+      warrantyMonths: 6,
+      statusHistory: [],
+      batchItems: [],
+      claims: [],
+      assignments: [],
+      approvals: [],
+      refusalAct: null,
+      workshopId: 'w-1',
+      customer: { id: 'c-1', consentCallRecording: true, phoneNormalized: '+79161234567' },
+      customerId: 'c-1',
+      worksTotalMinor: 100_000,
+      stonesTotalMinor: 20_000,
+      discountMinor: 0,
+      prepaymentRequiredMinor: 0,
+      requiresPrepayment: false,
+      // Оба условия выдачи выполнены: заказ оплачен и подпись клиента есть.
+      pickupSignatureFileId: 'f-1',
+      paidAmountMinor: 120_000,
+      performerAssigned: false,
+      workFinished: false,
+    };
+
+    let captured: Record<string, unknown> | undefined;
+    const tx = {
+      order: {
+        updateMany: async (args: { data: Record<string, unknown> }) => {
+          captured = args.data;
+          return { count: 1 };
+        },
+        findUniqueOrThrow: async () => ({ ...order, status: 'COMPLETED', statusHistory: [] }),
+      },
+      orderStatusHistory: {
+        findFirst: async () => null,
+        create: async () => ({ id: 'h-1' }),
+      },
+      auditLog: { create: async () => ({ id: 'a-1' }) },
+    };
+
+    const prisma = {
+      buildOrderScopeFilter: () => ({}),
+      order: {
+        findFirst: async () => order,
+        findUnique: async () => ({
+          id: 'o-1',
+          orderNo: 'MSK1-2509-000001',
+          dueAt: order.dueAt,
+          warrantyUntil: null,
+          totalAmountMinor: 120_000,
+          customer: { id: 'c-1', phoneNormalized: '+79161234567' },
+        }),
+      },
+      stageNorm: { findMany: async () => [] },
+      workingCalendar: { findMany: async () => [] },
+      runInTransaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+    };
+
+    const config = {
+      get: (key: string) =>
+        key === 'WARRANTY_MONTHS_DEFAULT' && defaultMonths !== undefined ? defaultMonths : 6,
+    };
+    const service = new OrderWorkflowService(
+      prisma as never,
+      new ReportsCacheService(),
+      notificationsStub() as never,
+      config as never,
+    );
+    return { service, captured: () => captured };
+  }
+
+  async function complete(service: OrderWorkflowService) {
+    // Выдача клиенту — действие приёмщика (переход 18: RECEIVER, CASHIER, ADMIN).
+    return await service.transition({
+      orderId: 'o-1',
+      to: ORDER_STATUS.COMPLETED,
+      actorId: 'u-1',
+      actorRole: 'RECEIVER',
+      version: 1,
+      scope: 'ALL_STORES',
+      storeIds: [],
+    });
+  }
+
+  /** Разница в месяцах между двумя моментами — с учётом разной длины месяцев. */
+  function monthsBetween(from: Date, to: Date): number {
+    let months =
+      (to.getUTCFullYear() - from.getUTCFullYear()) * 12 + (to.getUTCMonth() - from.getUTCMonth());
+    if (to.getUTCDate() < from.getUTCDate()) months -= 1;
+    return months;
+  }
+
+  it('настройка действительно применяется при выдаче заказа', async () => {
+    const { service, captured } = makeServiceWithWarranty(12);
+    await complete(service);
+
+    /*
+     * Заказ без работ: гарантия берётся из настройки. Сравнивается РАЗНИЦА, а
+     * не конкретная дата: она зависела бы от дня прогона теста.
+     */
+    const until = captured()?.warrantyUntil as Date;
+    expect(until).toBeInstanceOf(Date);
+    expect(monthsBetween(new Date(), until)).toBe(12);
+  });
+
+  it('значение по умолчанию — 6 месяцев', async () => {
+    const { service, captured } = makeServiceWithWarranty(undefined);
+    await complete(service);
+
+    expect(monthsBetween(new Date(), captured()?.warrantyUntil as Date)).toBe(6);
+  });
+
+  it('испорченное значение настройки не обнуляет гарантию', async () => {
+    const { service, captured } = makeServiceWithWarranty(0);
+    await complete(service);
+
+    // Ноль месяцев означал бы «гарантии нет» — клиент потерял бы право,
+    // которое ему назвали. Берётся значение по умолчанию.
+    expect(monthsBetween(new Date(), captured()?.warrantyUntil as Date)).toBe(6);
   });
 });

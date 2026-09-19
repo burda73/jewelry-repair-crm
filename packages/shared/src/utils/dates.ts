@@ -187,12 +187,28 @@ export function workingDaysBetween(
   return count;
 }
 
-/** Расчёт срока гарантии по видам работ: 6 мес. обычный, 3 мес. закрепка (ТЗ п. 2.9). */
+/**
+ * Расчёт срока гарантии по видам работ (ТЗ п. 2.9).
+ *
+ * Берётся МАКСИМУМ по видам работ: если в заказе была и закрепка (3 месяца), и
+ * обычный ремонт (6 месяцев), гарантия на изделие — шесть месяцев. Меньшее
+ * значение лишило бы клиента гарантии на часть работ, за которые он заплатил.
+ *
+ * `defaultMonths` подставляется, когда у работ срок не задан. Значение приходит
+ * из настройки `WARRANTY_MONTHS_DEFAULT`; прежняя жёсткая «6» превращала
+ * изменение переменной в ничто — тот же класс дефекта, что «Дефект 41» и далее.
+ *
+ * Второй бизнес-параметр, `WARRANTY_MONTHS_SETTING` (3 месяца для закрепки),
+ * задаёт срок НОВЫХ позиций прейскуранта и применяется при их создании, а не
+ * здесь: у позиции срок хранится, и пересчитывать его задним числом нельзя —
+ * иначе гарантия по уже принятым заказам изменилась бы в момент правки настройки.
+ */
 export function computeWarrantyUntil(
   completedAt: Date,
   workWarrantyMonths: readonly number[],
+  defaultMonths = 6,
 ): Date {
-  const months = workWarrantyMonths.length > 0 ? Math.max(...workWarrantyMonths) : 6;
+  const months = workWarrantyMonths.length > 0 ? Math.max(...workWarrantyMonths) : defaultMonths;
   return addMonths(completedAt, months);
 }
 

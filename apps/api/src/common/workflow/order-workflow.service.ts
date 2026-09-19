@@ -29,6 +29,7 @@ import {
   type WorkingCalendar,
 } from '@app/shared';
 import type { Prisma, StageNorm } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ReportsCacheService } from '../../common/cache/reports-cache.service';
 import { NotificationsService } from '../../modules/notifications/notifications.service';
@@ -133,7 +134,21 @@ export class OrderWorkflowService {
      * уведомления, а клиент не получал ничего.
      */
     private readonly notifications: NotificationsService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Гарантия по умолчанию, месяцев, из настройки `WARRANTY_MONTHS_DEFAULT`.
+   *
+   * Настройка была объявлена в схеме окружения (и в `.env.example`) с
+   * комментарием «6 обычный, 3 закрепка», но не читалась нигде: в коде стояла
+   * жёсткая «6». Изменение переменной не меняло ничего — тот же класс дефекта,
+   * что «Дефект 41», 50, 51 и 52.
+   */
+  private warrantyMonthsDefault(): number {
+    const value = this.config.get<number>('WARRANTY_MONTHS_DEFAULT');
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 6;
+  }
 
   /**
    * Доступные переходы для пользователя — для отображения кнопок в UI.
@@ -391,7 +406,9 @@ export class OrderWorkflowService {
       dueAt: order.dueAt,
       workshopId: order.workshopId,
       warrantyMonths:
-        order.works.length > 0 ? Math.max(...order.works.map((w) => w.warrantyMonths)) : 6,
+        order.works.length > 0
+          ? Math.max(...order.works.map((w) => w.warrantyMonths))
+          : this.warrantyMonthsDefault(),
       claimOpen: order.claims.length > 0,
       complexity: order.complexity,
     };
@@ -723,7 +740,17 @@ export class OrderWorkflowService {
       if (effects.includes('SET_COMPLETED_AT')) updateData.completedAt = now;
       if (effects.includes('RESET_PERFORMER')) updateData.productionManagerId = null;
 
-      // ТЗ п. 2.9: срок гарантии рассчитывается при выдаче.
+      /*
+       * ТЗ п. 2.9: срок гарантии рассчитывается при выдаче.
+       *
+       * Срок по умолчанию сюда НЕ передаётся: `order.warrantyMonths` уже
+       * посчитан в `loadOrderForGuards` и для заказа без работ равен
+       * `warrantyMonthsDefault()`. Передача значения ещё и параметром была бы
+       * вторым источником того же числа, и расхождение между ними никак не
+       * проявилось бы: массив из одного элемента никогда не пуст, поэтому
+       * параметр не использовался бы вообще. Настройка применяется ровно в
+       * одном месте — в `warrantyMonthsDefault()`.
+       */
       if (effects.includes('COMPUTE_WARRANTY')) {
         updateData.warrantyUntil = computeWarrantyUntil(now, [order.warrantyMonths]);
         updateData.warrantyMonths = order.warrantyMonths;

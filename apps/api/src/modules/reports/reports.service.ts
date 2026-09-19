@@ -44,11 +44,12 @@ import {
   workingDaysBetween,
   type ClaimStatus,
 } from '@app/shared';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
   ReportsCacheService,
   reportCacheKey,
-  ttlForReport,
+  ttlWithSetting,
 } from '../../common/cache/reports-cache.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
@@ -135,7 +136,20 @@ export class ReportsService {
     private readonly prisma: PrismaService,
     private readonly workflow: OrderWorkflowService,
     private readonly cache: ReportsCacheService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Общий предел свежести отчётов из настройки `REPORT_CACHE_TTL_SECONDS`.
+   *
+   * Нечисловое или неположительное значение настройки не применяется: ноль
+   * означал бы «кэш не работает», и отчёт считался бы заново на каждый запрос —
+   * внешне это выглядело бы как замедление без причины.
+   */
+  private configuredTtlSeconds(): number | undefined {
+    const value = this.config.get<number>('REPORT_CACHE_TTL_SECONDS');
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+  }
 
   /**
    * Построить отчёт по имени.
@@ -191,7 +205,7 @@ export class ReportsService {
     };
 
     const periodDays = (query.to.getTime() - query.from.getTime()) / 86_400_000;
-    this.cache.set(key, result, ttlForReport(name, periodDays));
+    this.cache.set(key, result, ttlWithSetting(name, periodDays, this.configuredTtlSeconds()));
     return result;
   }
 

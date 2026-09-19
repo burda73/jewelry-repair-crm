@@ -62,6 +62,16 @@ function actor(scope: string, storeIds: string[] = []) {
 }
 
 /** Двойник Prisma с настраиваемыми выборками. */
+/**
+ * Подделка `ConfigService` для настройки `REPORT_CACHE_TTL_SECONDS`.
+ *
+ * По умолчанию настройка не задана: тесты отчётов проверяют доменные правила,
+ * а не кэш, и подстановка чужого TTL исказила бы их смысл.
+ */
+function makeConfig(values: Record<string, unknown> = {}) {
+  return { get: (key: string) => values[key] };
+}
+
 function makeService(overrides: Record<string, unknown> = {}) {
   const client = {
     orderStatusHistory: { findMany: vi.fn(async () => []) },
@@ -77,7 +87,12 @@ function makeService(overrides: Record<string, unknown> = {}) {
   const workflow = {
     loadCalendar: vi.fn(async () => ({ overrides: new Map(), defaultHours: 9 })),
   };
-  const service = new ReportsService(client as never, workflow as never, new ReportsCacheService());
+  const service = new ReportsService(
+    client as never,
+    workflow as never,
+    new ReportsCacheService(),
+    makeConfig() as never,
+  );
   return { service, client, workflow };
 }
 
@@ -336,6 +351,7 @@ describe('Отчёт «Сроки по этапам» (задача 5.1)', () =>
       (service as unknown as { prisma: unknown }).prisma as never,
       workflow as never,
       new ReportsCacheService(),
+      makeConfig() as never,
     );
     const result = await custom.build(REPORT_NAME.STAGE_DURATIONS, query(), actor('ALL_STORES'));
 
