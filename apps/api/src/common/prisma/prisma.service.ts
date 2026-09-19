@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit, Logger } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
+import { connectionLimit } from '@app/db';
 
 /**
  * Обёртка над Prisma Client с управлением жизненным циклом.
@@ -16,6 +17,24 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   constructor() {
     super({
+      /*
+       * Пул соединений ОГРАНИЧИВАЕТСЯ, и это критично для эксплуатации.
+       *
+       * В продакшне база — СУЩЕСТВУЮЩИЙ сервер PostgreSQL предприятия, общий с
+       * другими системами (ответ A1). Без `connection_limit` Prisma открывает
+       * соединения по числу ядер × 2 + 1 на КАЖДЫЙ процесс, и три процесса
+       * (две реплики API и воркер) могли занять весь `max_connections` сервера —
+       * тогда встали бы 1С и остальные системы, а причина искалась бы где угодно,
+       * кроме нашего приложения.
+       *
+       * Логика ограничения живёт в `@app/db` и применяется там к общим клиентам.
+       * `PrismaService` создаёт СВОЙ экземпляр и раньше её не использовал:
+       * `DATABASE_POOL_SIZE` была объявлена, задокументирована как «применяется
+       * автоматически» (docs/14 §3.2) и проверялась скриптом `preflight.sh` —
+       * но на реально работающий API не влияла. Тот же класс дефекта, что
+       * «Дефект 41» и далее: настройка объявлена, эффекта нет.
+       */
+      datasources: { db: { url: connectionLimit(process.env.DATABASE_URL) } },
       log:
         process.env.NODE_ENV === 'development'
           ? [
