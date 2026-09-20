@@ -1122,7 +1122,13 @@ function endOfPeriod(to: Date): Date {
 }
 
 /** Терминальные статусы: заказ закрыт, просрочки «сейчас» по нему нет. */
-const TERMINAL_STATUSES: OrderStatus[] = ['COMPLETED', 'REFUSED', 'CANCELLED', 'UNCLAIMED'];
+const TERMINAL_STATUSES: OrderStatus[] = [
+  'COMPLETED',
+  'REFUSED',
+  'REFUSED_BEFORE_WORK',
+  'CANCELLED',
+  'UNCLAIMED',
+];
 
 const ORDER_DRAFT = 'DRAFT';
 const ORDER_CANCELLED = 'CANCELLED';

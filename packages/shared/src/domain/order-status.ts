@@ -28,7 +28,19 @@ export const ORDER_STATUS = {
   READY_FOR_PICKUP: 'READY_FOR_PICKUP',
   UNCLAIMED: 'UNCLAIMED',
   COMPLETED: 'COMPLETED',
+  /** Отказ от оплаты после выполненных работ (нужен акт отказа). */
   REFUSED: 'REFUSED',
+  /**
+   * Клиент отказался от ремонта ДО начала работ (дефект 67).
+   *
+   * Отдельный статус, а не `CANCELLED`: отмена — действие магазина по своей
+   * инициативе, а здесь инициатива клиента, и изделие уже успело съездить в цех
+   * и вернуться. Общий `CANCELLED` не позволял отличить «клиент передумал» от
+   * «заказ отменён сотрудником», а главное — не был достижим: заказ возвращался
+   * в магазин статусом «Готов к выдаче», из которого отмена не предусмотрена,
+   * и закрыть отказ клиента было нечем.
+   */
+  REFUSED_BEFORE_WORK: 'REFUSED_BEFORE_WORK',
   CANCELLED: 'CANCELLED',
   REWORK: 'REWORK',
 } as const;
@@ -69,6 +81,7 @@ export const STATUS_STAGE: Record<OrderStatus, OrderStage> = {
   UNCLAIMED: ORDER_STAGE.PICKUP,
   COMPLETED: ORDER_STAGE.CLOSED,
   REFUSED: ORDER_STAGE.CLOSED,
+  REFUSED_BEFORE_WORK: ORDER_STAGE.CLOSED,
   CANCELLED: ORDER_STAGE.CLOSED,
   REWORK: ORDER_STAGE.PRODUCTION,
 };
@@ -77,6 +90,7 @@ export const STATUS_STAGE: Record<OrderStatus, OrderStage> = {
 export const TERMINAL_STATUSES: readonly OrderStatus[] = [
   ORDER_STATUS.COMPLETED,
   ORDER_STATUS.REFUSED,
+  ORDER_STATUS.REFUSED_BEFORE_WORK,
   ORDER_STATUS.CANCELLED,
 ];
 
@@ -132,6 +146,7 @@ export const STATUS_LABELS: Record<OrderStatus, string> = {
   UNCLAIMED: 'Невостребовано',
   COMPLETED: 'Выдан',
   REFUSED: 'Отказ от оплаты',
+  REFUSED_BEFORE_WORK: 'Отказ до начала работ',
   CANCELLED: 'Отменён',
   REWORK: 'Доработка',
 };
@@ -173,6 +188,7 @@ export const STATUS_COLORS: Record<OrderStatus, StatusTone> = {
   UNCLAIMED: 'orange',
   COMPLETED: 'emerald',
   REFUSED: 'red',
+  REFUSED_BEFORE_WORK: 'red',
   CANCELLED: 'red',
   REWORK: 'cyan',
 };

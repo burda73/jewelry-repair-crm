@@ -571,6 +571,46 @@ describe('Отправка и приём партии (задача 2.5)', () =>
     expect(batchOrderTargetStatus(BATCH_DIRECTION.TO_STORE, 'RECEIVE')).toBe('READY_FOR_PICKUP');
   });
 
+  it('рейс в магазин: вернувшееся БЕЗ работ изделие закрывается отказом (дефект 67)', () => {
+    /*
+     * Главное утверждение исправления. По статусу `IN_TRANSIT_TO_STORE` изделие
+     * после выполненной работы и изделие, возвращённое без работ, НЕРАЗЛИЧИМЫ:
+     * оба едут в магазин одним рейсом. Решение принимается по отметке
+     * `returnedWithoutWorkAt`, и без неё отказ клиента снова попадал бы в
+     * «Готов к выдаче» — статус, из которого заказ нельзя ни выдать (работы не
+     * выполнены), ни закрыть (отмена разрешена только из `ACCEPTED`).
+     */
+    expect(
+      batchOrderTargetStatus(BATCH_DIRECTION.TO_STORE, 'RECEIVE', {
+        returnedWithoutWork: true,
+      }),
+    ).toBe('REFUSED_BEFORE_WORK');
+    expect(
+      batchOrderTargetStatus(BATCH_DIRECTION.TO_STORE, 'RECEIVE', {
+        returnedWithoutWork: false,
+      }),
+    ).toBe('READY_FOR_PICKUP');
+  });
+
+  it('отметка «без работ» не влияет на рейс В ЦЕХ (дефект 67)', () => {
+    /*
+     * Отметка относится только к возврату в магазин. Если бы она переключала и
+     * приёмку цехом, заказ, который цех получил и собирается ремонтировать,
+     * закрывался бы отказом: изделие лежало бы в цехе, а заказ считался бы
+     * закрытым.
+     */
+    expect(
+      batchOrderTargetStatus(BATCH_DIRECTION.TO_PRODUCTION, 'RECEIVE', {
+        returnedWithoutWork: true,
+      }),
+    ).toBe('ACCEPTED_BY_WORKSHOP');
+    expect(
+      batchOrderTargetStatus(BATCH_DIRECTION.TO_PRODUCTION, 'DISPATCH', {
+        returnedWithoutWork: true,
+      }),
+    ).toBe('IN_TRANSIT_TO_PRODUCTION');
+  });
+
   it('ветки направлений не пересекаются', () => {
     // Страховка от копипасты: четыре комбинации обязаны дать четыре разных
     // статуса, иначе одно из направлений ведёт не туда.

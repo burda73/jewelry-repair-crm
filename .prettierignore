@@ -9,3 +9,6 @@ infra/docker/data
 infra/backup/out
 *.md
 package-lock.json
+# Локальные артефакты и отладочные скрипты (каталог в .gitignore):
+# prettier в CI их не увидит, но локальная проверка иначе «падает» на них.
+.local/

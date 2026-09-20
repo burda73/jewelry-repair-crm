@@ -127,10 +127,36 @@ export function dispatchConsequences(
 
 /** Текст подтверждения приёма партии. */
 export function receiveConsequences(
-  batch: Pick<Batch, 'itemsCount'>,
+  batch: { itemsCount: number; items?: readonly { returnedWithoutWork: boolean }[] },
   targetStatusLabel: string,
+  refusalStatusLabel: string,
 ): string {
-  return `${batch.itemsCount} заказ(ов) сменит статус на «${targetStatusLabel}»`;
+  /*
+   * Смешанный рейс (дефект 67): в одном рейсе «в магазин» едут и изделия после
+   * выполненной работы, и изделия, возвращённые без работ. Первые становятся
+   * «Готов к выдаче», вторые закрываются отказом клиента. Сказать «все заказы
+   * перейдут в <один статус>» значило бы пообещать неверное: сотрудник,
+   * увидевший отказ вместо готовности к выдаче, решил бы, что система сломалась.
+   *
+   * `items` необязателен: список партий приходит без состава, и там
+   * довольствуются общим текстом. Если состава нет, обещать один статус тоже
+   * нельзя — говорим нейтрально о направлении.
+   */
+  const items = batch.items;
+  if (items === undefined) {
+    return `${batch.itemsCount} заказ(ов) сменит статус при приёмке`;
+  }
+
+  const refused = items.filter((item) => item.returnedWithoutWork).length;
+  const ready = items.length - refused;
+
+  if (refused === 0) {
+    return `${items.length} заказ(ов) сменит статус на «${targetStatusLabel}»`;
+  }
+  if (ready === 0) {
+    return `${refused} заказ(ов) будет закрыто статусом «${refusalStatusLabel}»`;
+  }
+  return `${ready} заказ(ов) сменит статус на «${targetStatusLabel}», ${refused} — будет закрыто статусом «${refusalStatusLabel}»`;
 }
 
 /**

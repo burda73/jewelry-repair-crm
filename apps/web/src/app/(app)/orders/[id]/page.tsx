@@ -87,7 +87,13 @@ export default function OrderDetailPage(): ReactNode {
   // получает все права автоматически (ROLE_PERMISSIONS[ADMIN] = все права).
   // Приёмщик платежи ВИДИТ, но не принимает — это разделение ответственности
   // за наличные (docs/02-domain-and-roles.md).
-  const canPay = can('payment:create') && data.status !== 'CANCELLED' && data.status !== 'REFUSED';
+  const canPay =
+    can('payment:create') &&
+    data.status !== 'CANCELLED' &&
+    data.status !== 'REFUSED' &&
+    // Отказ до начала работ (дефект 67) — деньги за невыполненный ремонт не
+    // принимаются: заказ закрыт по инициативе клиента.
+    data.status !== 'REFUSED_BEFORE_WORK';
   const hasDebt = data.remainingMinor > 0;
 
   /*
@@ -97,7 +103,10 @@ export default function OrderDetailPage(): ReactNode {
    * предлагать действие, которое заведомо вернёт ошибку.
    */
   const isFinal =
-    data.status === 'COMPLETED' || data.status === 'REFUSED' || data.status === 'CANCELLED';
+    data.status === 'COMPLETED' ||
+    data.status === 'REFUSED' ||
+    data.status === 'REFUSED_BEFORE_WORK' ||
+    data.status === 'CANCELLED';
   const canApprove = can('approval:create') && !isFinal;
   // Загружать фото можно, пока заказ не закрыт: после выдачи менять состав
   // доказательств уже поздно — это подрывало бы смысл фотофиксации.

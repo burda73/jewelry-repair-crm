@@ -312,7 +312,11 @@ export default function BatchDetailPage(): ReactNode {
                   title={t.batches.receiveConfirm}
                   description={
                     receiveTarget !== null
-                      ? receiveConsequences(data, STATUS_LABELS[receiveTarget])
+                      ? receiveConsequences(
+                          data,
+                          STATUS_LABELS[receiveTarget],
+                          STATUS_LABELS.REFUSED_BEFORE_WORK,
+                        )
                       : undefined
                   }
                 >
@@ -343,7 +347,11 @@ export default function BatchDetailPage(): ReactNode {
           ) : null}
           {state.canReceive && receiveTarget !== null ? (
             <p className="text-sm text-slate-600">
-              {receiveConsequences(data, STATUS_LABELS[receiveTarget])}
+              {receiveConsequences(
+                data,
+                STATUS_LABELS[receiveTarget],
+                STATUS_LABELS.REFUSED_BEFORE_WORK,
+              )}
             </p>
           ) : null}
         </CardBody>

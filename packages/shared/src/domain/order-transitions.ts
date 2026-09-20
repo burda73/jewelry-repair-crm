@@ -69,6 +69,14 @@ export const EFFECT = {
   SET_PREPAYMENT_CONFIRMED_AT: 'SET_PREPAYMENT_CONFIRMED_AT',
   SET_PRODUCTION_STARTED_AT: 'SET_PRODUCTION_STARTED_AT',
   SET_PRODUCTION_FINISHED_AT: 'SET_PRODUCTION_FINISHED_AT',
+  /**
+   * Пометить заказ как возвращённый в магазин БЕЗ работ (дефект 67).
+   *
+   * Отметка нужна приёмке обратной партии: по ней заказ закрывается статусом
+   * «Отказ до начала работ», а не «Готов к выдаче». Без неё отказ клиента,
+   * оформленный в цехе, терялся бы по дороге.
+   */
+  MARK_RETURNED_WITHOUT_WORK: 'MARK_RETURNED_WITHOUT_WORK',
   SET_READY_AT: 'SET_READY_AT',
   SET_COMPLETED_AT: 'SET_COMPLETED_AT',
   COMPUTE_WARRANTY: 'COMPUTE_WARRANTY',
@@ -425,7 +433,7 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     to: ORDER_STATUS.IN_TRANSIT_TO_STORE,
     actors: [ROLE.PRODUCTION_MANAGER],
     guards: [GUARD.REASON_REQUIRED],
-    effects: [EFFECT.SET_DUE_AT],
+    effects: [EFFECT.SET_DUE_AT, EFFECT.MARK_RETURNED_WITHOUT_WORK],
     requiresReason: true,
     label: 'Вернуть в магазин без работ',
   },
@@ -440,9 +448,32 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     to: ORDER_STATUS.IN_TRANSIT_TO_STORE,
     actors: [ROLE.PRODUCTION_MANAGER],
     guards: [GUARD.REASON_REQUIRED],
-    effects: [EFFECT.SET_PRODUCTION_FINISHED_AT, EFFECT.SET_DUE_AT],
+    effects: [
+      EFFECT.SET_PRODUCTION_FINISHED_AT,
+      EFFECT.SET_DUE_AT,
+      EFFECT.MARK_RETURNED_WITHOUT_WORK,
+    ],
     requiresReason: true,
     label: 'Вернуть в магазин без работ (работа прервана)',
+  },
+  {
+    /*
+     * Отказ до начала работ (дефект 67). Приёмка обратной партии закрывает
+     * заказ, если он вернулся из цеха БЕЗ работ.
+     *
+     * Раньше такой заказ переводился в `READY_FOR_PICKUP`, откуда отмена
+     * недостижима (переход 10 разрешён только из `ACCEPTED`): заказ «Готов к
+     * выдаче» нельзя было ни выдать (клиент отказался, работы не выполнены), ни
+     * закрыть — сценарий отказа упирался в тупик.
+     */
+    id: 29,
+    from: ORDER_STATUS.IN_TRANSIT_TO_STORE,
+    to: ORDER_STATUS.REFUSED_BEFORE_WORK,
+    actors: [ROLE.RECEIVER, ROLE.LOGISTICIAN],
+    guards: [GUARD.BATCH_RECEIVED_BY_STORE],
+    effects: [EFFECT.CLEAR_ESCALATION],
+    requiresReason: false,
+    label: 'Отказ до начала работ',
   },
 ];
 

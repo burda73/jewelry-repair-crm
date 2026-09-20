@@ -726,7 +726,7 @@ docs/02-domain-and-roles.md §4).
 | `LAST_ACTIVE_STORE` | Отключают последний активный магазин: приём заказов остановится |
 | `STORE_HAS_ACTIVE_USERS` | Отключают магазин с активными сотрудниками |
 | `WORKSHOP_HAS_ACTIVE_PERFORMERS` | Отключают цех с активными исполнителями |
-| `WORKSHOP_HAS_OPEN_ORDERS` | Отключают цех с заказами вне `COMPLETED`/`REFUSED`/`CANCELLED` |
+| `WORKSHOP_HAS_OPEN_ORDERS` | Отключают цех с заказами вне `COMPLETED`/`REFUSED`/`REFUSED_BEFORE_WORK`/`CANCELLED` |
 | `WORKSHOP_INACTIVE` | Заводят исполнителя в отключённый цех |
 | `PERFORMER_HAS_OPEN_ASSIGNMENTS` | Отключают исполнителя с назначениями в статусе `ASSIGNED`/`IN_PROGRESS` |
 | `CATEGORY_HAS_ACTIVE_ITEMS` | Отключают категорию с активными позициями прейскуранта |

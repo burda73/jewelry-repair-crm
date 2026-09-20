@@ -781,6 +781,15 @@ export interface BatchItem {
   status: OrderStatus;
   customerName: string | null;
   totalAmountMinor: number;
+  /**
+   * Заказ возвращён из цеха БЕЗ работ (отказ клиента, дефект 67).
+   *
+   * При приёмке рейса «в магазин» такой заказ закроется «Отказом до начала
+   * работ», а не станет «Готов к выдаче». Интерфейс обязан сказать об этом
+   * заранее: обещание «все заказы перейдут в такой-то статус» для смешанного
+   * рейса было бы неверным.
+   */
+  returnedWithoutWork: boolean;
   addedAt: string;
   addedById: string | null;
 }

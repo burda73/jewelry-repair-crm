@@ -756,6 +756,13 @@ export class OrderWorkflowService {
       if (effects.includes('SET_READY_AT')) updateData.readyAt = now;
       if (effects.includes('SET_COMPLETED_AT')) updateData.completedAt = now;
       /*
+       * Отметка «вернулся без работ» (дефект 67). Нужна приёмке обратной
+       * партии: по ней заказ закрывается статусом «Отказ до начала работ», а не
+       * «Готов к выдаче». По текущему статусу эти случаи неразличимы — оба
+       * заказа едут в магазин одним рейсом.
+       */
+      if (effects.includes('MARK_RETURNED_WITHOUT_WORK')) updateData.returnedWithoutWorkAt = now;
+      /*
        * `RESET_PERFORMER` закрывает НАЗНАЧЕНИЯ исполнителей, а не сбрасывает
        * ответственного менеджера.
        *

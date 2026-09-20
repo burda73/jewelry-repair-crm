@@ -455,6 +455,14 @@ export function batchReceiveLockReason(status: BatchStatus): string | null {
 export function batchOrderTargetStatus(
   direction: BatchDirection,
   phase: 'DISPATCH' | 'RECEIVE',
+  /**
+   * Вернулся ли заказ из цеха без работ (отказ клиента, дефект 67).
+   *
+   * Параметр нужен только для приёмки рейса «в магазин»: по статусу
+   * `IN_TRANSIT_TO_STORE` изделие после выполненной работы и изделие,
+   * вернувшееся без работ, неразличимы — оба едут в магазин одним рейсом.
+   */
+  options?: { returnedWithoutWork?: boolean },
 ): OrderStatus | null {
   if (direction === BATCH_DIRECTION.TO_PRODUCTION) {
     /*
@@ -469,7 +477,16 @@ export function batchOrderTargetStatus(
       : ORDER_STATUS.ACCEPTED_BY_WORKSHOP;
   }
   if (direction === BATCH_DIRECTION.TO_STORE) {
-    return phase === 'DISPATCH' ? ORDER_STATUS.IN_TRANSIT_TO_STORE : ORDER_STATUS.READY_FOR_PICKUP;
+    if (phase === 'DISPATCH') return ORDER_STATUS.IN_TRANSIT_TO_STORE;
+    /*
+     * Вернувшееся без работ изделие закрывается отказом клиента, а НЕ «Готов к
+     * выдаче» (дефект 67). Из «Готов к выдаче» отмена недостижима — переход 10
+     * разрешён только из `ACCEPTED`, — и заказ, от которого отказались, нельзя
+     * было ни выдать (работы не выполнены, клиент отказался), ни закрыть.
+     */
+    return options?.returnedWithoutWork === true
+      ? ORDER_STATUS.REFUSED_BEFORE_WORK
+      : ORDER_STATUS.READY_FOR_PICKUP;
   }
   return null;
 }

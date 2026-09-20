@@ -141,7 +141,14 @@ function createPrismaMock() {
     },
     order: {
       findMany: vi.fn(async () => [orderRow()]),
-      findUnique: vi.fn(async () => ({ version: 1, status: 'QUEUED_FOR_DISPATCH' })),
+      findUnique: vi.fn(async () => ({
+        version: 1,
+        status: 'QUEUED_FOR_DISPATCH',
+        // Отметка «вернулся без работ» (дефект 67): двойник обязан её отдавать,
+        // иначе приёмка рейса «в магазин» не сможет решить, закрывать заказ
+        // отказом или делать его «Готов к выдаче».
+        returnedWithoutWorkAt: null,
+      })),
     },
     batchAct: {
       findFirst: vi.fn(async () => null),
@@ -1651,6 +1658,80 @@ describe('BatchesService: отправка и приём партии (зада�
 
     const target = (workflowMock.transition.mock.calls[0]?.[0] as { to: string }).to;
     expect(target).toBe('READY_FOR_PICKUP');
+  });
+
+  it('заказ, вернувшийся БЕЗ работ, закрывается отказом до начала работ (дефект 67)', async () => {
+    /*
+     * Главная проверка исправления. Прежде заказ, возвращённый из цеха без
+     * работ, принимался статусом «Готов к выдаче», откуда отмена недостижима
+     * (переход 10 разрешён только из `ACCEPTED`): заказ, от которого отказался
+     * клиент, нельзя было ни выдать, ни закрыть. Теперь приёмка такого заказа
+     * закрывает его статусом `REFUSED_BEFORE_WORK`.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT', 'TO_STORE'));
+    prisma._tx.order.findUnique.mockResolvedValue({
+      version: 1,
+      status: 'IN_TRANSIT_TO_STORE',
+      returnedWithoutWorkAt: new Date('2026-09-20T00:00:00Z'),
+    });
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    const targets = workflowMock.transition.mock.calls.map(
+      (call) => (call[0] as { to: string }).to,
+    );
+    expect(targets).toEqual(['REFUSED_BEFORE_WORK', 'REFUSED_BEFORE_WORK']);
+  });
+
+  it('смешанный рейс: решение принимается ПО ЗАКАЗУ, а не на всю партию (дефект 67)', async () => {
+    /*
+     * В одном рейсе «в магазин» едут и изделия после выполненной работы, и
+     * изделия, возвращённые без работ. Единый статус на партию отправил бы
+     * отказ в «Готов к выдаче» — то есть вернул бы ровно тот дефект, который
+     * исправляется. Проверяется, что оба заказа получают РАЗНЫЕ статусы.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT', 'TO_STORE'));
+    prisma._tx.order.findUnique
+      .mockResolvedValueOnce({
+        version: 1,
+        status: 'IN_TRANSIT_TO_STORE',
+        returnedWithoutWorkAt: null,
+      })
+      .mockResolvedValueOnce({
+        version: 1,
+        status: 'IN_TRANSIT_TO_STORE',
+        returnedWithoutWorkAt: new Date('2026-09-20T00:00:00Z'),
+      });
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    const targets = workflowMock.transition.mock.calls.map(
+      (call) => (call[0] as { to: string }).to,
+    );
+    expect(targets).toEqual(['READY_FOR_PICKUP', 'REFUSED_BEFORE_WORK']);
+  });
+
+  it('рейс В ЦЕХ отметка «без работ» не переключает (дефект 67)', async () => {
+    /*
+     * Обратная сторона: отметка относится только к возврату в магазин. Если
+     * применить её к приёмке цехом, заказ, который цех получил и собирается
+     * ремонтировать, был бы закрыт отказом — изделие осталось бы в цехе, а
+     * заказ считался бы закрытым.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT', 'TO_PRODUCTION'));
+    prisma._tx.order.findUnique.mockResolvedValue({
+      version: 1,
+      status: 'IN_TRANSIT_TO_PRODUCTION',
+      returnedWithoutWorkAt: new Date('2026-09-20T00:00:00Z'),
+    });
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    const target = (workflowMock.transition.mock.calls[0]?.[0] as { to: string }).to;
+    expect(target).toBe('ACCEPTED_BY_WORKSHOP');
   });
 
   it('передаёт актора и его роль в переход', async () => {

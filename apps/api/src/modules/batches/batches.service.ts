@@ -103,6 +103,13 @@ export interface BatchItemDto {
   status: string;
   customerName: string;
   totalAmountMinor: number;
+  /**
+   * Заказ возвращён из цеха БЕЗ работ (отказ клиента, дефект 67).
+   *
+   * При приёмке рейса «в магазин» такой заказ закроется статусом «Отказ до
+   * начала работ», а не станет «Готов к выдаче».
+   */
+  returnedWithoutWork: boolean;
   addedAt: string;
   addedById: string;
 }
@@ -408,6 +415,13 @@ export class BatchesService {
                 orderNo: true,
                 status: true,
                 totalAmountMinor: true,
+                /*
+                 * Отметка «вернулся без работ» (дефект 67). Интерфейс по ней
+                 * сообщает, что часть заказов рейса закроется отказом, а не
+                 * станет «Готов к выдаче»: без неё обещание «заказы перейдут в
+                 * такой-то статус» было бы неверным для смешанного рейса.
+                 */
+                returnedWithoutWorkAt: true,
                 customer: { select: { fullName: true } },
               },
             },
@@ -426,6 +440,7 @@ export class BatchesService {
         status: item.order.status,
         customerName: item.order.customer.fullName,
         totalAmountMinor: item.order.totalAmountMinor,
+        returnedWithoutWork: item.order.returnedWithoutWorkAt !== null,
         addedAt: item.addedAt.toISOString(),
         addedById: item.addedById,
       })),
@@ -1082,12 +1097,18 @@ export class BatchesService {
     }
 
     const direction: BatchDirection = batch.direction;
-    const target = batchOrderTargetStatus(direction, phase);
-    if (target === null) {
+    /*
+     * Целевой статус проверяется заранее и только на поддержку направления:
+     * сам статус у каждого заказа свой (см. ниже). Возврат `null` означает
+     * несовместимость направления и фазы, а не «нет цели».
+     */
+    if (batchOrderTargetStatus(direction, phase) === null) {
       throw new ConflictException('Направление партии не поддерживается');
     }
 
     const now = new Date();
+    /** Сколько заказов ушло в каждый статус — для записи в журнал аудита. */
+    const appliedTo: Record<string, number> = {};
 
     await this.prisma.runInTransaction(
       async (tx) => {
@@ -1101,9 +1122,22 @@ export class BatchesService {
         for (const item of batch.items) {
           const current = await tx.order.findUnique({
             where: { id: item.orderId },
-            select: { version: true, status: true },
+            select: { version: true, status: true, returnedWithoutWorkAt: true },
           });
           if (current === null) continue;
+
+          /*
+           * Целевой статус считается ДЛЯ КАЖДОГО заказа (дефект 67). В одном
+           * рейсе «в магазин» едут и изделия после выполненной работы, и
+           * изделия, возвращённые без работ: первые становятся «Готов к
+           * выдаче», вторые закрываются отказом клиента. Единый статус на
+           * партию отправил бы отказ в «Готов к выдаче», откуда заказ нельзя ни
+           * выдать, ни закрыть.
+           */
+          const target = batchOrderTargetStatus(direction, phase, {
+            returnedWithoutWork: current.returnedWithoutWorkAt !== null,
+          });
+          if (target === null) continue;
 
           /*
            * Заказ уже в целевом статусе — пропускаем. Так повторный вызов после
@@ -1123,6 +1157,8 @@ export class BatchesService {
             storeIds: actor.storeIds ?? [],
             tx,
           });
+
+          appliedTo[target] = (appliedTo[target] ?? 0) + 1;
         }
 
         await tx.batch.update({
@@ -1141,18 +1177,17 @@ export class BatchesService {
             entity: 'Batch',
             entityId: batchId,
             before: { status },
-            after:
-              phase === 'DISPATCH'
-                ? {
-                    status: BATCH_STATUS.IN_TRANSIT,
-                    orderStatus: target,
-                    orders: batch.items.length,
-                  }
-                : {
-                    status: BATCH_STATUS.RECEIVED,
-                    orderStatus: target,
-                    orders: batch.items.length,
-                  },
+            /*
+             * Записывается распределение по статусам, а не одно значение:
+             * в рейсе «в магазин» заказы могут уйти и в «Готов к выдаче», и в
+             * «Отказ до начала работ» (дефект 67), и по журналу должно быть
+             * видно, сколько ушло куда.
+             */
+            after: {
+              status: phase === 'DISPATCH' ? BATCH_STATUS.IN_TRANSIT : BATCH_STATUS.RECEIVED,
+              orders: batch.items.length,
+              appliedTo,
+            },
           },
         });
       },

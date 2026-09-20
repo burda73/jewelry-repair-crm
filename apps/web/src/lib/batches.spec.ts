@@ -145,7 +145,59 @@ describe('Последствия массовой операции', () => {
   });
 
   it('приём сообщает целевой статус заказов', () => {
-    expect(receiveConsequences({ itemsCount: 5 }, 'Готов к выдаче')).toContain('Готов к выдаче');
+    const text = receiveConsequences(
+      {
+        itemsCount: 2,
+        items: [{ returnedWithoutWork: false }, { returnedWithoutWork: false }],
+      },
+      'Готов к выдаче',
+      'Отказ до начала работ',
+    );
+    expect(text).toContain('Готов к выдаче');
+    expect(text).not.toContain('Отказ до начала работ');
+  });
+
+  it('без состава приём не обещает конкретный статус (дефект 67)', () => {
+    /*
+     * Список партий приходит без состава, и в нём нельзя знать, вернулся ли
+     * заказ без работ. Обещание «все перейдут в «Готов к выдаче»» было бы
+     * неверным для отказа — а сотрудник, увидевший другое, решил бы, что
+     * система сломалась.
+     */
+    const text = receiveConsequences({ itemsCount: 5 }, 'Готов к выдаче', 'Отказ до начала работ');
+    expect(text).not.toContain('Готов к выдаче');
+  });
+
+  it('смешанный рейс честно говорит, сколько заказов закроется отказом (дефект 67)', () => {
+    /*
+     * Главная проверка текста: в одном рейсе едут изделия после работы и
+     * возвращённые без работ. Молчание об отказе означало бы, что приёмка
+     * «неожиданно» закрывает часть заказов.
+     */
+    const text = receiveConsequences(
+      {
+        itemsCount: 3,
+        items: [
+          { returnedWithoutWork: false },
+          { returnedWithoutWork: true },
+          { returnedWithoutWork: true },
+        ],
+      },
+      'Готов к выдаче',
+      'Отказ до начала работ',
+    );
+    expect(text).toContain('1 заказ(ов) сменит статус на «Готов к выдаче»');
+    expect(text).toContain('2 — будет закрыто статусом «Отказ до начала работ»');
+  });
+
+  it('рейс только из отказов не упоминает «Готов к выдаче» (дефект 67)', () => {
+    const text = receiveConsequences(
+      { itemsCount: 1, items: [{ returnedWithoutWork: true }] },
+      'Готов к выдаче',
+      'Отказ до начала работ',
+    );
+    expect(text).not.toContain('Готов к выдаче');
+    expect(text).toContain('Отказ до начала работ');
   });
 });
 

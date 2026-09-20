@@ -436,6 +436,7 @@ enum OrderStatus {
   UNCLAIMED
   COMPLETED
   REFUSED
+  REFUSED_BEFORE_WORK
   CANCELLED
   REWORK
 
@@ -503,6 +504,15 @@ model Order {
   // Подпись клиента о получении изделия (ТЗ п. 2.8: условие выдачи)
   pickupSignatureFileId String?
 
+  /// Когда заказ возвращён из цеха БЕЗ работ (отказ клиента, дефект 67).
+  ///
+  /// Нужен, чтобы приёмка обратной партии знала, в какой статус переводить
+  /// заказ: изделие, вернувшееся после выполненной работы, идёт в «Готов к
+  /// выдаче», а вернувшееся без работ — в «Отказ до начала работ». По статусу
+  /// `IN_TRANSIT_TO_STORE` эти случаи неразличимы: оба едут в магазин одним
+  /// рейсом.
+  returnedWithoutWorkAt DateTime?
+
   /// Содержимое QR-кода на печатной квитанции (ответ A4, docs/00-decisions.md §6.14).
   /// Формат: `repair://order/{orderNo}`. Генерируется вместе с номером заказа
   /// и НЕ меняется при перепечати — иначе ранее напечатанные квитанции перестанут
@@ -556,6 +566,7 @@ model Order {
 
   @@index([status, dueAt]) // дашборд просрочек
   @@index([createdStoreId, status])
+  @@index([returnedWithoutWorkAt])
   @@index([customerId])
   @@index([createdAt])
   @@index([productionManagerId, status])

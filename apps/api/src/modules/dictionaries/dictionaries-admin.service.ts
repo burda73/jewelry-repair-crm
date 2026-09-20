@@ -47,6 +47,7 @@ import {
 const TERMINAL_ORDER_STATUSES: OrderStatus[] = [
   OrderStatus.COMPLETED,
   OrderStatus.REFUSED,
+  OrderStatus.REFUSED_BEFORE_WORK,
   OrderStatus.CANCELLED,
 ];
 

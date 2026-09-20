@@ -88,6 +88,7 @@ export const PUBLIC_VISIBLE_STATUSES = [
   'UNCLAIMED',
   'COMPLETED',
   'REFUSED',
+  'REFUSED_BEFORE_WORK',
   'CANCELLED',
   'REWORK',
 ] as const;
@@ -128,6 +129,7 @@ export const PUBLIC_STATUS_LABELS: Record<PublicVisibleStatus, string> = {
   UNCLAIMED: 'Ждёт вас в магазине',
   COMPLETED: 'Заказ выдан',
   REFUSED: 'Ремонт не выполнен',
+  REFUSED_BEFORE_WORK: 'Заказ закрыт по вашему отказу',
   CANCELLED: 'Заказ отменён',
   REWORK: 'Устраняем замечания',
 };
