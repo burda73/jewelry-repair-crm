@@ -307,6 +307,12 @@
 | 3 | Интеграция с 1С: полный обмен | Только фиксация оплаты через `ЧекККМ` | Ответ A4: в 1С достаточно фиксировать факт оплаты |
 | 2.1 | Поиск по номеру заказа | + Считывание QR-кода с квитанции сканером | Новое требование, ответ A4 |
 | 2.1 | Квитанция с QR-кодом при приёме | `docs/08` §4.1 | `GET /orders/:id/receipt`, `ReceiptService`, `buildOrderQrPayload` | 5 тестов `receipt.service.spec.ts`, 17 тестов `receipt.spec.ts` |
+| 2.1 | **Печатная форма квитанции по образцу заказчика** | `docs/08` §4.1, дефект 82 | `ReceiptService` (`drawHeader`/`drawCustomer`/`drawMetal`/`drawWorks`/`drawTotals`/`drawSignatures`), `buildReceiptTotals`, `buildReceiptSignatures`, `RECEIPT_AGREEMENT` | 19 тестов `receipt-form.spec.ts`, `receipt.service.spec.ts` |
+| 2.1 | Металл в квитанции по-русски | `docs/07` §6.1, дефект 82 | `metalDisplayName()`; палладий печатается как введён | 9 тестов `metal-kind.spec.ts` |
+| 2.1 | Реквизиты организации для документов | `docs/08` §2.5, `docs/07` §13.2 | `GET/PUT /settings/organization`, `SettingsService`, `ORGANIZATION_SETTING_KEY` | 13 тестов `organization.spec.ts`, 12 тестов `settings.service.spec.ts` |
+| 2.1 | Источник реквизитов: база, окружение запасной вариант | `docs/07` §13.2 | `organizationNameForPrint()` — настройки → `COMPANY_NAME` → умолчание | тесты «настройки важнее окружения», «испорченное значение не ломает чтение» |
+| 2.1 | Адрес заказчика в карточке и квитанции | `docs/08` §4.1, дефект 82 | `Customer.address`, `customerSchema`, поле в мастере создания заказа | прогон API: адрес сохраняется и печатается |
+| 2.1 | Телефон вводится без кода страны | `docs/08` §2.5, дефект 82 | `normalizePhone`, `phoneInputHint` | 9 тестов `phone-input.spec.ts` |
 | 2.1 | Учёт перепечаток квитанции | `docs/08` §4.1 | `receiptPrintCount`, `receiptLastPrintedAt`, аудит `RECEIPT_PRINT` | прогон API и браузера |
 | 2.1 | QR читается сканером | `docs/08` §4.1 | белый фон кодов, `parseOrderNoFromScan` | декодирование QR из готового PDF |
 | 2.1 | Кириллица в PDF | `docs/08` §4.1 | встроенный DejaVu Sans (`dejavu-fonts-ttf`) | тест на наличие шрифта; извлечённый текст квитанции |
