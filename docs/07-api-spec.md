@@ -206,6 +206,12 @@ GET /orders?status=IN_WORK&status=WORK_COMPLETED  ← так сериализу�
 `NOT_PAID_IN_FULL`, `APPROVAL_MISSING`, `CONSENT_REQUIRED`, `FORBIDDEN_ROLE`,
 `PICKUP_SIGNATURE_REQUIRED`.
 
+> **Подпись клиента больше НЕ требуется для выдачи (решение заказчика).**
+> Переходы 18 и 21 в «Выдан» проверяют только полную оплату. Маршрут
+> `POST /orders/:id/pickup-signature` сохранён: подпись можно приложить как
+> НЕобязательную отметку о получении, пока заказ не выдан. Вернуть требование
+> можно одной строкой в таблице переходов (`GUARD.PICKUP_SIGNATURE`).
+
 **`POST /orders/:id/pickup-signature`** (дефект 66)
 
 Тело — `multipart/form-data` с полем `file`. Принимается только на шаге выдачи

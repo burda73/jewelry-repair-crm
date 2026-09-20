@@ -5,7 +5,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useTransition, useUploadPickupSignature } from '@/lib/queries';
 import {
   canSubmitTransition,
-  needsPickupSignature,
+  offersPickupSignature,
   validateSignatureFile,
 } from '@/lib/pickup-signature';
 import { STATUS_LABELS, type OrderStatus } from '@app/shared';
@@ -91,7 +91,11 @@ export function TransitionDialog({
 
   const selected = options.find((item) => item.to === to);
   const reasonRequired = selected?.requiresReason === true;
-  const signatureNeeded = needsPickupSignature(to, hasSignature);
+  /*
+   * Подпись ПРЕДЛАГАЕТСЯ при выдаче, но не требуется: без файла переход
+   * пройдёт. Поле показывается только там, где подпись имеет смысл.
+   */
+  const signatureOffered = offersPickupSignature(to, hasSignature);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -112,7 +116,7 @@ export function TransitionDialog({
        * Сначала файл, потом переход: guard проверяет записанный в заказ
        * идентификатор, поэтому обратный порядок гарантированно дал бы 409.
        */
-      if (signatureNeeded && signatureFile !== null) {
+      if (signatureOffered && signatureFile !== null) {
         const check = validateSignatureFile(signatureFile, MAX_SIGNATURE_BYTES);
         if (!check.ok) {
           setError(check.message);
@@ -179,7 +183,7 @@ export function TransitionDialog({
             />
           </Field>
 
-          {signatureNeeded ? (
+          {signatureOffered ? (
             <Field
               label={t.transition.signature}
               htmlFor="transition-signature"
@@ -197,7 +201,7 @@ export function TransitionDialog({
             </Field>
           ) : null}
 
-          {!signatureNeeded && to === 'COMPLETED' && hasSignature ? (
+          {!signatureOffered && to === 'COMPLETED' && hasSignature ? (
             <p className="text-sm text-green-700">{t.transition.signatureUploaded}</p>
           ) : null}
 

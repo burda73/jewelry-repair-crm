@@ -40,6 +40,14 @@ export const GUARD = {
   /** Заказ оплачен полностью (ТЗ п. 2.8). */
   PAID_IN_FULL: 'PAID_IN_FULL',
   /** Есть подпись клиента о получении. */
+  /**
+   * Подпись клиента о получении изделия.
+   *
+   * НЕ используется ни одним переходом: заказчик решил, что подпись не должна
+   * блокировать выдачу. Константа оставлена, чтобы правило можно было вернуть
+   * одной строкой в таблице, но ветка проверки в workflow намеренно ничего не
+   * делает — иначе выдача снова начнёт требовать росчерк.
+   */
   PICKUP_SIGNATURE: 'PICKUP_SIGNATURE',
   /** Оформлен акт отказа от оплаты (ТЗ п. 2.8). */
   REFUSAL_ACT_EXISTS: 'REFUSAL_ACT_EXISTS',
@@ -328,7 +336,18 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     from: ORDER_STATUS.READY_FOR_PICKUP,
     to: ORDER_STATUS.COMPLETED,
     actors: [ROLE.RECEIVER, ROLE.CASHIER, ROLE.ADMIN],
-    guards: [GUARD.PAID_IN_FULL, GUARD.PICKUP_SIGNATURE],
+    /*
+     * Подпись клиента БОЛЬШЕ НЕ ТРЕБУЕТСЯ (решение заказчика).
+     *
+     * Прежде здесь стоял `PICKUP_SIGNATURE`, и без загруженного росчерка выдача
+     * отклонялась с `409 PICKUP_SIGNATURE_REQUIRED`. Заказчик решил, что подпись
+     * не должна блокировать выдачу: она осталась возможной как НЕобязательная
+     * отметка о получении, но условием перехода не является.
+     *
+     * Единственное условие выдачи — полная оплата (`PAID_IN_FULL`): деньги
+     * проверяет система, а росчерк — дело магазина.
+     */
+    guards: [GUARD.PAID_IN_FULL],
     effects: [
       EFFECT.SET_COMPLETED_AT,
       EFFECT.COMPUTE_WARRANTY,
@@ -363,7 +382,8 @@ export const ORDER_TRANSITIONS: readonly TransitionRule[] = [
     from: ORDER_STATUS.UNCLAIMED,
     to: ORDER_STATUS.COMPLETED,
     actors: [ROLE.RECEIVER, ROLE.CASHIER, ROLE.ADMIN],
-    guards: [GUARD.PAID_IN_FULL, GUARD.PICKUP_SIGNATURE],
+    // Подпись не требуется — см. переход 18.
+    guards: [GUARD.PAID_IN_FULL],
     effects: [EFFECT.SET_COMPLETED_AT, EFFECT.COMPUTE_WARRANTY, EFFECT.CLEAR_ESCALATION],
     requiresReason: false,
     label: 'Выдать клиенту (невостребованный)',
