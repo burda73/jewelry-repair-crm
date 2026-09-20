@@ -36,10 +36,15 @@ import { PrismaService } from './prisma.service';
  */
 const service = new PrismaService();
 
+/** Идентификаторы для проверок области видимости. */
+const STORE_A = 'cmu47z0xq0000ampvqypjgtrd';
+const USER_ID = 'cmu47z0zi0006ampvild7q09v';
+
 /** Все строки статусов, перечисленные в фильтре `PRODUCTION`. */
 function productionStatusesInScope(): string[] {
   const filter = service.buildOrderScopeFilter({
     scope: 'PRODUCTION',
+    scopes: ['PRODUCTION'],
     storeIds: [],
     userId: 'cmu47z0zi0006ampvild7q09v',
   });
@@ -115,5 +120,96 @@ describe('Область видимости PRODUCTION (задача 7.1)', () =
      * пустом списке. Поэтому список обязан быть непустым, и это проверяется.
      */
     expect(productionStatusesInScope().length).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe('Объединение областей видимости при нескольких ролях (дефект 65)', () => {
+  it('магазинная область остаётся доступной вместе с производственной', () => {
+    /*
+     * ЯДРО ДЕФЕКТА 65. Приёмщику выдали ВТОРУЮ роль `LOGISTICIAN` (задача 7.7),
+     * и система выбирала одну «самую широкую» область — `PRODUCTION`. Заказы
+     * магазина, включая «Готов к выдаче», в неё не входят, поэтому сотрудник
+     * перестал видеть заказы, которые сам же и принял: список пуст, карточка
+     * отвечает 404.
+     *
+     * Проверяется, что фильтр содержит условия ОБЕИХ ролей: условие по своим
+     * магазинам (createdStoreId/pickupStoreId) И условие по производству.
+     */
+    const filter = service.buildOrderScopeFilter({
+      scopes: ['STORE_PLUS_GLOBAL_SEARCH', 'PRODUCTION'],
+      storeIds: [STORE_A],
+      userId: USER_ID,
+    });
+
+    const serialized = JSON.stringify(filter);
+    expect(serialized, 'потеряно условие по магазину приёмщика').toContain('createdStoreId');
+    expect(serialized, 'потеряно условие по производству').toContain('IN_WORK');
+  });
+
+  it('заказ магазина виден и без статуса производства', () => {
+    /*
+     * Прямая формулировка сценария: заказ `ACCEPTED` или `READY_FOR_PICKUP` не
+     * входит ни в один производственный статус. Если фильтр оставить только
+     * производственным, такой заказ недостижим — что и произошло.
+     */
+    const scopes = ['STORE_PLUS_GLOBAL_SEARCH', 'PRODUCTION'];
+    const filter = service.buildOrderScopeFilter({ scopes, storeIds: [STORE_A], userId: USER_ID });
+
+    const hasStoreClause = JSON.stringify(filter).includes('createdStoreId');
+    expect(
+      hasStoreClause,
+      'без магазинного условия заказ в статусе ACCEPTED недостижим для приёмщика',
+    ).toBe(true);
+  });
+
+  it('одна магазинная роль НЕ получает производственную область', () => {
+    // Обратная проверка: объединение не должно расширять права сверх ролей.
+    const serialized = JSON.stringify(
+      service.buildOrderScopeFilter({
+        scopes: ['STORE'],
+        storeIds: [STORE_A],
+        userId: USER_ID,
+      }),
+    );
+    expect(serialized).toContain('createdStoreId');
+    expect(serialized, 'приёмщик без роли логиста видит производство').not.toContain('IN_WORK');
+  });
+
+  it('одна производственная роль НЕ получает магазинную область', () => {
+    // Логист магазинов не имеет вовсе, и чужие магазинные заказы ему не нужны.
+    const serialized = JSON.stringify(
+      service.buildOrderScopeFilter({
+        scopes: ['PRODUCTION'],
+        storeIds: [],
+        userId: USER_ID,
+      }),
+    );
+    expect(serialized).toContain('IN_WORK');
+    expect(serialized).not.toContain('createdStoreId');
+  });
+
+  it('неограниченная область снимает фильтр даже вместе с узкой', () => {
+    // Руководитель со второй ролью приёмщика видит всё: узкая роль не сужает.
+    expect(
+      service.buildOrderScopeFilter({
+        scopes: ['ALL_STORES', 'STORE'],
+        storeIds: [STORE_A],
+        userId: USER_ID,
+      }),
+    ).toEqual({});
+  });
+
+  it('пустой набор областей запрещает всё (fail closed)', () => {
+    // Защита от «забыли передать области»: пустой список не должен открывать
+    // доступ ко всем заказам сети.
+    expect(
+      service.buildOrderScopeFilter({ scopes: [], storeIds: [STORE_A], userId: USER_ID }),
+    ).toEqual({ id: '__none__' });
+  });
+
+  it('неизвестная область запрещает всё', () => {
+    expect(
+      service.buildOrderScopeFilter({ scopes: ['UNKNOWN'], storeIds: [], userId: USER_ID }),
+    ).toEqual({ id: '__none__' });
   });
 });

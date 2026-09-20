@@ -43,6 +43,7 @@ const RECEIVER: AuthenticatedUser = {
   primaryRole: ROLE.RECEIVER,
   permissions: ['order:create', 'order:read'],
   scope: DATA_SCOPE.OWN_STORE,
+  scopes: [DATA_SCOPE.OWN_STORE],
   storeIds: ['cmu5p70yu0009km7pzqlcawt9'],
   mustChangePassword: false,
 };

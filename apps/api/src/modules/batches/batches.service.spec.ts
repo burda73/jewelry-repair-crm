@@ -44,6 +44,7 @@ const LOGIST: AuthenticatedUser = {
   primaryRole: ROLE.LOGISTICIAN,
   permissions: ['logistics:read', 'logistics:manage'],
   scope: DATA_SCOPE.PRODUCTION,
+  scopes: [DATA_SCOPE.PRODUCTION],
   storeIds: [],
   mustChangePassword: false,
 };
@@ -55,6 +56,7 @@ const RECEIVER: AuthenticatedUser = {
   roles: [ROLE.RECEIVER],
   primaryRole: ROLE.RECEIVER,
   scope: DATA_SCOPE.STORES,
+  scopes: [DATA_SCOPE.STORES],
   storeIds: [STORE_MSK1],
 };
 
@@ -701,7 +703,12 @@ describe('BatchesService: область видимости', () => {
      * доступной записи.
      */
     const prisma = createPrismaMock();
-    const auditor = { ...RECEIVER, scope: 'READ_ALL' as const, storeIds: [] };
+    const auditor = {
+      ...RECEIVER,
+      scope: 'READ_ALL' as const,
+      scopes: ['READ_ALL'] as const,
+      storeIds: [],
+    };
 
     await makeService(prisma).list({ limit: 50 }, auditor);
 
@@ -713,7 +720,12 @@ describe('BatchesService: область видимости', () => {
     // Партия не привязана к статусу заказа: без общего обзора логист не смог бы
     // спланировать перевозку между точками.
     const prisma = createPrismaMock();
-    const pm = { ...LOGIST, scope: 'PRODUCTION' as const, storeIds: [] };
+    const pm = {
+      ...LOGIST,
+      scope: 'PRODUCTION' as const,
+      scopes: ['PRODUCTION'] as const,
+      storeIds: [],
+    };
 
     await makeService(prisma).list({ limit: 50 }, pm);
 
@@ -1652,11 +1664,16 @@ describe('BatchesService: отправка и приём партии (зада�
     const ctx = workflowMock.transition.mock.calls[0]?.[0] as {
       actorId: string;
       actorRole: string;
-      scope: string;
+      scopes: string[];
     };
     expect(ctx.actorId).toBe(LOGIST_ID);
     expect(ctx.actorRole).toBe(LOGIST.primaryRole);
-    expect(ctx.scope).toBe(LOGIST.scope);
+    /*
+     * Переход получает НАБОР областей видимости (дефект 65), а не одну: у
+     * сотрудника с двумя ролями фильтр обязан учитывать обе, иначе приёмщик со
+     * второй ролью логиста терял доступ к заказам магазина.
+     */
+    expect(ctx.scopes).toEqual(LOGIST.scopes);
   });
 
   it('отклоняет отправку черновика', async () => {

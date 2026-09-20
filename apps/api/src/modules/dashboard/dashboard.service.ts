@@ -132,7 +132,7 @@ export class DashboardService {
     // Область видимости строится один раз: она одинакова для всех счётчиков
     // заказов, и повторять её — верный способ однажды поправить в одном месте.
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
       userId: user.id,
     });

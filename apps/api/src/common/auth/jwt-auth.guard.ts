@@ -25,8 +25,23 @@ export interface AuthenticatedUser {
    */
   primaryRole: RoleCode;
   permissions: string[];
-  /** Область видимости — берётся наибольшая из ролей. */
+  /**
+   * Область видимости для ОТОБРАЖЕНИЯ — самая широкая из ролей.
+   *
+   * Для фильтрации НЕ используется (дефект 65): области видимости не вложены, и
+   * «самая широкая» отбрасывает данные, доступные по другой роли. Фильтры
+   * строятся по `scopes`.
+   */
   scope: DataScope;
+  /**
+   * Области видимости ВСЕХ ролей сотрудника.
+   *
+   * Объединяются в `buildOrderScopeFilter` через `OR`: сотрудник видит то, что
+   * видно по ЛЮБОЙ из его ролей. Например, приёмщик с добавленной ролью
+   * `LOGISTICIAN` видит и заказы своего магазина (`STORE_PLUS_GLOBAL_SEARCH`), и
+   * логистику (`PRODUCTION`) — без этого он терял доступ к собственным заказам.
+   */
+  scopes: DataScope[];
   /** Магазины пользователя (для scope-фильтра). */
   storeIds: string[];
   /** Роли с привязкой к конкретному магазину. */
@@ -86,6 +101,8 @@ export class JwtAuthGuard implements CanActivate {
         primaryRole?: RoleCode;
         permissions?: string[];
         scope?: DataScope;
+        /** Области видимости всех ролей (дефект 65). Нет в токенах старше 15 минут. */
+        scopes?: DataScope[];
         storeIds?: string[];
         storeRoles?: { role: RoleCode; storeId: string | null; scope: DataScope }[];
         mustChangePassword?: boolean;
@@ -107,6 +124,18 @@ export class JwtAuthGuard implements CanActivate {
         });
       }
 
+      /*
+       * Области видимости всех ролей. Токен, выданный до появления `scopes`
+       * (дефект 65), содержит только одну область — тогда набор собирается из
+       * `storeRoles`, чтобы уже открытые сессии не теряли доступ к своим
+       * заказам. Токен живёт 15 минут, поэтому эта совместимость ненадолго.
+       */
+      const scopes: DataScope[] =
+        payload.scopes ??
+        [...new Set((payload.storeRoles ?? []).map((r) => r.scope))].filter(
+          (scope) => scope !== undefined,
+        );
+
       request.user = {
         id: payload.sub,
         email: payload.email,
@@ -115,6 +144,7 @@ export class JwtAuthGuard implements CanActivate {
         primaryRole,
         permissions: payload.permissions ?? [],
         scope: payload.scope ?? 'STORE',
+        scopes: scopes.length > 0 ? scopes : [(payload.scope ?? 'STORE')],
         storeIds: payload.storeIds ?? [],
         storeRoles: payload.storeRoles ?? [],
         mustChangePassword: payload.mustChangePassword ?? false,

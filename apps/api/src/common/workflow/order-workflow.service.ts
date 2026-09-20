@@ -69,7 +69,12 @@ export interface TransitionContext {
   reason?: string;
   version: number;
   payload?: Record<string, unknown>;
-  scope: string;
+  /**
+   * Области видимости всех ролей сотрудника (дефект 65). Объединяются в
+   * фильтре через `OR`, потому что области не вложены: приёмщик со второй
+   * ролью логиста должен видеть и заказы магазина, и логистику.
+   */
+  scopes: readonly string[];
   storeIds: readonly string[];
   /**
    * Уже открытая транзакция.
@@ -209,7 +214,7 @@ export class OrderWorkflowService {
      * операции и пропустила бы заказ, который эта же операция уже перевела.
      */
     const client = ctx.tx ?? this.prisma;
-    const order = await this.loadOrderForGuards(ctx.orderId, ctx.scope, ctx.storeIds, client);
+    const order = await this.loadOrderForGuards(ctx.orderId, ctx.scopes, ctx.storeIds, client);
 
     // 2. Оптимистичная блокировка: пользователь мог открыть карточку раньше,
     //    а другой сотрудник уже изменил заказ.
@@ -349,12 +354,12 @@ export class OrderWorkflowService {
 
   private async loadOrderForGuards(
     orderId: string,
-    scope: string,
+    scopes: readonly string[],
     storeIds: readonly string[],
     client: Pick<Prisma.TransactionClient, 'order'> = this.prisma,
   ): Promise<OrderGuardData> {
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope,
+      scopes,
       storeIds,
       userId: '',
     });

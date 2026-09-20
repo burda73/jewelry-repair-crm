@@ -714,7 +714,7 @@ export class OrdersService {
     const limit = Math.min(query.limit ?? 50, 200);
 
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
       userId: user.id,
     });
@@ -820,7 +820,7 @@ export class OrdersService {
     // Помечаем, какие заказы вне основной области видимости пользователя —
     // UI показывает предупреждение, но не блокирует приём оплаты.
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
       userId: user.id,
     });
@@ -840,7 +840,7 @@ export class OrdersService {
   /** Карточка заказа со всеми связанными данными (ТЗ п. 2.1). */
   async findOne(orderId: string, user: AuthenticatedUser): Promise<OrderCard> {
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
       userId: user.id,
     });
@@ -949,7 +949,7 @@ export class OrdersService {
    */
   async getSummary(user: AuthenticatedUser): Promise<OrderSummary> {
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
       userId: user.id,
     });
@@ -1059,7 +1059,7 @@ export class OrdersService {
           AND: [
             { id: orderId },
             this.prisma.buildOrderScopeFilter({
-              scope: user.scope,
+              scopes: user.scopes,
               storeIds: user.storeIds,
               userId: user.id,
             }),
@@ -1186,7 +1186,7 @@ export class OrdersService {
      * попытка напечатать чужой заказ оставила бы след в его истории.
      */
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
       userId: user.id,
     });
@@ -1291,7 +1291,7 @@ export class OrdersService {
           AND: [
             { id: orderId },
             this.prisma.buildOrderScopeFilter({
-              scope: user.scope,
+              scopes: user.scopes,
               storeIds: user.storeIds,
               userId: user.id,
             }),
@@ -1418,7 +1418,7 @@ export class OrdersService {
           AND: [
             { id: orderId },
             this.prisma.buildOrderScopeFilter({
-              scope: user.scope,
+              scopes: user.scopes,
               storeIds: user.storeIds,
               userId: user.id,
             }),

@@ -307,6 +307,7 @@ describe('Системный переход: actorId обязателен как
         actorRole: 'SYSTEM',
         version: 1,
         scope: 'ALL_STORES',
+        scopes: ['ALL_STORES'],
         storeIds: [],
       }),
     ).rejects.toMatchObject({ response: { code: 'INVALID_ACTOR' } });
@@ -326,6 +327,7 @@ describe('Системный переход: actorId обязателен как
         actorRole: 'SYSTEM',
         version: 1,
         scope: 'ALL_STORES',
+        scopes: ['ALL_STORES'],
         storeIds: [],
       })
       .catch((e: unknown) => e);
@@ -388,6 +390,7 @@ describe('Сброс кэша отчётов при переходе (задач
         actorRole: 'RECEIVER',
         version: 1,
         scope: 'ALL_STORES',
+        scopes: ['ALL_STORES'],
         storeIds: [],
       })
       .catch(() => undefined);
@@ -482,6 +485,7 @@ describe('Сброс кэша отчётов при переходе (задач
       actorRole: 'PRODUCTION_MANAGER',
       version: 1,
       scope: 'ALL_STORES',
+      scopes: ['ALL_STORES'],
       storeIds: [],
       reason: 'Возврат на очередь: нужны запчасти',
     });
@@ -605,6 +609,7 @@ describe('Перераспределение работы: RESET_PERFORMER (де
       actorRole: 'PRODUCTION_MANAGER',
       version: 1,
       scope: 'ALL_STORES',
+      scopes: ['ALL_STORES'],
       storeIds: [],
       reason: 'Возврат на очередь: нужны запчасти',
     });
@@ -633,6 +638,7 @@ describe('Перераспределение работы: RESET_PERFORMER (де
       actorRole: 'PRODUCTION_MANAGER',
       version: 1,
       scope: 'ALL_STORES',
+      scopes: ['ALL_STORES'],
       storeIds: [],
       reason: 'Возврат на очередь: нужны запчасти',
     });
@@ -741,6 +747,7 @@ describe('Уведомление клиента при переходе (зад�
       actorRole: 'LOGISTICIAN',
       version: 1,
       scope: 'ALL_STORES',
+      scopes: ['ALL_STORES'],
       storeIds: [],
     });
   }
@@ -973,6 +980,7 @@ describe('Срок гарантии по умолчанию из настрой�
       actorRole: 'RECEIVER',
       version: 1,
       scope: 'ALL_STORES',
+      scopes: ['ALL_STORES'],
       storeIds: [],
     });
   }

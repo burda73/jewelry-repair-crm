@@ -67,7 +67,7 @@ export class PhotosService {
     // Область видимости — тот же фильтр, что и у карточки заказа: прикреплять
     // фото к чужому заказу нельзя.
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope: params.user.scope,
+      scopes: params.user.scopes,
       storeIds: params.user.storeIds,
       userId: params.user.id,
     });
@@ -251,7 +251,7 @@ export class PhotosService {
   /** Проверка области видимости заказа — общая для всех операций с фото. */
   private async assertOrderVisible(orderId: string, user: AuthenticatedUser): Promise<void> {
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
       userId: user.id,
     });

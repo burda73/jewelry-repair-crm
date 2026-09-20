@@ -1119,7 +1119,7 @@ export class BatchesService {
             actorRole: actor.primaryRole,
             actorRoles: actor.roles,
             version: current.version,
-            scope: actor.scope,
+            scopes: actor.scopes,
             storeIds: actor.storeIds ?? [],
             tx,
           });
@@ -1690,12 +1690,18 @@ export class BatchesService {
    * (docs/02 §4, строка «Логистика: партия, акт» — «Р»), но его область не
    * `ALL_STORES`. Пока исключался только `ALL_STORES`, аудитор получал пустой
    * список — то есть право на чтение без единой доступной записи.
+   *
+   * Проверяется НАБОР областей (дефект 65), а не одна «самая широкая»: партия
+   * доступна, если её видно по ЛЮБОЙ роли сотрудника. Для партий объединение
+   * совпадает с прежним правилом — `PRODUCTION` и так даёт все рейсы, а
+   * магазинные области добавляют рейсы своих точек; но проверка по набору не
+   * ломается, когда у приёмщика появляется вторая роль логиста.
    */
   private buildScopeFilter(actor: AuthenticatedUser): Prisma.BatchWhereInput {
     if (
-      actor.scope === 'ALL_STORES' ||
-      actor.scope === 'READ_ALL' ||
-      actor.scope === 'PRODUCTION'
+      actor.scopes.includes('ALL_STORES') ||
+      actor.scopes.includes('READ_ALL') ||
+      actor.scopes.includes('PRODUCTION')
     ) {
       return {};
     }

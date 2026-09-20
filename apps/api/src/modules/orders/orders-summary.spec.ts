@@ -28,6 +28,7 @@ function user(): AuthenticatedUser {
     roles: [],
     primaryRole: 'RECEIVER',
     scope: 'ALL_STORES',
+    scopes: ['ALL_STORES'],
     storeIds: [],
   } as unknown as AuthenticatedUser;
 }

@@ -47,6 +47,7 @@ function user(...roles: RoleCode[]): AuthenticatedUser {
     roles,
     primaryRole: roles[0] ?? ROLE.RECEIVER,
     scope: 'ALL_STORES',
+    scopes: ['ALL_STORES'],
     storeIds: [],
   } as unknown as AuthenticatedUser;
 }

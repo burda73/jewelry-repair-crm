@@ -64,6 +64,70 @@ export const DATA_SCOPE = {
 
 export type DataScope = (typeof DATA_SCOPE)[keyof typeof DATA_SCOPE];
 
+/**
+ * Порядок областей видимости «от широкой к узкой».
+ *
+ * Используется только для ОТОБРАЖЕНИЯ (какую область показать в карточке
+ * сотрудника) и для обратной совместимости поля `scope`. ПРИМЕНЯТЬ ЕГО К
+ * ФИЛЬТРАЦИИ НЕЛЬЗЯ — см. `resolveDataScopes()` и дефект 65.
+ */
+export const SCOPE_PRIORITY: readonly DataScope[] = [
+  DATA_SCOPE.READ_ALL,
+  DATA_SCOPE.ALL_STORES,
+  DATA_SCOPE.PRODUCTION,
+  DATA_SCOPE.STORE_PLUS_GLOBAL_SEARCH,
+  DATA_SCOPE.STORE,
+];
+
+/**
+ * Набор областей видимости сотрудника.
+ *
+ * ## Почему набор, а не одна «самая широкая» область (дефект 65)
+ *
+ * Области видимости НЕ вложены одна в другую, и раньше это было неочевидно.
+ * Система выбирала одну область по `SCOPE_PRIORITY`, считая `PRODUCTION` шире
+ * `STORE_PLUS_GLOBAL_SEARCH`. Но `PRODUCTION` показывает только заказы в
+ * производстве и логистике, а магазинные заказы (включая «Готов к выдаче») в
+ * неё НЕ входят.
+ *
+ * Пока у всех был ровно один профиль, ошибка не проявлялась. Как только
+ * приёмщику выдали ВТОРУЮ роль `LOGISTICIAN` (задача 7.7), его область стала
+ * `PRODUCTION` — и он перестал видеть заказы собственного магазина: список
+ * пуст, карточка отвечает 404. То есть сотрудник, который эти заказы и принял,
+ * терял к ним доступ.
+ *
+ * Правильная семантика — объединение: сотрудник видит то, что видно по ЛЮБОЙ
+ * из его ролей. Именно это и возвращает функция.
+ */
+export function resolveDataScopes(scopes: readonly DataScope[]): DataScope[] {
+  return [...new Set(scopes)];
+}
+
+/** Есть ли среди областей видимости неограниченная (`ALL_STORES`, `READ_ALL`). */
+export function hasUnrestrictedScope(scopes: readonly DataScope[]): boolean {
+  return scopes.includes(DATA_SCOPE.ALL_STORES) || scopes.includes(DATA_SCOPE.READ_ALL);
+}
+
+/** Входит ли хотя бы одна из областей в указанный список. */
+export function scopesIncludeAny(
+  scopes: readonly DataScope[],
+  candidates: readonly DataScope[],
+): boolean {
+  return scopes.some((scope) => candidates.includes(scope));
+}
+
+/**
+ * Область видимости для отображения: самая широкая из имеющихся.
+ *
+ * Только для показа. Для фильтрации используется `resolveDataScopes()`.
+ */
+export function widestDataScope(scopes: readonly DataScope[]): DataScope {
+  for (const candidate of SCOPE_PRIORITY) {
+    if (scopes.includes(candidate)) return candidate;
+  }
+  return DATA_SCOPE.STORE;
+}
+
 /** Область видимости по умолчанию для каждой роли. */
 export const DEFAULT_ROLE_SCOPE: Record<RoleCode, DataScope> = {
   RECEIVER: DATA_SCOPE.STORE_PLUS_GLOBAL_SEARCH,

@@ -42,6 +42,7 @@ function user(): AuthenticatedUser {
     roles: [],
     primaryRole: 'CASHIER',
     scope: DATA_SCOPE.ALL_STORES,
+    scopes: [DATA_SCOPE.ALL_STORES],
     storeIds: [STORE],
   } as unknown as AuthenticatedUser;
 }

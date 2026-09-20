@@ -168,6 +168,49 @@ describe('AuthService: вход по идентификатору сотрудн
     expect(result.user.id).toBe(USER_ID);
   });
 
+  it('приёмщик со ВТОРОЙ ролью логиста получает ОБЕ области видимости (дефект 65)', async () => {
+    /*
+     * Дефект 65. Раньше выбиралась одна «самая широкая» область, и приёмщик с
+     * добавленной ролью `LOGISTICIAN` (задача 7.7) получал `PRODUCTION`. Заказы
+     * магазина — включая «Готов к выдаче» — в эту область не входят, поэтому
+     * сотрудник переставал видеть заказы, которые сам же и принял.
+     *
+     * Проверяется результат входа: в сессии должны оказаться ОБЕ области, чтобы
+     * фильтр запросов учитывал их обе через `OR`.
+     */
+    const prisma = createPrismaMock();
+    prisma.user.findUnique.mockResolvedValue(
+      userRow({
+        roles: [
+          { role: ROLE.RECEIVER, storeId: null, scope: DATA_SCOPE.STORE_PLUS_GLOBAL_SEARCH },
+          { role: ROLE.LOGISTICIAN, storeId: null, scope: DATA_SCOPE.PRODUCTION },
+        ],
+      }),
+    );
+
+    const result = await makeService(prisma).login({ userId: USER_ID, password: PASSWORD }, {});
+
+    expect(result.user.scopes).toContain(DATA_SCOPE.STORE_PLUS_GLOBAL_SEARCH);
+    expect(result.user.scopes).toContain(DATA_SCOPE.PRODUCTION);
+    /*
+     * `scope` остаётся для отображения и содержит самую широкую область. Это
+     * ожидаемо и НЕ является ошибкой: фильтрация идёт по `scopes`, а не по нему.
+     */
+    expect(result.user.scope).toBe(DATA_SCOPE.PRODUCTION);
+  });
+
+  it('одна роль даёт одну область и в `scope`, и в наборе', async () => {
+    // Обратная проверка: объединение не должно добавлять области, которых у
+    // сотрудника нет.
+    const prisma = createPrismaMock();
+    prisma.user.findUnique.mockResolvedValue(userRow());
+
+    const result = await makeService(prisma).login({ userId: USER_ID, password: PASSWORD }, {});
+
+    expect(result.user.scopes).toEqual([DATA_SCOPE.STORE_PLUS_GLOBAL_SEARCH]);
+    expect(result.user.scope).toBe(DATA_SCOPE.STORE_PLUS_GLOBAL_SEARCH);
+  });
+
   it('запрос без почты и без идентификатора отклоняется до обращения к базе', async () => {
     /*
      * Проверяется НАБЛЮДАЕМЫЙ контракт: такой запрос отклоняется и до базы не

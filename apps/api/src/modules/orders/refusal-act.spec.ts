@@ -27,6 +27,7 @@ const RECEIVER: AuthenticatedUser = {
   primaryRole: 'RECEIVER',
   roles: ['RECEIVER'],
   scope: 'ALL_STORES',
+  scopes: ['ALL_STORES'],
   storeIds: [],
   mustChangePassword: false,
 } as unknown as AuthenticatedUser;

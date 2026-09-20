@@ -74,73 +74,95 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   /**
    * Построить фильтр области видимости для заказов.
    *
-   * @param scope     область видимости роли
+   * ## Почему принимается НАБОР областей, а не одна (дефект 65)
+   *
+   * Области видимости не вложены: `PRODUCTION` показывает только заказы в
+   * производстве и логистике, а заказы магазина (в том числе «Готов к выдаче»)
+   * в неё не входят. Пока система выбирала ОДНУ «самую широкую» область, это
+   * было незаметно — но приёмщик со второй ролью `LOGISTICIAN` (задача 7.7)
+   * получал `PRODUCTION` и переставал видеть заказы своего магазина.
+   *
+   * Поэтому фильтры всех областей объединяются через `OR`: сотрудник видит то,
+   * что видно по ЛЮБОЙ из его ролей. Если хотя бы одна область неограниченная
+   * (`ALL_STORES`, `READ_ALL`) — фильтр пуст.
+   *
+   * @param scopes    области видимости ролей сотрудника
    * @param storeIds  магазины пользователя
    * @param userId    пользователь (для фильтра «мои заказы»)
    *
    * Возвращает условие, которое ОБЯЗАТЕЛЬНО добавляется к каждому запросу списка.
    */
   buildOrderScopeFilter(params: {
-    scope: string;
+    scopes: readonly string[];
     storeIds: readonly string[];
     userId: string;
   }): Prisma.OrderWhereInput {
-    const { scope, storeIds } = params;
+    const { scopes, storeIds } = params;
 
-    switch (scope) {
-      case 'STORE':
-        // Только заказы своих магазинов (и принятые, и выдача).
-        return {
-          OR: [{ createdStoreId: { in: [...storeIds] } }, { pickupStoreId: { in: [...storeIds] } }],
-        };
+    /*
+     * Неограниченная область снимает фильтр целиком: складывать её с другими
+     * условиями через `OR` значило бы получить «всё ИЛИ своё», то есть тот же
+     * «всё», но с лишним условием в запросе.
+     */
+    if (scopes.includes('ALL_STORES') || scopes.includes('READ_ALL')) return {};
 
-      case 'STORE_PLUS_GLOBAL_SEARCH':
-        // Основная выборка — свои магазины. Глобальный поиск по точному номеру
-        // выполняется отдельным запросом, который проверяет право ORDER_SEARCH_GLOBAL.
-        return {
-          OR: [{ createdStoreId: { in: [...storeIds] } }, { pickupStoreId: { in: [...storeIds] } }],
-        };
+    const branches: Prisma.OrderWhereInput[] = [];
 
-      case 'PRODUCTION':
-        /*
-         * Всё, что в производстве, логистике или ожидает их.
-         *
-         * Список ведётся строками, а не константой из домена: у этого фильтра
-         * тип Prisma, и строка перечисления здесь — часть запроса. Поэтому при
-         * добавлении статуса производства его нужно внести и сюда; тест
-         * `prisma-scope.spec.ts` сверяет список с `IN_PRODUCTION_STATUSES`,
-         * чтобы «забытый статус» ловился, а не прятался.
-         */
-        return {
-          OR: [
-            {
-              status: {
-                in: [
-                  'QUEUED_FOR_DISPATCH',
-                  'IN_TRANSIT_TO_PRODUCTION',
-                  'IN_PRODUCTION',
-                  'ACCEPTED_BY_WORKSHOP',
-                  'IN_WORK',
-                  'WORK_COMPLETED',
-                  'REWORK',
-                  'IN_TRANSIT_TO_STORE',
-                ],
-              },
-            },
-            { productionManagerId: params.userId },
-          ],
-        };
-
-      case 'ALL_STORES':
-      case 'READ_ALL':
-        // Полный доступ — фильтр не ограничивает.
-        return {};
-
-      default:
-        // Неизвестная область видимости — запрещаем всё. Fail closed, не fail open.
-        this.logger.error(`Неизвестная область видимости: ${scope}. Доступ запрещён.`);
-        return { id: '__none__' };
+    /*
+     * Магазинные области дают заказы своих точек. `STORE_PLUS_GLOBAL_SEARCH`
+     * отличается от `STORE` только наличием права на глобальный поиск
+     * (отдельный запрос), поэтому фильтр у них одинаковый.
+     */
+    if (scopes.includes('STORE') || scopes.includes('STORE_PLUS_GLOBAL_SEARCH')) {
+      branches.push({
+        OR: [{ createdStoreId: { in: [...storeIds] } }, { pickupStoreId: { in: [...storeIds] } }],
+      });
     }
+
+    if (scopes.includes('PRODUCTION')) {
+      /*
+       * Всё, что в производстве, логистике или ожидает их.
+       *
+       * Список ведётся строками, а не константой из домена: у этого фильтра
+       * тип Prisma, и строка перечисления здесь — часть запроса. Поэтому при
+       * добавлении статуса производства его нужно внести и сюда; тест
+       * `prisma-scope.spec.ts` сверяет список с `IN_PRODUCTION_STATUSES`,
+       * чтобы «забытый статус» ловился, а не прятался.
+       */
+      branches.push({
+        OR: [
+          {
+            status: {
+              in: [
+                'QUEUED_FOR_DISPATCH',
+                'IN_TRANSIT_TO_PRODUCTION',
+                'IN_PRODUCTION',
+                'ACCEPTED_BY_WORKSHOP',
+                'IN_WORK',
+                'WORK_COMPLETED',
+                'REWORK',
+                'IN_TRANSIT_TO_STORE',
+              ],
+            },
+          },
+          { productionManagerId: params.userId },
+        ],
+      });
+    }
+
+    /*
+     * Ни одной знакомой области (пустой список или неизвестный код) —
+     * запрещаем всё. Fail closed, не fail open.
+     */
+    if (branches.length === 0) {
+      this.logger.error(
+        `Нет ни одной известной области видимости: ${scopes.join(', ')}. Доступ запрещён.`,
+      );
+      return { id: '__none__' };
+    }
+
+    if (branches.length === 1) return branches[0] as Prisma.OrderWhereInput;
+    return { OR: branches };
   }
 
   /**
@@ -150,7 +172,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    */
   async findOrderInScope(params: {
     orderId: string;
-    scope: string;
+    scopes: readonly string[];
     storeIds: readonly string[];
     userId: string;
   }): Promise<Prisma.OrderGetPayload<Record<string, never>> | null> {

@@ -168,8 +168,15 @@ export class ReportsService {
     const scoped: ReportQuery = {
       ...query,
       storeIds: scopedStoreIds(actor, query.storeIds),
+      /*
+       * Область производства сужает список цехов до «всех» только тогда, когда
+       * её даёт ЛЮБАЯ роль (дефект 65): при нескольких ролях одна область не
+       * описывает сотрудника целиком.
+       */
       workshopIds:
-        actor.scope === 'PRODUCTION' && query.workshopIds.length === 0 ? [] : query.workshopIds,
+        (actor.scopes ?? [actor.scope]).includes('PRODUCTION') && query.workshopIds.length === 0
+          ? []
+          : query.workshopIds,
     };
 
     /*
@@ -1170,12 +1177,18 @@ function statusLabel(status: string): string {
  * @returns список доступных магазинов; ПУСТОЙ список означает «вся сеть»
  */
 export function scopedStoreIds(
-  actor: { scope: DataScope; storeIds: string[] | undefined },
+  actor: { scope: DataScope; scopes?: readonly DataScope[]; storeIds: string[] | undefined },
   requested: readonly string[],
 ): string[] {
   // Роли с полным доступом: руководитель, администратор, производство и аудит.
+  /*
+   * Набор областей: у сотрудника с несколькими ролями доступ шире, чем у
+   * каждой роли по отдельности (дефект 65). Если `scopes` не передан (старые
+   * вызовы и тесты), поведение прежнее — по одной области.
+   */
+  const scopes = actor.scopes ?? [actor.scope];
   const seesAll =
-    actor.scope === 'ALL_STORES' || actor.scope === 'READ_ALL' || actor.scope === 'PRODUCTION';
+    scopes.includes('ALL_STORES') || scopes.includes('READ_ALL') || scopes.includes('PRODUCTION');
 
   if (seesAll) {
     /*

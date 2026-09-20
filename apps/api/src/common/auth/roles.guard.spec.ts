@@ -33,6 +33,7 @@ function user(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
     primaryRole: ROLE.ADMIN,
     permissions: Object.values(PERMISSION),
     scope: DATA_SCOPE.ALL_STORES,
+    scopes: [DATA_SCOPE.ALL_STORES],
     storeIds: [],
     ...overrides,
   };

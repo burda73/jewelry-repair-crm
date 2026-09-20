@@ -24,6 +24,7 @@ const MANAGER: AuthenticatedUser = {
   primaryRole: 'PRODUCTION_MANAGER',
   roles: ['PRODUCTION_MANAGER'],
   scope: 'PRODUCTION',
+  scopes: ['PRODUCTION'],
   storeIds: [],
   mustChangePassword: false,
 } as unknown as AuthenticatedUser;

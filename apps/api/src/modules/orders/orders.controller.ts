@@ -248,7 +248,7 @@ export class OrdersController {
       reason: parsed.data.reason,
       version: parsed.data.version,
       payload: parsed.data.payload,
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
     });
 
@@ -283,7 +283,7 @@ export class OrdersController {
       actorRoles: user.roles,
       reason: parsed.data.reason,
       version: parsed.data.version,
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
     });
 

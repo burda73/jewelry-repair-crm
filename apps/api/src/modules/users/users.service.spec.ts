@@ -43,6 +43,7 @@ const ADMIN: AuthenticatedUser = {
   primaryRole: ROLE.ADMIN,
   permissions: ['user:manage'],
   scope: DATA_SCOPE.ALL_STORES,
+  scopes: [DATA_SCOPE.ALL_STORES],
   storeIds: [],
 };
 
@@ -53,6 +54,7 @@ function roleRow(overrides: Record<string, unknown> = {}) {
     role: ROLE.RECEIVER,
     storeId: STORE,
     scope: DATA_SCOPE.STORE,
+    scopes: [DATA_SCOPE.STORE],
     grantedAt: new Date('2026-01-01'),
     grantedById: null,
     store: { id: STORE, code: 'MSK1', name: 'Москва, Тверская' },

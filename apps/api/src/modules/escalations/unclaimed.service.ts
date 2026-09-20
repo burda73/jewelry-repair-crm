@@ -104,7 +104,7 @@ export class UnclaimedService {
           actorId: null,
           actorRole: 'SYSTEM',
           version: order.version,
-          scope: 'ALL_STORES',
+          scopes: ['ALL_STORES'],
           storeIds: [],
         });
         result.unclaimed += 1;

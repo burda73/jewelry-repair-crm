@@ -13,6 +13,7 @@ import {
   isTerminalStatus,
   remainingToPay,
   DATA_SCOPE,
+  hasUnrestrictedScope,
   ROLE,
   REPORT_NAME,
 } from '@app/shared';
@@ -153,7 +154,13 @@ export class PaymentsService {
 
     // Магазин приёма оплаты: платить можно в любом магазине (ТЗ п. 2.5),
     // поэтому storeId приходит из запроса, а не берётся из заказа.
-    if (user.scope !== DATA_SCOPE.ALL_STORES && !user.storeIds.includes(data.storeId)) {
+    /*
+     * Доступ к магазину проверяется по НАБОРУ областей видимости (дефект 65):
+     * сотрудник с несколькими ролями вправе выбрать магазин, доступный по
+     * любой из них. Проверка только по `user.scope` отвергала бы кассира,
+     * получившего вторую роль с более широкой областью.
+     */
+    if (!hasUnrestrictedScope(user.scopes) && !user.storeIds.includes(data.storeId)) {
       throw new ForbiddenException({
         code: 'STORE_NOT_ALLOWED',
         message: 'Приём оплаты доступен только в вашем магазине',
@@ -409,10 +416,9 @@ export class PaymentsService {
   async findAll(query: PaymentListQuery, user: AuthenticatedUser): Promise<PaymentListItem[]> {
     const limit = Math.min(query.limit ?? 100, 500);
 
-    const storeIds =
-      user.scope === DATA_SCOPE.ALL_STORES
-        ? (query.storeId ?? undefined)
-        : user.storeIds.filter((id) => query.storeId === undefined || query.storeId.includes(id));
+    const storeIds = hasUnrestrictedScope(user.scopes)
+      ? (query.storeId ?? undefined)
+      : user.storeIds.filter((id) => query.storeId === undefined || query.storeId.includes(id));
 
     const where: Prisma.PaymentWhereInput = {
       ...(query.orderId === undefined ? {} : { orderId: query.orderId }),
@@ -528,7 +534,12 @@ export class PaymentsService {
    * легко «унифицировать» и тем самым сломать основной сценарий кассы.
    */
   private orderScope(orderId: string, user: AuthenticatedUser): Prisma.OrderWhereInput {
-    if (user.scope === DATA_SCOPE.STORE_PLUS_GLOBAL_SEARCH) {
+    /*
+     * Право на глобальный поиск есть, если его даёт ЛЮБАЯ роль сотрудника
+     * (дефект 65). Проверка по `user.scope` пропускала бы этот сценарий мимо
+     * кассира, чья «самая широкая» область оказалась другой.
+     */
+    if (user.scopes.includes(DATA_SCOPE.STORE_PLUS_GLOBAL_SEARCH)) {
       // Заказ доступен по точному id; право на глобальный поиск уже проверено
       // гвардом (PERMISSION.ORDER_SEARCH_GLOBAL).
       return { id: orderId };
@@ -538,7 +549,7 @@ export class PaymentsService {
       AND: [
         { id: orderId },
         this.prisma.buildOrderScopeFilter({
-          scope: user.scope,
+          scopes: user.scopes,
           storeIds: user.storeIds,
           userId: user.id,
         }),

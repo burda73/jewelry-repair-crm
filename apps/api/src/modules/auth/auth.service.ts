@@ -8,6 +8,8 @@ import {
   loginSchema,
   changePasswordSchema,
   DATA_SCOPE,
+  resolveDataScopes,
+  widestDataScope,
   type RoleCode,
   type DataScope,
 } from '@app/shared';
@@ -42,15 +44,6 @@ const ARGON2_OPTIONS = {
   timeCost: 3,
   parallelism: 4,
 } as const;
-
-/** Порядок областей видимости «от широкой к узкой» — для выбора наибольшей. */
-const SCOPE_PRIORITY: DataScope[] = [
-  DATA_SCOPE.READ_ALL,
-  DATA_SCOPE.ALL_STORES,
-  DATA_SCOPE.PRODUCTION,
-  DATA_SCOPE.STORE_PLUS_GLOBAL_SEARCH,
-  DATA_SCOPE.STORE,
-];
 
 @Injectable()
 export class AuthService {
@@ -286,6 +279,7 @@ export class AuthService {
         primaryRole: user.primaryRole,
         permissions: user.permissions,
         scope: user.scope,
+        scopes: user.scopes,
         storeIds: user.storeIds,
         storeRoles: user.storeRoles,
         // Флаг «сменить пароль при входе». В токене он безвреден: смена пароля
@@ -455,16 +449,21 @@ export class AuthService {
       });
     }
 
-    // Берём самую широкую область видимости среди всех ролей пользователя.
-    let scope: DataScope = DATA_SCOPE.STORE;
-    let bestPriority = SCOPE_PRIORITY.length;
-    for (const role of user.roles) {
-      const priority = SCOPE_PRIORITY.indexOf(role.scope);
-      if (priority >= 0 && priority < bestPriority) {
-        bestPriority = priority;
-        scope = role.scope;
-      }
-    }
+    /*
+     * Области видимости всех ролей — ОБЪЕДИНЕНИЕ, а не «самая широкая».
+     *
+     * Дефект 65: области видимости не вложены друг в друга. `PRODUCTION`
+     * показывает только заказы в производстве и логистике, а магазинные заказы
+     * (включая «Готов к выдаче») в неё не входят. Пока у сотрудника одна роль,
+     * выбор одной области работал; как только приёмщику выдали вторую роль
+     * `LOGISTICIAN` (задача 7.7), его область стала `PRODUCTION` — и он
+     * перестал видеть заказы собственного магазина.
+     *
+     * `scope` сохраняется для отображения и обратной совместимости, но для
+     * фильтрации используется `scopes`.
+     */
+    const scopes = resolveDataScopes(user.roles.map((r) => r.scope));
+    const scope = widestDataScope(scopes.length > 0 ? scopes : [DATA_SCOPE.STORE]);
 
     return {
       id: user.id,
@@ -474,6 +473,7 @@ export class AuthService {
       primaryRole,
       permissions: [...permissionsFor(roles)],
       scope,
+      scopes: scopes.length > 0 ? scopes : [DATA_SCOPE.STORE],
       storeIds: user.stores.map((s) => s.storeId),
       storeRoles: user.roles.map((r) => ({ role: r.role, storeId: r.storeId, scope: r.scope })),
       // Флаг обязательной смены пароля. По умолчанию `false`, чтобы вызовы,

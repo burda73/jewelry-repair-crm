@@ -38,12 +38,28 @@ const STORE_A = 'cmu5p70yu0002bm7pzqlcawsw';
 const STORE_B = 'cmu5p70yu0003bm7pzqlcawsw';
 const WORKSHOP = 'cmu5p70yu0004bm7pzqlcawsw';
 
+/*
+ * Действующие лица тестов несут и `scope`, и `scopes` — как реальный
+ * пользователь после задачи 7.7. `scope` остался для отображения, а фильтрация
+ * идёт по набору областей (дефект 65), поэтому двойник без `scopes` проверял бы
+ * несуществующее состояние системы.
+ */
 /** Роль приёмщика: видит один магазин. */
-const RECEIVER = { scope: 'STORE' as const, storeIds: [STORE_A] };
+const RECEIVER = { scope: 'STORE' as const, scopes: ['STORE'] as const, storeIds: [STORE_A] };
 /** Руководитель: видит всю сеть. */
-const MANAGER = { scope: 'ALL_STORES' as const, storeIds: [] as string[] };
+const MANAGER = {
+  scope: 'ALL_STORES' as const,
+  scopes: ['ALL_STORES'] as const,
+  storeIds: [] as string[],
+};
+/** Приёмщик со ВТОРОЙ ролью логиста (задача 7.7): магазин И производство. */
+const RECEIVER_AND_LOGISTICIAN = {
+  scope: 'PRODUCTION' as const,
+  scopes: ['STORE_PLUS_GLOBAL_SEARCH', 'PRODUCTION'] as const,
+  storeIds: [STORE_A],
+};
 /** Роль без магазинов: доступ есть, данных нет. */
-const ORPHAN = { scope: 'STORE' as const, storeIds: [] as string[] };
+const ORPHAN = { scope: 'STORE' as const, scopes: ['STORE'] as const, storeIds: [] as string[] };
 
 function query(overrides: Record<string, unknown> = {}) {
   return {
@@ -58,7 +74,11 @@ function query(overrides: Record<string, unknown> = {}) {
 }
 
 function actor(scope: string, storeIds: string[] = []) {
-  return { id: 'u-1', scope, storeIds } as never;
+  /*
+   * Набор областей по умолчанию — из одной области: так выглядит сотрудник с
+   * единственной ролью. Мультирольные случаи передают `scopes` явно.
+   */
+  return { id: 'u-1', scope, scopes: [scope], storeIds } as never;
 }
 
 /** Двойник Prisma с настраиваемыми выборками. */

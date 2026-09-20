@@ -72,7 +72,7 @@ export class AssignmentsService {
     const data = parsed.data;
 
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
       userId: user.id,
     });
@@ -167,7 +167,7 @@ export class AssignmentsService {
         actorRole: user.primaryRole,
         actorRoles: user.roles,
         version: order.version,
-        scope: user.scope,
+        scopes: user.scopes,
         storeIds: user.storeIds,
         tx,
       });
@@ -240,7 +240,7 @@ export class AssignmentsService {
     }
 
     const scopeFilter = this.prisma.buildOrderScopeFilter({
-      scope: user.scope,
+      scopes: user.scopes,
       storeIds: user.storeIds,
       userId: user.id,
     });
@@ -296,7 +296,7 @@ export class AssignmentsService {
         actorRole: user.primaryRole,
         actorRoles: user.roles,
         version: order.version,
-        scope: user.scope,
+        scopes: user.scopes,
         storeIds: user.storeIds,
         tx,
       });

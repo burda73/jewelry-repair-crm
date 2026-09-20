@@ -39,6 +39,7 @@ const ADMIN: AuthenticatedUser = {
   primaryRole: ROLE.ADMIN,
   permissions: ['pricelist:edit', 'pricelist:approve'],
   scope: DATA_SCOPE.ALL_STORES,
+  scopes: [DATA_SCOPE.ALL_STORES],
   storeIds: [STORE_ID],
 };
 
