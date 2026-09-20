@@ -157,7 +157,17 @@ function createPrismaMock() {
         // иначе приёмка рейса «в магазин» не сможет решить, закрывать заказ
         // отказом или делать его «Готов к выдаче».
         returnedWithoutWorkAt: null,
+        // Цех заказа (дефект 80): приёмка партии «в цех» проставляет его, и
+        // двойник обязан отдавать поле — иначе проверка «цех уже назначен?»
+        // сравнивала бы `undefined` с `null` и вела себя непредсказуемо.
+        workshopId: null,
       })),
+      /*
+       * Простановка цеха при приёмке партии «в цех» (дефект 80). Возвращает
+       * `count: 1` — «обновление прошло», как в реальной базе при совпадении
+       * версии.
+       */
+      updateMany: vi.fn(async () => ({ count: 1 })),
     },
     batchAct: {
       findFirst: vi.fn(async () => null),
@@ -2470,5 +2480,157 @@ describe('BatchesService: отправитель партии (дефект 76)'
     for (const [args] of calls) {
       expect(args.data).not.toHaveProperty('fromWorkshopId');
     }
+  });
+});
+
+/**
+ * Цех заказа проставляется приёмкой партии «в цех» (дефект 80).
+ *
+ * РЕАЛЬНЫЙ ДЕФЕКТ. Заказ создаётся в магазине, где цеха ещё нет: он
+ * определяется маршрутом — партией передачи. Но приёмка партии меняла только
+ * СТАТУС, и `workshopId` оставался пустым: в карточке цех не отображался,
+ * отчётность по цехам не видела такие заказы, а возврат «в магазин» был
+ * невозможен — отправителем цеха он быть не мог (дефект 76), потому что цех не
+ * был известен.
+ */
+describe('BatchesService: цех заказа из партии передачи (дефект 80)', () => {
+  const withItems = (status: string, direction = 'TO_PRODUCTION') =>
+    batchRow({
+      status,
+      direction,
+      toWorkshopId: WORKSHOP_1,
+      items: [
+        {
+          orderId: 'order-1',
+          addedAt: new Date('2025-09-16T07:00:00Z'),
+          addedById: LOGIST_ID,
+          order: {
+            orderNo: 'MSK1-2609-000001',
+            status: 'QUEUED_FOR_DISPATCH',
+            totalAmountMinor: 100000,
+            customer: { fullName: 'Клиент 1' },
+          },
+        },
+      ],
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    workflowMock.transition.mockResolvedValue({ id: 'order-1' });
+  });
+
+  it('при приёмке рейса в цех проставляет цех заказам', async () => {
+    /*
+     * ГЛАВНАЯ проверка. Партия — единственное место, где цех известен
+     * достоверно: его выбрал логист, и именно этот цех физически принял изделия.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT'));
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    expect(prisma._tx.order.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ workshopId: WORKSHOP_1 }),
+      }),
+    );
+  });
+
+  it('при ОТПРАВКЕ партии цех не проставляется', async () => {
+    /*
+     * До приёмки изделия ещё в дороге: записывать цех раньше значило бы
+     * утверждать, что заказ уже там, куда он только едет.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('ACT_FORMED'));
+
+    await makeService(prisma).dispatch(BATCH_ID, LOGIST);
+
+    expect(prisma._tx.order.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('при приёмке рейса «в магазин» цех не проставляется', async () => {
+    // Здесь цех — ОТПРАВИТЕЛЬ, и заказ едет в магазин: менять его цех нечем.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT', 'TO_STORE'));
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    expect(prisma._tx.order.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('уже назначенный цех НЕ перезаписывается', async () => {
+    /*
+     * Если цех назначен заранее (руководитель распределил работу), приёмка
+     * партии в другой цех не должна молча переписать решение человека:
+     * расхождение обязано остаться видимым, чтобы его разобрали, а не потеряли.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT'));
+    prisma._tx.order.findUnique = vi.fn(async () => ({
+      version: 1,
+      status: 'QUEUED_FOR_DISPATCH',
+      returnedWithoutWorkAt: null,
+      workshopId: WORKSHOP_2,
+    }));
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    expect(prisma._tx.order.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('цех записывается ДО перехода статуса', async () => {
+    /*
+     * Переход читает заказ и пишет историю. Правка после него оставила бы в
+     * истории статус, посчитанный по заказу без цеха, — то есть запись о
+     * событии, которого в таком виде не было.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT'));
+
+    const order: string[] = [];
+    prisma._tx.order.updateMany = vi.fn(async () => {
+      order.push('workshop');
+      return { count: 1 };
+    });
+    workflowMock.transition.mockImplementation(async () => {
+      order.push('transition');
+      return { id: 'order-1' };
+    });
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    expect(order).toEqual(['workshop', 'transition']);
+  });
+
+  it('в аудите партии видно, скольким заказам проставлен цех', async () => {
+    // По журналу должно быть понятно, что цех пришёл именно из партии, а не
+    // задан вручную в карточке.
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT'));
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    const audit = prisma._tx.auditLog.create.mock.calls.find(
+      (call) => (call[0] as { data: { entity: string } }).data.entity === 'Batch',
+    );
+    const after = (audit?.[0] as { data: { after: Record<string, unknown> } }).data.after;
+    expect(after.workshopApplied).toBe(1);
+  });
+
+  it('цех проставляется с проверкой версии', async () => {
+    /*
+     * Параллельная правка заказа обязана отклонить запись: иначе цех лёг бы
+     * поверх чужого изменения.
+     */
+    const prisma = createPrismaMock();
+    prisma.batch.findFirst.mockResolvedValue(withItems('IN_TRANSIT'));
+
+    await makeService(prisma).receive(BATCH_ID, LOGIST);
+
+    const args = prisma._tx.order.updateMany.mock.calls[0]?.[0] as {
+      where: Record<string, unknown>;
+    };
+    expect(args.where).toEqual({ id: 'order-1', version: 1 });
   });
 });

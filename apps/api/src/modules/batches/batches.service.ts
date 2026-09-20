@@ -1214,6 +1214,8 @@ export class BatchesService {
     const now = new Date();
     /** Сколько заказов ушло в каждый статус — для записи в журнал аудита. */
     const appliedTo: Record<string, number> = {};
+    /** Скольким заказам проставлен цех из партии (дефект 80). */
+    let workshopApplied = 0;
 
     await this.prisma.runInTransaction(
       async (tx) => {
@@ -1227,9 +1229,38 @@ export class BatchesService {
         for (const item of batch.items) {
           const current = await tx.order.findUnique({
             where: { id: item.orderId },
-            select: { version: true, status: true, returnedWithoutWorkAt: true },
+            select: { version: true, status: true, returnedWithoutWorkAt: true, workshopId: true },
           });
           if (current === null) continue;
+
+          /*
+           * ЦЕХ ЗАКАЗА ПРОСТАВЛЯЕТСЯ ПРИЁМКОЙ ПАРТИИ (дефект 80).
+           *
+           * Заказ создаётся в магазине, где цеха ещё нет: он определяется
+           * маршрутом — партией «в цех». Прежде приёмка меняла только СТАТУС, и
+           * `workshopId` оставался пустым: в карточке цех не отображался, а
+           * отчётность по цехам не видела такие заказы вовсе.
+           *
+           * Партия — единственное место, где цех известен достоверно: его выбрал
+           * логист, и именно этот цех физически принял изделия. Брать цех из
+           * чего-то другого (например, из цеха исполнителя) значило бы угадывать.
+           *
+           * Заполняется ТОЛЬКО когда цех у заказа ещё не указан. Если он уже
+           * назначен (руководитель распределил работу заранее), приёмка партии в
+           * другой цех не должна молча переписать решение человека — расхождение
+           * останется видимым, а не затрётся.
+           */
+          const workshopFromBatch =
+            direction === BATCH_DIRECTION.TO_PRODUCTION && phase === 'RECEIVE'
+              ? batch.toWorkshopId
+              : null;
+          /*
+           * Цех заполняется только если он ПУСТ. Если цех уже назначен
+           * (руководитель распределил работу заранее), приёмка партии в другой
+           * цех не должна молча переписать решение человека: расхождение
+           * останется видимым, и его разберут, а не потеряют.
+           */
+          const shouldSetWorkshop = workshopFromBatch !== null && current.workshopId === null;
 
           /*
            * Целевой статус считается ДЛЯ КАЖДОГО заказа (дефект 67). В одном
@@ -1251,6 +1282,32 @@ export class BatchesService {
            */
           if (current.status === target) continue;
 
+          /*
+           * Цех записывается ДО перехода: переход читает заказ и пишет историю,
+           * и правка после него оставила бы в истории статус, посчитанный по
+           * заказу без цеха. Отдельным `update` с проверкой версии, потому что
+           * `workflow.transition` цех не меняет — он ведёт статусную модель.
+           */
+          if (shouldSetWorkshop) {
+            const updated = await tx.order.updateMany({
+              where: { id: item.orderId, version: current.version },
+              data: { workshopId: workshopFromBatch, version: { increment: 1 } },
+            });
+
+            /*
+             * Версия не совпала — заказ изменили параллельно. Переход ниже
+             * отклонится по версии, и вся транзакция откатится: молча продолжать
+             * нельзя, иначе цех записался бы поверх чужой правки.
+             */
+            if (updated.count === 1) {
+              const after = await tx.order.findUnique({
+                where: { id: item.orderId },
+                select: { version: true },
+              });
+              if (after !== null) current.version = after.version;
+            }
+          }
+
           await this.workflow.transition({
             orderId: item.orderId,
             to: target,
@@ -1262,6 +1319,11 @@ export class BatchesService {
             storeIds: actor.storeIds ?? [],
             tx,
           });
+
+          if (shouldSetWorkshop) {
+            // В аудите видно, что цех заказа пришёл из партии, а не задан вручную.
+            workshopApplied += 1;
+          }
 
           appliedTo[target] = (appliedTo[target] ?? 0) + 1;
         }
@@ -1292,6 +1354,8 @@ export class BatchesService {
               status: phase === 'DISPATCH' ? BATCH_STATUS.IN_TRANSIT : BATCH_STATUS.RECEIVED,
               orders: batch.items.length,
               appliedTo,
+              // Сколько заказов получили цех из этой партии (дефект 80).
+              workshopApplied,
             },
           },
         });
