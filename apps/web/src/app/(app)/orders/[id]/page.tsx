@@ -128,6 +128,23 @@ export default function OrderDetailPage(): ReactNode {
     can('production:manage') &&
     data.availableTransitions.some((transition) => transition.to === 'IN_WORK');
 
+  /*
+   * Приёмка работы — ОТДЕЛЬНОЕ условие, а не то же, что выдача.
+   *
+   * Здесь был дефект: кнопка «Принять работу» показывалась по `canAssign`, то
+   * есть по наличию перехода В работу. Но переход в работу доступен ровно ДО
+   * выдачи, а принять работу нужно ПОСЛЕ — в статусе «Выдано в работу». Условия
+   * не пересекаются ни в одной точке, поэтому кнопка не показывалась никогда, и
+   * заказ невозможно было перевести в «Работы завершены»: оставался только
+   * переход из диалога, который всегда отвечает «Работы ещё не завершены».
+   *
+   * Условие выводится из доступных переходов к `WORK_COMPLETED` — той же таблицы,
+   * что охраняет действие на сервере.
+   */
+  const canFinishAssignment =
+    can('production:manage') &&
+    data.availableTransitions.some((transition) => transition.to === 'WORK_COMPLETED');
+
   /** Действующий исполнитель: последнее незакрытое назначение. */
   const activeAssignment = [...data.assignments]
     .reverse()
@@ -401,9 +418,9 @@ export default function OrderDetailPage(): ReactNode {
                       label="Исполнитель"
                       value={
                         <>
-                          {activeAssignment.performerName}
-                          {activeAssignment.performerSpecialization !== null
-                            ? ` · ${activeAssignment.performerSpecialization}`
+                          {activeAssignment.performer.fullName}
+                          {activeAssignment.performer.specialization !== null
+                            ? ` · ${activeAssignment.performer.specialization}`
                             : ''}
                         </>
                       }
@@ -415,9 +432,7 @@ export default function OrderDetailPage(): ReactNode {
                   <div className="mt-2 border-t border-slate-100 pt-2">
                     <p className="text-xs text-slate-500">
                       Работа выдана {formatDateTime(activeAssignment.createdAt)}
-                      {activeAssignment.assignedByName !== ''
-                        ? ` · ${activeAssignment.assignedByName}`
-                        : ''}
+                      {` · ${activeAssignment.assignedBy.fullName}`}
                       {activeAssignment.plannedHours !== null
                         ? ` · план ${String(activeAssignment.plannedHours)} ч`
                         : ''}
@@ -430,7 +445,7 @@ export default function OrderDetailPage(): ReactNode {
                       одного «я закончил» от ювелира недостаточно, иначе в магазин
                       уедет изделие, которое никто не проверял.
                     */}
-                    {canAssign && activeAssignment.status !== 'DONE' ? (
+                    {canFinishAssignment && activeAssignment.status !== 'DONE' ? (
                       <Button
                         variant="secondary"
                         className="mt-2"
@@ -625,7 +640,19 @@ export default function OrderDetailPage(): ReactNode {
         </Tabs.Content>
       </Tabs.Root>
 
-      <TransitionDialog open={transitionOpen} onOpenChange={setTransitionOpen} order={data} />
+      <TransitionDialog
+        open={transitionOpen}
+        onOpenChange={setTransitionOpen}
+        order={data}
+        /*
+         * Переходы, которые выполняются ОТДЕЛЬНЫМ действием, из списка убираются.
+         * «Работы завершены» требует записи о работе со статусом DONE, а её
+         * создаёт приёмка (`POST /assignments/:id/finish`). В списке переходов
+         * этот пункт — тупик: выбор всегда отвечает «Работы по заказу ещё не
+         * завершены», и сотрудник не понимает, что делать.
+         */
+        exclude={canFinishAssignment && activeAssignment !== undefined ? ['WORK_COMPLETED'] : []}
+      />
 
       <PaymentDialog open={paymentOpen} onOpenChange={setPaymentOpen} order={data} />
 

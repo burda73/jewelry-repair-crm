@@ -38,10 +38,20 @@ export function TransitionDialog({
   open,
   onOpenChange,
   order,
+  exclude = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   order: OrderDetail;
+  /**
+   * Переходы, которые выполняются ОТДЕЛЬНЫМ действием и потому не предлагаются.
+   *
+   * «Работы завершены» требует записи о работе со статусом `DONE`, а её создаёт
+   * приёмка (`POST /orders/:id/assignments/:assignmentId/finish`). В списке
+   * переходов этот пункт — тупик: выбор всегда отвечает «Работы по заказу ещё не
+   * завершены», и сотрудник не понимает, что ему сделать.
+   */
+  exclude?: readonly OrderStatus[];
 }): ReactNode {
   const transition = useTransition();
   const uploadSignature = useUploadPickupSignature();
@@ -62,14 +72,24 @@ export function TransitionDialog({
   // одно очевидное действие, и лишний выбор только замедляет работу.
   useEffect(() => {
     if (open) {
-      setTo(order.availableTransitions[0]?.to ?? '');
+      setTo(options[0]?.to ?? '');
       setReason('');
       setError(null);
       setSignatureFile(null);
     }
-  }, [open, order.availableTransitions]);
+    // `options` пересчитывается из тех же данных; зависимость по исходному
+    // списку и `exclude` не даёт лишних срабатываний.
+  }, [open, order.availableTransitions, exclude]);
 
-  const selected = order.availableTransitions.find((item) => item.to === to);
+  /*
+   * Доступные переходы с учётом исключений. Считаются ОДИН раз: список нужен и
+   * для выпадающего списка, и для выбора первого пункта, и для определения
+   * обязательности причины. Две независимые фильтрации разошлись бы, и диалог
+   * показывал бы «причина обязательна» для перехода, которого нет в списке.
+   */
+  const options = order.availableTransitions.filter((item) => !exclude.includes(item.to));
+
+  const selected = options.find((item) => item.to === to);
   const reasonRequired = selected?.requiresReason === true;
   const signatureNeeded = needsPickupSignature(to, hasSignature);
 
@@ -135,7 +155,7 @@ export function TransitionDialog({
               onChange={(event) => setTo(event.target.value as OrderStatus)}
               disabled={transition.isPending}
             >
-              {order.availableTransitions.map((item) => (
+              {options.map((item) => (
                 <option key={item.to} value={item.to}>
                   {item.label !== '' ? item.label : STATUS_LABELS[item.to]}
                 </option>

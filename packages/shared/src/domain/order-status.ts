@@ -165,32 +165,82 @@ export const STATUS_LABELS: Record<OrderStatus, string> = {
  * Список обязан совпадать с ключами `TONES` в `apps/web/src/components/ui/badge.tsx`.
  * Совпадение проверяется тестом (`packages/shared/src/domain/order-status.spec.ts`).
  */
+/**
+ * Тона бейджа статуса.
+ *
+ * Набор расширен под требование заказчика: в списке заказов разные статусы
+ * выглядели одинаково, потому что 18 статусов делили 9 тонов, а вся
+ * производственная группа была одного цвета. Тона — имена, настоящие классы
+ * живут в `Badge.TONES`; их соответствие проверяет тест
+ * (`status-colors-sync.spec.ts`), потому что расхождение проявляется не ошибкой,
+ * а СЕРЫМ бейджем, то есть потерей сигнала без признаков поломки.
+ */
 export type StatusTone =
-  'gray' | 'amber' | 'blue' | 'violet' | 'cyan' | 'green' | 'orange' | 'emerald' | 'red' | 'slate';
+  | 'gray'
+  | 'amber'
+  | 'blue'
+  | 'violet'
+  | 'cyan'
+  | 'green'
+  | 'orange'
+  | 'emerald'
+  | 'red'
+  | 'slate'
+  | 'sky'
+  | 'indigo'
+  | 'yellow'
+  | 'zinc'
+  | 'stone'
+  | 'purple'
+  | 'fuchsia'
+  | 'pink'
+  | 'teal'
+  | 'lime'
+  | 'rose';
 
 /**
  * Цветовая кодировка статусов для UI. Единый словарь, чтобы бейдж в списке
  * и в карточке заказа выглядели одинаково (docs/08-ui-ux.md §6).
  */
 export const STATUS_COLORS: Record<OrderStatus, StatusTone> = {
-  DRAFT: 'gray',
+  // Ещё не в работе: заказ создан и ждёт действий сотрудника.
+  DRAFT: 'slate',
+
+  // Ждём клиента: согласование и предоплата. Оба янтарные по смыслу, но
+  // РАЗНЫЕ оттенки — видно, какой именно шаг ждёт клиента.
   AWAITING_APPROVAL: 'amber',
-  AWAITING_PREPAYMENT: 'amber',
-  ACCEPTED: 'blue',
+  AWAITING_PREPAYMENT: 'yellow',
+
+  // Согласовано, заказ принят: мяч на нашей стороне.
+  ACCEPTED: 'sky',
   QUEUED_FOR_DISPATCH: 'blue',
-  IN_TRANSIT_TO_PRODUCTION: 'violet',
+
+  // Изделие едет. Направления различаются: в цех и обратно — разные процессы,
+  // и перепутать их в списке означало бы неверно понять, где изделие.
+  IN_TRANSIT_TO_PRODUCTION: 'indigo',
+  IN_TRANSIT_TO_STORE: 'purple',
+
+  // Производство: каждый шаг своим оттенком. Раньше вся группа была `cyan`,
+  // и по бейджу нельзя было отличить «в очереди у ювелира» от «работа сдана».
   IN_PRODUCTION: 'cyan',
-  ACCEPTED_BY_WORKSHOP: 'cyan',
-  IN_WORK: 'cyan',
-  WORK_COMPLETED: 'cyan',
-  IN_TRANSIT_TO_STORE: 'violet',
-  READY_FOR_PICKUP: 'green',
-  UNCLAIMED: 'orange',
+  ACCEPTED_BY_WORKSHOP: 'teal',
+  IN_WORK: 'fuchsia',
+  WORK_COMPLETED: 'pink',
+  REWORK: 'orange',
+
+  // Готово к выдаче и выдано: успех, но разные шаги.
+  READY_FOR_PICKUP: 'lime',
   COMPLETED: 'emerald',
-  REFUSED: 'red',
+
+  // Заказ готов, но клиент не пришёл: лежит на хранении.
+  UNCLAIMED: 'stone',
+
+  // Неуспешные исходы. Отличаются друг от друга намеренно: отказ клиента от
+  // оплаты, отказ до начала работ и отмена по инициативе магазина — разные
+  // события, и в отчётности они значат разное.
+  REFUSED: 'rose',
   REFUSED_BEFORE_WORK: 'red',
-  CANCELLED: 'red',
-  REWORK: 'cyan',
+  CANCELLED: 'zinc',
 };
 
 export function statusLabel(status: OrderStatus): string {

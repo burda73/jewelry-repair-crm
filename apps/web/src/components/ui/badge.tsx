@@ -2,8 +2,53 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { STATUS_COLORS, type OrderStatus } from '@app/shared';
 
+/**
+ * Тона бейджа.
+ *
+ * ## Почему их стало больше
+ *
+ * Заказчик сообщил, что в списке заказов разные статусы выглядят одинаково.
+ * Причина: 18 статусов делили 9 тонов, причём ВСЯ производственная группа
+ * (`IN_PRODUCTION`, `ACCEPTED_BY_WORKSHOP`, `IN_WORK`, `WORK_COMPLETED`,
+ * `REWORK`) была одного цвета — то есть по бейджу нельзя было понять, где
+ * находится изделие, а это единственный сигнал, который читается не по тексту.
+ *
+ * Тона подобраны так, чтобы каждый статус отличался от остальных, но ЦВЕТ
+ * ОСТАЛСЯ ОСМЫСЛЕННЫМ:
+ *  * `sky`/`blue`/`indigo` — приём и согласование (мяч у нас);
+ *  * `amber`/`orange`/`yellow` — ждём клиента или оплату;
+ *  * `slate`/`gray`/`zinc`/`stone` — заказ ещё не в работе;
+ *  * `violet`/`purple`/`fuchsia`/`pink` — логистика между магазином и цехом;
+ *  * `teal`/`cyan` — производство;
+ *  * `lime`/`green`/`emerald` — готово к выдаче и выдано (успех);
+ *  * `rose`/`red` — отказы и отмена (неуспех).
+ *
+ * Соседние по смыслу статусы различаются оттенком ВНУТРИ группы, а не группой
+ * целиком: «Готовы к выдаче» и «Выдан» оба зелёные, но разные, — сотрудник
+ * видит и «успех», и конкретный шаг.
+ */
 type Tone =
-  'gray' | 'amber' | 'blue' | 'violet' | 'cyan' | 'green' | 'orange' | 'emerald' | 'red' | 'slate';
+  | 'gray'
+  | 'amber'
+  | 'blue'
+  | 'violet'
+  | 'cyan'
+  | 'green'
+  | 'orange'
+  | 'emerald'
+  | 'red'
+  | 'slate'
+  | 'sky'
+  | 'indigo'
+  | 'yellow'
+  | 'zinc'
+  | 'stone'
+  | 'purple'
+  | 'fuchsia'
+  | 'pink'
+  | 'teal'
+  | 'lime'
+  | 'rose';
 
 /**
  * Классы бейджа по тону.
@@ -23,6 +68,17 @@ const TONES: Record<Tone, string> = {
   emerald: 'bg-emerald-100 text-emerald-800 ring-emerald-200',
   red: 'bg-red-100 text-red-800 ring-red-200',
   slate: 'bg-slate-100 text-slate-700 ring-slate-200',
+  sky: 'bg-sky-100 text-sky-800 ring-sky-200',
+  indigo: 'bg-indigo-100 text-indigo-800 ring-indigo-200',
+  yellow: 'bg-yellow-100 text-yellow-900 ring-yellow-200',
+  zinc: 'bg-zinc-100 text-zinc-800 ring-zinc-200',
+  stone: 'bg-stone-100 text-stone-800 ring-stone-200',
+  purple: 'bg-purple-100 text-purple-800 ring-purple-200',
+  fuchsia: 'bg-fuchsia-100 text-fuchsia-800 ring-fuchsia-200',
+  pink: 'bg-pink-100 text-pink-800 ring-pink-200',
+  teal: 'bg-teal-100 text-teal-900 ring-teal-200',
+  lime: 'bg-lime-100 text-lime-900 ring-lime-200',
+  rose: 'bg-rose-100 text-rose-800 ring-rose-200',
 };
 
 export interface BadgeProps {

@@ -123,27 +123,45 @@ export interface OrderItem {
 }
 
 /**
- * Назначение исполнителя производства (задача 7.2).
+ * Назначение исполнителя производства (задача 7.2) в КАРТОЧКЕ заказа.
+ *
+ * ## Почему связи вложены, а не «разглажены»
+ *
+ * Здесь описана ровно та форма, которую отдаёт `GET /orders/:id`: строки
+ * `OrderAssignment` вместе со связями `performer` и `assignedBy`. Раньше тип
+ * объявлял плоские поля `performerName` и `assignedByName` — так выглядит ответ
+ * МАРШРУТА НАЗНАЧЕНИЯ (`AssignmentsService.findOneAssignment`), но не карточка.
+ * Тип не соответствовал ответу, поэтому TypeScript не поймал ошибку, а в
+ * интерфейсе вместо ФИО ювелира показывалось `undefined`.
+ *
+ * Вложенность сохранена намеренно: она отражает реальный ответ, и подгонять
+ * сервер под удобство клиента здесь не нужно — карточка уже отдаёт так и
+ * изделия, и фотографии.
  *
  * `status` — состояние самой работы, а не заказа: `ASSIGNED` выдан,
  * `IN_PROGRESS` в работе, `DONE` принят менеджером, `RETURNED` отменён
- * (переназначение). Показывать его нужно: по нему интерфейс решает, можно ли
- * принять работу и есть ли у заказа действующий исполнитель.
+ * (переназначение).
  */
 export interface OrderAssignment {
   id: string;
   orderId: string;
   performerId: string;
-  performerName: string;
-  performerSpecialization: string | null;
   assignedById: string;
-  assignedByName: string;
   plannedHours: number | null;
   status: string;
   comment: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
+  /** Исполнитель: ФИО и специализация берутся отсюда. */
+  performer: {
+    id: string;
+    fullName: string;
+    specialization: string | null;
+    grade?: string | null;
+  };
+  /** Кто выдал работу (в истории видно автора, а не только получателя). */
+  assignedBy: { id: string; fullName: string };
 }
 
 /** Исполнитель производства для выбора в карточке заказа. */

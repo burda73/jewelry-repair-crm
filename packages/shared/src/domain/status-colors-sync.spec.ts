@@ -62,7 +62,7 @@ describe('Цвета статусов: домен и компонент бейд
      * совпадать с разметкой, `badgeTones()` вернёт пустой список, и первая
      * проверка провалится по непонятной причине. Здесь это видно прямо.
      */
-    expect(badgeTones().length).toBeGreaterThanOrEqual(9);
+    expect(badgeTones().length).toBeGreaterThanOrEqual(18);
     expect(badgeTones()).toContain('slate');
   });
 
@@ -84,8 +84,44 @@ describe('Цвета статусов: домен и компонент бейд
     expect(STATUS_COLORS.COMPLETED).not.toBe(STATUS_COLORS.REFUSED);
     expect(STATUS_COLORS.COMPLETED).not.toBe(STATUS_COLORS.CANCELLED);
     expect(STATUS_COLORS.READY_FOR_PICKUP).not.toBe(STATUS_COLORS.DRAFT);
-    // Статусы ожидания ожидания клиента делят янтарный намеренно: для сотрудника
-    // это одно состояние — «мяч на стороне клиента».
-    expect(STATUS_COLORS.AWAITING_APPROVAL).toBe(STATUS_COLORS.AWAITING_PREPAYMENT);
+  });
+
+  it('КАЖДЫЙ статус имеет свой тон — разные статусы не выглядят одинаково', () => {
+    /*
+     * ГЛАВНАЯ ПРОВЕРКА требования заказчика: «в списке заказов разные статусы
+     * имеют одинаковый цвет, это неудобно».
+     *
+     * Раньше 18 статусов делили 9 тонов, причём вся производственная группа была
+     * одного цвета `cyan` — по бейджу нельзя было понять, где изделие. Прежний
+     * тест не только не ловил это, но и ЗАКРЕПЛЯЛ совпадение:
+     * `AWAITING_APPROVAL === AWAITING_PREPAYMENT` считалось нормой.
+     *
+     * Проверка по всем статусам, а не по паре «важных»: новый статус, которому
+     * забыли дать оттенок, обязан уронить тест — иначе он снова станет
+     * неотличимым, и никто этого не заметит.
+     */
+    const byTone = new Map<string, string[]>();
+    for (const [status, tone] of Object.entries(STATUS_COLORS)) {
+      byTone.set(tone, [...(byTone.get(tone) ?? []), status]);
+    }
+
+    const collisions = [...byTone.entries()].filter(([, statuses]) => statuses.length > 1);
+    expect(
+      collisions.map(([tone, statuses]) => `${tone}: ${statuses.join(', ')}`),
+      'статусы с одинаковым цветом',
+    ).toEqual([]);
+
+    // И обратная сторона: тонов должно быть ровно столько же, сколько статусов.
+    expect(byTone.size).toBe(Object.keys(STATUS_COLORS).length);
+  });
+
+  it('тона не повторяются и запас словаря не исчерпан', () => {
+    /*
+     * Тонов в компоненте должно быть не меньше, чем различных значений в домене:
+     * иначе следующий статус снова придётся красить повтором. Это проверка
+     * запаса, а не текущего состояния.
+     */
+    const used = new Set(Object.values(STATUS_COLORS));
+    expect(badgeTones().length).toBeGreaterThanOrEqual(used.size);
   });
 });
