@@ -158,6 +158,17 @@ export const PERMISSION = {
   CALC_READ: 'calc:read',
   CALC_EDIT: 'calc:edit',
   CALC_ADJUST: 'calc:adjust',
+  /**
+   * Изменение СОСТАВА работ в заказе: добавить, изменить, удалить строку.
+   *
+   * Отдельное право, а не `calc:adjust`. `calc:adjust` есть у приёмщика и
+   * менеджера производства, и это осознанно: приёмщик фиксирует причину
+   * корректировки по ходу работы. Но менять СОСТАВ — то есть объём и перечень
+   * работ, за которые клиент платит, — заказчик поручил только менеджеру и
+   * администратору. Разница существенна: корректировка меняет сумму строки,
+   * а состав меняет предмет договора.
+   */
+  CALC_COMPOSITION: 'calc:composition',
 
   PRICELIST_READ: 'pricelist:read',
   PRICELIST_EDIT: 'pricelist:edit',
@@ -271,6 +282,7 @@ export const ROLE_PERMISSIONS: Record<RoleCode, readonly Permission[]> = {
     P.ORDER_SEARCH_GLOBAL,
     P.CALC_READ,
     P.CALC_ADJUST,
+    P.CALC_COMPOSITION,
     P.PRICELIST_READ,
     P.PRICELIST_APPROVE,
     P.APPROVAL_READ,

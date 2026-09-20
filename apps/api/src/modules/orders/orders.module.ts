@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
 import { AssignmentsService } from './assignments.service';
+import { OrderWorksService } from './order-works.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import { ReceiptService } from './receipt.service';
 import { PickupSignatureService } from './pickup-signature.service';
@@ -15,6 +16,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
   providers: [
     OrdersService,
     AssignmentsService,
+    OrderWorksService,
     OrderWorkflowService,
     ReceiptService,
     PickupSignatureService,
@@ -22,6 +24,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
   exports: [
     OrdersService,
     AssignmentsService,
+    OrderWorksService,
     OrderWorkflowService,
     ReceiptService,
     PickupSignatureService,

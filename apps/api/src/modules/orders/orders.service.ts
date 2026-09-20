@@ -28,6 +28,8 @@ import {
   ORDER_STATUS,
   OVERDUE_EXCLUDED_STATUSES,
   summaryFromCounts,
+  checkApprovalCoverage,
+  type ApprovalCoverage,
   type OrderStatus,
 } from '@app/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -84,7 +86,14 @@ const ORDER_CARD_INCLUDE = Prisma.validator<Prisma.OrderInclude>()({
     include: { adjustedBy: { select: { fullName: true } } },
   },
   approvals: {
-    orderBy: { createdAt: 'desc' },
+    /*
+     * Порядок ТОТ ЖЕ, что читает guard `APPROVAL_COVERS_TOTAL` (см.
+     * `loadGuardData`). Это не косметика: интерфейс берёт «последнее
+     * согласование» первым элементом списка, и при другом порядке он показал бы
+     * одну сумму, а сервер проверял бы другую — расхождение выглядело бы как
+     * «интерфейс разрешил, а сервер отказал».
+     */
+    orderBy: [{ approvedAt: 'desc' }, { createdAt: 'desc' }],
     include: { createdBy: { select: { fullName: true } }, recordings: true },
   },
   payments: { orderBy: { paidAt: 'desc' } },
@@ -193,6 +202,15 @@ export type OrderCard = Prisma.OrderGetPayload<{ include: typeof ORDER_CARD_INCL
   isOverdue: boolean;
   remainingMinor: number;
   canStartWork: boolean;
+  /**
+   * Покрывает ли согласование текущую сумму заказа.
+   *
+   * Считается ТОЙ ЖЕ доменной функцией, что и guard перехода в работу. Без
+   * этого поля интерфейс повторял бы проверку своими словами и однажды
+   * разошёлся бы с сервером — а расхождение здесь означает либо «кнопка есть,
+   * но не работает», либо «заказ ушёл в работу без согласия клиента».
+   */
+  approvalCoverage: ApprovalCoverage;
   availableTransitions: readonly {
     to: OrderStatus;
     label: string;
@@ -870,6 +888,16 @@ export class OrdersService {
         label: rule.label,
         requiresReason: rule.requiresReason,
       })),
+      /*
+       * Последнее состоявшееся согласование — первое в списке: он отсортирован
+       * так же, как выборка guard'а. Берётся именно последнее, а не «любое
+       * подходящее по сумме»: при возврате к прежней цене подходящее нашлось бы
+       * среди старых, хотя состав работ с тех пор менялся.
+       */
+      approvalCoverage: checkApprovalCoverage(
+        order.approvals.find((approval) => approval.result === 'APPROVED')?.amountMinor ?? null,
+        order.totalAmountMinor,
+      ),
     };
   }
 

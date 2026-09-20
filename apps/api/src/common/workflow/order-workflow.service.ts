@@ -9,6 +9,8 @@ import {
 import {
   checkTransition,
   availableTransitions,
+  checkApprovalCoverage,
+  approvalCoverageMessage,
   ORDER_STATUS,
   computeWarrantyUntil,
   addWorkingDays,
@@ -104,6 +106,14 @@ interface OrderGuardData {
   prepaymentRequiredMinor: number;
   requiresPrepayment: boolean;
   approvalsCount: number;
+  /**
+   * Сумма ПОСЛЕДНЕГО состоявшегося согласования; `null`, если их не было.
+   *
+   * Нужна для `APPROVAL_COVERS_TOTAL`: наличие записи ещё не значит, что
+   * клиент согласен на ТЕКУЩУЮ сумму. После правки состава работ запись
+   * остаётся, а сумма в ней — прежняя.
+   */
+  latestApprovedMinor: number | null;
   hasPickupSignature: boolean;
   refusalActExists: boolean;
   /** Заказ включён в активную (не отменённую) партию. */
@@ -369,7 +379,13 @@ export class OrderWorkflowService {
       include: {
         items: { select: { id: true } },
         works: { select: { id: true, warrantyMonths: true } },
-        approvals: { where: { result: 'APPROVED' }, select: { id: true } },
+        approvals: {
+          where: { result: 'APPROVED' },
+          // Сумма нужна для `APPROVAL_COVERS_TOTAL`, порядок — чтобы взять
+          // именно ПОСЛЕДНЕЕ согласование (см. `checkApprovalCoverage`).
+          select: { id: true, amountMinor: true, approvedAt: true, createdAt: true },
+          orderBy: [{ approvedAt: 'desc' }, { createdAt: 'desc' }],
+        },
         refusalAct: { select: { id: true } },
         claims: { where: { status: { in: ['OPENED', 'IN_REVIEW'] } }, select: { id: true } },
         assignments: {
@@ -413,6 +429,14 @@ export class OrderWorkflowService {
       prepaymentRequiredMinor: order.prepaymentRequiredMinor,
       requiresPrepayment: order.requiresPrepayment,
       approvalsCount: order.approvals.length,
+      /*
+       * Последнее согласование — первое в выборке: она отсортирована по
+       * убыванию. У старых записей `approvedAt` пуст (согласование не
+       * состоялось), поэтому вторым ключом идёт `createdAt` — иначе такие
+       * записи оказались бы то в начале, то в конце, и проверка суммы вела бы
+       * себя непредсказуемо.
+       */
+      latestApprovedMinor: order.approvals[0]?.amountMinor ?? null,
       hasPickupSignature: order.pickupSignatureFileId != null,
       refusalActExists: order.refusalAct != null,
       batchAssigned: batchIsActive,
@@ -555,6 +579,40 @@ export class OrderWorkflowService {
             });
           }
           break;
+
+        case 'APPROVAL_COVERS_TOTAL': {
+          /*
+           * Требование заказчика: без согласования на ТЕКУЩУЮ сумму заказ в
+           * работу не передаётся.
+           *
+           * Проверяются ДВЕ суммы, а не наличие записи. Наличие проверяет
+           * `APPROVAL_EXISTS`, и его одного мало: работы можно дополнить уже
+           * после согласования, запись останется, а согласованная сумма будет
+           * прежней. Заказ ушёл бы в работу с суммой, которую клиент не
+           * подтверждал, и по документам всё выглядело бы согласованным.
+           *
+           * Коды разные намеренно: «согласования нет» и «согласование
+           * устарело» требуют от сотрудника РАЗНЫХ действий — позвонить
+           * клиенту впервые или показать, что изменилось после согласования.
+           * Один код на оба случая заставлял бы гадать.
+           */
+          const coverage = checkApprovalCoverage(order.latestApprovedMinor, order.totalAmountMinor);
+          if (!coverage.ok) {
+            throw new ConflictException({
+              code: coverage.reason === 'MISSING' ? 'APPROVAL_MISSING' : 'APPROVAL_STALE',
+              message: approvalCoverageMessage(coverage),
+              details:
+                coverage.reason === 'STALE'
+                  ? {
+                      approvedMinor: coverage.approvedMinor,
+                      totalMinor: coverage.totalMinor,
+                      differenceMinor: coverage.totalMinor - coverage.approvedMinor,
+                    }
+                  : { totalMinor: order.totalAmountMinor },
+            });
+          }
+          break;
+        }
 
         case 'PAID_IN_FULL':
           // ТЗ п. 2.8: условие выдачи — полная оплата.

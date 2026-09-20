@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   Controller,
+  Delete,
   Get,
+  Patch,
   Post,
   Param,
   Query,
@@ -18,6 +20,7 @@ import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiCookieAuth, ApiQuery, ApiConsumes } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { AssignmentsService } from './assignments.service';
+import { OrderWorksService } from './order-works.service';
 import type { OrderAssignmentDto } from './assignments.service';
 import { PickupSignatureService } from './pickup-signature.service';
 import { ReceiptService } from './receipt.service';
@@ -64,6 +67,7 @@ export class OrdersController {
   constructor(
     private readonly ordersService: OrdersService,
     private readonly assignmentsService: AssignmentsService,
+    private readonly orderWorksService: OrderWorksService,
     private readonly workflow: OrderWorkflowService,
     private readonly receiptService: ReceiptService,
     private readonly pickupSignature: PickupSignatureService,
@@ -348,6 +352,57 @@ export class OrdersController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<OrderCard> {
     return this.ordersService.createAdjustment(id, body, user);
+  }
+
+  /**
+   * Добавить работу в заказ (требование заказчика).
+   *
+   * Право `calc:composition`, а не `calc:adjust`: состав работ — это предмет
+   * договора с клиентом, и менять его заказчик поручил только менеджеру и
+   * администратору. Приёмщик и менеджер производства корректируют суммы
+   * (`calc:adjust`), но перечень работ не переписывают.
+   */
+  @Post(':id/works')
+  @RequirePermission(PERMISSION.CALC_COMPOSITION)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Добавить работу в заказ' })
+  async addWork(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderCard> {
+    await this.orderWorksService.add(id, body, user);
+    // Карточка целиком: интерфейс обновляет суммы и состав из одного ответа и
+    // не склеивает их из двух источников.
+    return this.ordersService.findOne(id, user);
+  }
+
+  /** Изменить работу: количество, цену, название, гарантию. */
+  @Patch(':id/works/:workId')
+  @RequirePermission(PERMISSION.CALC_COMPOSITION)
+  @ApiOperation({ summary: 'Изменить работу в заказе' })
+  async updateWork(
+    @Param('id') id: string,
+    @Param('workId') workId: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderCard> {
+    await this.orderWorksService.update(id, workId, body, user);
+    return this.ordersService.findOne(id, user);
+  }
+
+  /** Удалить работу из заказа. Причина обязательна. */
+  @Delete(':id/works/:workId')
+  @RequirePermission(PERMISSION.CALC_COMPOSITION)
+  @ApiOperation({ summary: 'Удалить работу из заказа' })
+  async removeWork(
+    @Param('id') id: string,
+    @Param('workId') workId: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderCard> {
+    await this.orderWorksService.remove(id, workId, body, user);
+    return this.ordersService.findOne(id, user);
   }
 
   /**

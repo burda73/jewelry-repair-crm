@@ -1,4 +1,4 @@
-import type { OrderStatus } from '@app/shared';
+import type { ApprovalCoverage, OrderStatus } from '@app/shared';
 
 /**
  * Типы ответов API для фронтенда.
@@ -120,6 +120,40 @@ export interface OrderItem {
   inventoryNo: string | null;
   /** Фотографии изделия — приходят вместе с карточкой заказа. */
   photos: ItemPhotoView[];
+}
+
+/**
+ * Назначение исполнителя производства (задача 7.2).
+ *
+ * `status` — состояние самой работы, а не заказа: `ASSIGNED` выдан,
+ * `IN_PROGRESS` в работе, `DONE` принят менеджером, `RETURNED` отменён
+ * (переназначение). Показывать его нужно: по нему интерфейс решает, можно ли
+ * принять работу и есть ли у заказа действующий исполнитель.
+ */
+export interface OrderAssignment {
+  id: string;
+  orderId: string;
+  performerId: string;
+  performerName: string;
+  performerSpecialization: string | null;
+  assignedById: string;
+  assignedByName: string;
+  plannedHours: number | null;
+  status: string;
+  comment: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+}
+
+/** Исполнитель производства для выбора в карточке заказа. */
+export interface PerformerOption {
+  id: string;
+  fullName: string;
+  specialization: string | null;
+  grade: string | null;
+  isActive: boolean;
+  workshop: { id: string; code: string; name: string };
 }
 
 export interface OrderWork {
@@ -296,6 +330,24 @@ export interface OrderDetail {
   approvals: OrderApproval[];
   adjustments: OrderAdjustment[];
   statusHistory: OrderStatusHistoryEntry[];
+  /**
+   * Назначения исполнителей.
+   *
+   * Нужны интерфейсу, чтобы показать, кому выдана работа, и не предлагать
+   * выдать её повторно. Раньше поле не приходило, хотя сервер его отдавал:
+   * из-за этого экран не мог показать исполнителя, и заказчик сообщил, что
+   * «указать исполнителя нельзя».
+   */
+  assignments: OrderAssignment[];
+  /**
+   * Покрывает ли согласование текущую сумму заказа.
+   *
+   * Приходит с сервера, а не считается здесь: проверку выполняет та же
+   * доменная функция, что и guard перехода в работу. Своя копия проверки в
+   * интерфейсе однажды разошлась бы с сервером, и кнопка либо не работала бы,
+   * либо, что хуже, обещала бы успех там, где сервер откажет.
+   */
+  approvalCoverage: ApprovalCoverage;
   /**
    * Акт отказа от оплаты (ТЗ п. 2.8, задача 7.5).
    *

@@ -227,6 +227,61 @@ export const updateOrderSchema = z.object({
   productionManagerId: z.string().cuid().optional(),
 });
 
+// ---------------------------------------------------------------------------
+// Состав работ заказа (требование заказчика)
+// ---------------------------------------------------------------------------
+
+/**
+ * Добавить работу в существующий заказ.
+ *
+ * Отличается от `orderWorkSchema` намеренно, и это не дублирование:
+ *
+ * * нет `itemIndex` — изделие выбирается идентификатором `itemId`, потому что
+ *   в карточке заказа изделия уже созданы и их порядок сотруднику не виден;
+ * * `unitPriceMinor` необязателен. Если работа берётся из прейскуранта, цену
+ *   обязан подставить СЕРВЕР по актуальной ставке и металлу изделия. Принять
+ *   цену из браузера значило бы позволить назначить её произвольно, минуя
+ *   прейскурант, — а он для того и нужен, чтобы цены не выдумывались на месте.
+ */
+export const addOrderWorkSchema = z.object({
+  itemId: z.string().cuid().optional(),
+  priceListItemId: z.string().cuid().optional(),
+  code: z.string().min(1).max(50).optional(),
+  name: z.string().min(2, 'Укажите название работы').max(200).optional(),
+  quantity: z.number().positive('Количество должно быть больше нуля').max(10_000).default(1),
+  unit: z.string().max(20).optional(),
+  /** Цена для НЕТИПОВОЙ работы; для позиции прейскуранта её считает сервер. */
+  unitPriceMinor: minorAmountSchema.optional(),
+  durationHours: z.number().int().min(0).max(1000).optional(),
+  warrantyMonths: z.number().int().min(0).max(60).default(6),
+  isCustom: z.boolean().default(false),
+  comment: z.string().max(1000).optional(),
+});
+
+/**
+ * Изменить работу в заказе.
+ *
+ * Все поля необязательны: правят то, что изменилось. `version` обязателен —
+ * оптимистичная блокировка, как и у остальных правок заказа: без неё двое
+ * сотрудников затрут правки друг друга молча.
+ */
+export const updateOrderWorkSchema = z.object({
+  version: z.number().int().nonnegative(),
+  quantity: z.number().positive('Количество должно быть больше нуля').max(10_000).optional(),
+  unitPriceMinor: minorAmountSchema.optional(),
+  name: z.string().min(2, 'Укажите название работы').max(200).optional(),
+  unit: z.string().max(20).optional(),
+  durationHours: z.number().int().min(0).max(1000).optional(),
+  warrantyMonths: z.number().int().min(0).max(60).optional(),
+  comment: z.string().max(1000).optional(),
+});
+
+/** Удалить работу из заказа. Причина обязательна: это изменение суммы. */
+export const removeOrderWorkSchema = z.object({
+  version: z.number().int().nonnegative(),
+  reason: z.string().min(3, 'Укажите причину удаления работы').max(1000),
+});
+
 /** Переход статуса (ТЗ п. 2.7: сроки и эскалации). */
 export const transitionSchema = z.object({
   to: z.enum(Object.values(ORDER_STATUS) as [string, ...string[]]),
@@ -1018,6 +1073,9 @@ export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;
 export type TransitionInput = z.infer<typeof transitionSchema>;
 export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
+export type AddOrderWorkInput = z.infer<typeof addOrderWorkSchema>;
+export type UpdateOrderWorkInput = z.infer<typeof updateOrderWorkSchema>;
+export type RemoveOrderWorkInput = z.infer<typeof removeOrderWorkSchema>;
 export type ApprovalInput = z.infer<typeof approvalSchema>;
 export type PaymentInput = z.infer<typeof paymentSchema>;
 export type CreateBatchInput = z.infer<typeof createBatchSchema>;

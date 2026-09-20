@@ -64,6 +64,34 @@ GET /orders?status=IN_WORK&status=WORK_COMPLETED  ← так сериализу�
 списком заказов: человек просил отфильтровать, получил всё и решил бы, что фильтр
 не работает. Пустой параметр (`?status=`) — это отсутствие фильтра, а не ошибка.
 
+### 1.2.2. Согласование и изменение стоимости
+
+Согласование — договорённость о СУММЕ, поэтому проверяется совпадение сумм, а не
+наличие записи. Карточка заказа отдаёт результат проверки:
+
+```json
+{ "approvalCoverage": { "ok": false, "reason": "STALE", "approvedMinor": 100000, "totalMinor": 170000 } }
+```
+
+`reason`: `MISSING` — согласования не было; `STALE` — было, но на другую сумму.
+При `ok: false` выдача работы исполнителю (переход 23) отклоняется:
+
+```json
+{
+  "code": "APPROVAL_STALE",
+  "message": "Согласование устарело: сумма заказа изменилась после согласования. Получите согласие клиента на новую сумму",
+  "details": { "approvedMinor": 100000, "totalMinor": 170000, "differenceMinor": 70000 }
+}
+```
+
+Сравнение строгое в обе стороны: удешевление тоже требует нового согласования.
+Берётся ПОСЛЕДНЕЕ согласование (`approvedAt desc, createdAt desc`), а не «любое
+подходящее по сумме».
+
+> **Дефект 71 (исправлен).** Прежде проверялось только наличие записи
+> `Approval`. После правки состава работ запись оставалась, сумма в ней — прежней,
+> и заказ уходил в работу по цене, которую клиент не подтверждал.
+
 > **Дефект 69 (исправлен).** Прежде значение оборачивалось в массив как есть, и
 > `?status=A,B` уезжало в базу одним значением `"A,B"`: Prisma отвечала `Invalid
 > value for argument 'in'`, и список заказов возвращал **500**. Неизвестный статус
@@ -135,6 +163,11 @@ GET /orders?status=IN_WORK&status=WORK_COMPLETED  ← так сериализу�
 | GET | `/orders/search` | **Глобальный** поиск по номеру/телефону/ФИО | все |
 | GET | `/orders/:id/history` | История статусов | по scope |
 | GET | `/orders/:id/timeline` | Единая лента: статусы + платежи + согласования | по scope |
+| POST | `/orders/:id/works` | Добавить работу в заказ | `calc:composition` |
+| PATCH | `/orders/:id/works/:workId` | Изменить работу | `calc:composition` |
+| DELETE | `/orders/:id/works/:workId` | Удалить работу (причина обязательна) | `calc:composition` |
+| POST | `/orders/:id/assignments` | Выдать работу исполнителю | `production:manage` |
+| POST | `/orders/:id/assignments/:assignmentId/finish` | Принять работу у исполнителя | `production:manage` |
 | POST | `/orders/:id/transition` | Переход статуса | по таблице переходов |
 | GET | `/orders/:id/available-transitions` | Какие переходы доступны текущему пользователю | по scope |
 | POST | `/orders/:id/cancel` | Отмена (причина обязательна) | RECEIVER, PRODUCTION_MANAGER, MANAGER, ADMIN |

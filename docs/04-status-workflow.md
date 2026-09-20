@@ -56,7 +56,7 @@
 | 20 | `READY_FOR_PICKUP` | `REFUSED` | RECEIVER, MANAGER, ADMIN | Есть `RefusalAct` | Изделие на ответном хранении |
 | 21 | `UNCLAIMED` | `COMPLETED` | RECEIVER, CASHIER, ADMIN | `paidAmount >= totalAmount` | `completedAt` |
 | 22 | `UNCLAIMED` | `REFUSED` | MANAGER, ADMIN | Есть `RefusalAct` | — |
-| 23 | `ACCEPTED_BY_WORKSHOP` | `IN_WORK` | PRODUCTION_MANAGER | Назначен исполнитель (`OrderAssignment`) | Запись в историю: ФИО исполнителя |
+| 23 | `ACCEPTED_BY_WORKSHOP` | `IN_WORK` | PRODUCTION_MANAGER | Назначен исполнитель (`OrderAssignment`); согласование покрывает текущую сумму заказа | Запись в историю: ФИО исполнителя |
 | 24 | `IN_WORK` | `WORK_COMPLETED` | PRODUCTION_MANAGER | Работа принята менеджером | `productionFinishedAt` |
 | 25 | `WORK_COMPLETED` | `IN_TRANSIT_TO_STORE` | PRODUCTION_MANAGER | — | `dueAt` по нормативу доставки |
 | 26 | `ACCEPTED_BY_WORKSHOP` | `IN_TRANSIT_TO_STORE` | PRODUCTION_MANAGER | Причина обязательна | Возврат **без работ** (отказ клиента); отметка `returnedWithoutWorkAt`; `dueAt` |

@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation';
 import * as Tabs from '@radix-ui/react-tabs';
 import { ArrowLeft, AlertTriangle, Printer } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-import { useOrder, useOrderTimeline, usePrintReceipt } from '@/lib/queries';
+import { useFinishAssignment, useOrder, useOrderTimeline, usePrintReceipt } from '@/lib/queries';
 import {
   formatDate,
   formatDateTime,
@@ -24,9 +24,11 @@ import { TransitionDialog } from '@/components/orders/transition-dialog';
 import { PaymentDialog } from '@/components/orders/payment-dialog';
 import { ApprovalDialog } from '@/components/orders/approval-dialog';
 import { AdjustmentDialog } from '@/components/orders/adjustment-dialog';
+import { AssignPerformerDialog } from '@/components/orders/assign-performer-dialog';
+import { WorksEditor } from '@/components/orders/works-editor';
 import { ItemPhotos } from '@/components/orders/item-photos';
 import { t, PRIORITY_LABELS } from '@/lib/i18n';
-import { describeDiscount } from '@app/shared';
+import { describeDiscount, isWorksEditable } from '@app/shared';
 import { cn } from '@/lib/utils';
 
 /** Пара «подпись — значение» для блоков карточки. */
@@ -47,10 +49,13 @@ export default function OrderDetailPage(): ReactNode {
   const order = useOrder(id);
   const timeline = useOrderTimeline(id);
   const printReceipt = usePrintReceipt();
+  const finishAssignment = useFinishAssignment();
   const [transitionOpen, setTransitionOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [worksOpen, setWorksOpen] = useState(false);
 
   if (order.isLoading) {
     return <p className="py-12 text-center text-sm text-slate-500">{t.common.loading}</p>;
@@ -112,6 +117,29 @@ export default function OrderDetailPage(): ReactNode {
   // доказательств уже поздно — это подрывало бы смысл фотофиксации.
   const canEdit = can('order:update') && !isFinal;
   const canAdjust = can('calc:adjust') && !isFinal;
+
+  /*
+   * Выдача работы исполнителю. Статус берём из доступных переходов, а не
+   * сравниваем с `ACCEPTED_BY_WORKSHOP` вручную: список переходов приходит с
+   * сервера из той же таблицы, что охраняет действие. Сравнение со статусом
+   * разошлось бы с таблицей при первой же правке статусной модели.
+   */
+  const canAssign =
+    can('production:manage') &&
+    data.availableTransitions.some((transition) => transition.to === 'IN_WORK');
+
+  /** Действующий исполнитель: последнее незакрытое назначение. */
+  const activeAssignment = [...data.assignments]
+    .reverse()
+    .find((assignment) => assignment.status === 'ASSIGNED' || assignment.status === 'IN_PROGRESS');
+
+  /*
+   * Граница правки берётся из ДОМЕНА, а не выписывается здесь списком статусов.
+   * Своя копия разошлась бы с сервером при первой же правке правила — и
+   * разошлась бы молча: кнопка появлялась бы там, где сервер отвечает отказом,
+   * или, что хуже, исчезала бы там, где правка разрешена.
+   */
+  const canEditWorks = can('calc:composition') && isWorksEditable(data.status) && !isFinal;
 
   /** Строки калькуляции для выбора цели корректировки. */
   const workRows = data.works.map((work) => ({
@@ -205,6 +233,11 @@ export default function OrderDetailPage(): ReactNode {
           {canAdjust ? (
             <Button variant="secondary" onClick={() => setAdjustmentOpen(true)}>
               Корректировка
+            </Button>
+          ) : null}
+          {canAssign ? (
+            <Button variant="secondary" onClick={() => setAssignOpen(true)}>
+              Выдать работу исполнителю
             </Button>
           ) : null}
           {/*
@@ -356,8 +389,81 @@ export default function OrderDetailPage(): ReactNode {
                   <Row label={t.order.workshop} value={data.workshop?.name ?? '—'} />
                   <Row label={t.order.createdBy} value={data.createdBy?.fullName ?? '—'} />
                   <Row label="Принят" value={formatDateTime(data.acceptedAt ?? data.createdAt)} />
+                  {/*
+                    Исполнитель показывается отдельной строкой: заказчик
+                    потребовал видеть, какой ювелир выполняет работу. Без этого
+                    блока выданную работу нельзя было увидеть в карточке — её не
+                    было видно и в интерфейсе, и в глаза это выглядело как
+                    «исполнителя указать нельзя».
+                  */}
+                  {activeAssignment !== undefined ? (
+                    <Row
+                      label="Исполнитель"
+                      value={
+                        <>
+                          {activeAssignment.performerName}
+                          {activeAssignment.performerSpecialization !== null
+                            ? ` · ${activeAssignment.performerSpecialization}`
+                            : ''}
+                        </>
+                      }
+                    />
+                  ) : null}
                 </dl>
+
+                {activeAssignment !== undefined ? (
+                  <div className="mt-2 border-t border-slate-100 pt-2">
+                    <p className="text-xs text-slate-500">
+                      Работа выдана {formatDateTime(activeAssignment.createdAt)}
+                      {activeAssignment.assignedByName !== ''
+                        ? ` · ${activeAssignment.assignedByName}`
+                        : ''}
+                      {activeAssignment.plannedHours !== null
+                        ? ` · план ${String(activeAssignment.plannedHours)} ч`
+                        : ''}
+                    </p>
+                    {activeAssignment.comment !== null ? (
+                      <p className="mt-1 text-xs text-slate-500">{activeAssignment.comment}</p>
+                    ) : null}
+                    {/*
+                      Приёмка работы — отдельное действие менеджера (ТЗ п. 2.7):
+                      одного «я закончил» от ювелира недостаточно, иначе в магазин
+                      уедет изделие, которое никто не проверял.
+                    */}
+                    {canAssign && activeAssignment.status !== 'DONE' ? (
+                      <Button
+                        variant="secondary"
+                        className="mt-2"
+                        onClick={() =>
+                          finishAssignment.mutate({
+                            orderId: data.id,
+                            assignmentId: activeAssignment.id,
+                          })
+                        }
+                        disabled={finishAssignment.isPending}
+                      >
+                        {finishAssignment.isPending ? 'Приёмка…' : 'Принять работу'}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
+
+              {/*
+                Предупреждение о согласовании видно и без открытия диалога выдачи:
+                иначе менеджер нажимает «Выдать работу» и только там узнаёт, что
+                сначала нужно согласие клиента.
+              */}
+              {!data.approvalCoverage.ok ? (
+                <p className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    {data.approvalCoverage.reason === 'MISSING'
+                      ? 'Согласование с клиентом отсутствует — заказ нельзя передать в работу.'
+                      : `Согласование устарело: клиент подтвердил ${formatMinorExact(data.approvalCoverage.approvedMinor)}, сейчас в заказе ${formatMinorExact(data.approvalCoverage.totalMinor)}.`}
+                  </span>
+                </p>
+              ) : null}
 
               {data.diagnosis !== null ? (
                 <>
@@ -374,6 +480,13 @@ export default function OrderDetailPage(): ReactNode {
         </Tabs.Content>
 
         <Tabs.Content value="calc" className="p-4 focus:outline-none">
+          {canEditWorks ? (
+            <div className="mb-3 flex justify-end">
+              <Button variant="secondary" onClick={() => setWorksOpen(true)}>
+                Изменить виды работ
+              </Button>
+            </div>
+          ) : null}
           {data.works.length === 0 && data.stones.length === 0 ? (
             <EmptyState title={t.order.calcEmpty} />
           ) : (
@@ -401,7 +514,13 @@ export default function OrderDetailPage(): ReactNode {
                         {formatMinorExact(work.unitPriceMinor)}
                       </td>
                       <td className="px-3 py-2 text-right font-medium tabular-nums">
-                        {formatMinorExact(work.unitPriceMinor * Math.round(Number(work.quantity)))}
+                        {/*
+                          Показываем ХРАНИМУЮ сумму строки, а не произведение цены
+                          на количество. После корректировки (`calc:adjust`) меняется
+                          именно `amountMinor`, поэтому пересчёт «на месте» показал бы
+                          в таблице одну сумму, а в итоге заказа — другую.
+                        */}
+                        {formatMinorExact(work.amountMinor)}
                       </td>
                     </tr>
                   ))}
@@ -511,6 +630,10 @@ export default function OrderDetailPage(): ReactNode {
       <PaymentDialog open={paymentOpen} onOpenChange={setPaymentOpen} order={data} />
 
       <ApprovalDialog open={approvalOpen} onOpenChange={setApprovalOpen} order={data} />
+
+      <AssignPerformerDialog open={assignOpen} onOpenChange={setAssignOpen} order={data} />
+
+      <WorksEditor open={worksOpen} onOpenChange={setWorksOpen} order={data} />
 
       <AdjustmentDialog
         open={adjustmentOpen}

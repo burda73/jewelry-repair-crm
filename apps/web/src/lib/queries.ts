@@ -28,6 +28,7 @@ import type {
   CustomerDetail,
   CustomerSearchItem,
   PaymentResult,
+  PerformerOption,
   PriceListItemEditorInput,
   PriceListItemOption,
   PriceListVersionDetail,
@@ -1435,5 +1436,147 @@ export function useUploadPickupSignature(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: orderKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
     },
+  });
+}
+
+/** Добавляемая работа: либо позиция прейскуранта, либо нетиповая с ценой. */
+export interface OrderWorkInput {
+  itemId?: string;
+  priceListItemId?: string;
+  code?: string;
+  name?: string;
+  quantity?: number;
+  unit?: string;
+  unitPriceMinor?: number;
+  durationHours?: number;
+  warrantyMonths?: number;
+  isCustom?: boolean;
+  comment?: string;
+}
+
+/** Правка существующей работы. `version` — оптимистичная блокировка. */
+export interface OrderWorkPatchInput {
+  version: number;
+  quantity?: number;
+  unitPriceMinor?: number;
+  name?: string;
+  unit?: string;
+  durationHours?: number;
+  warrantyMonths?: number;
+  comment?: string;
+}
+
+/**
+ * Исполнители производства для выбора в карточке заказа.
+ *
+ * Только активные: архивный исполнитель в списке выбора — это возможность
+ * выдать работу человеку, который её не выполнит, и узнать об этом постфактум.
+ * Фильтр по цеху задаётся, когда цех заказа известен: подсказывать ювелира из
+ * другого цеха бессмысленно — изделие физически не там.
+ */
+export function usePerformers(workshopId?: string): UseQueryResult<PerformerOption[], Error> {
+  return useQuery<PerformerOption[], Error>({
+    queryKey: ['dictionaries', 'performers', workshopId ?? 'all'],
+    queryFn: () =>
+      api.get<PerformerOption[]>(
+        `/performers?isActive=true${workshopId !== undefined && workshopId !== '' ? `&workshopId=${encodeURIComponent(workshopId)}` : ''}`,
+      ),
+    staleTime: DICTIONARY_STALE_TIME,
+  });
+}
+
+/**
+ * Выдать работу исполнителю (задача 7.2).
+ *
+ * Ответ — карточка заказа целиком: назначение меняет и статус, и список
+ * назначений, и доступные переходы. Собирать новое состояние из ответа
+ * назначения значило бы оставить в карточке устаревший статус.
+ */
+export function useAssignPerformer(): UseMutationResult<
+  OrderDetail,
+  Error,
+  { orderId: string; performerId: string; plannedHours?: number; comment?: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (variables) =>
+      api.post<OrderDetail>(`/orders/${variables.orderId}/assignments`, {
+        performerId: variables.performerId,
+        plannedHours: variables.plannedHours,
+        comment: variables.comment,
+      }),
+    onSuccess: (order) => queryClient.setQueryData(orderKeys.detail(order.id), order),
+  });
+}
+
+/** Принять работу у исполнителя: назначение закрывается, заказ идёт дальше. */
+export function useFinishAssignment(): UseMutationResult<
+  OrderDetail,
+  Error,
+  { orderId: string; assignmentId: string; comment?: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (variables) =>
+      api.post<OrderDetail>(
+        `/orders/${variables.orderId}/assignments/${variables.assignmentId}/finish`,
+        { comment: variables.comment },
+      ),
+    onSuccess: (order) => queryClient.setQueryData(orderKeys.detail(order.id), order),
+  });
+}
+
+/**
+ * Добавить работу в заказ (требование заказчика).
+ *
+ * Сервер возвращает карточку целиком, и это важно: правка состава меняет итог
+ * заказа, а вместе с ним — состояние согласования. Обновлять только список
+ * работ значило бы показать старую сумму и не предупредить, что согласование
+ * придётся получать заново.
+ */
+export function useAddOrderWork(): UseMutationResult<
+  OrderDetail,
+  Error,
+  { orderId: string; input: OrderWorkInput }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (variables) =>
+      api.post<OrderDetail>(`/orders/${variables.orderId}/works`, variables.input),
+    onSuccess: (order) => queryClient.setQueryData(orderKeys.detail(order.id), order),
+  });
+}
+
+/** Изменить работу: количество, цену, название, гарантию. */
+export function useUpdateOrderWork(): UseMutationResult<
+  OrderDetail,
+  Error,
+  { orderId: string; workId: string; input: OrderWorkPatchInput }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (variables) =>
+      api.patch<OrderDetail>(
+        `/orders/${variables.orderId}/works/${variables.workId}`,
+        variables.input,
+      ),
+    onSuccess: (order) => queryClient.setQueryData(orderKeys.detail(order.id), order),
+  });
+}
+
+/** Удалить работу из заказа. Причина обязательна: это изменение суммы. */
+export function useRemoveOrderWork(): UseMutationResult<
+  OrderDetail,
+  Error,
+  { orderId: string; workId: string; version: number; reason: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (variables) =>
+      api.delete<OrderDetail>(`/orders/${variables.orderId}/works/${variables.workId}`, {
+        version: variables.version,
+        reason: variables.reason,
+      }),
+    onSuccess: (order) => queryClient.setQueryData(orderKeys.detail(order.id), order),
   });
 }

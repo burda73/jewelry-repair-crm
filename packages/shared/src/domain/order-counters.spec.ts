@@ -7,7 +7,15 @@ import {
   IN_TRANSIT_STATUSES,
   type DashboardCounterKey,
 } from './order-counters.js';
-import { ORDER_STATUS, IN_PRODUCTION_STATUSES, type OrderStatus } from './order-status.js';
+import { ORDER_TRANSITIONS } from './order-transitions.js';
+import {
+  ORDER_STATUS,
+  IN_PRODUCTION_STATUSES,
+  ALL_ORDER_STATUSES,
+  STATUS_STAGE,
+  isWorksEditable,
+  type OrderStatus,
+} from './order-status.js';
 
 /** Собрать карту статусов из пар «статус → число». */
 function counts(pairs: Partial<Record<OrderStatus, number>>): Map<OrderStatus, number> {
@@ -267,5 +275,115 @@ describe('Счётчики дашборда: набор исключений п�
     const transit = new Set<string>(IN_TRANSIT_STATUSES);
     const production = new Set<string>(IN_PRODUCTION_STATUSES);
     expect([...transit].filter((s) => production.has(s))).toEqual([]);
+  });
+});
+
+/**
+ * Граница правки состава работ (требование заказчика).
+ *
+ * Работы правятся, пока изделие не выдано исполнителю. Последний такой статус —
+ * `ACCEPTED_BY_WORKSHOP`: менеджер цеха принимает изделие и может дополнить
+ * объём, если при осмотре нашёлся скрытый дефект.
+ *
+ * ЗДЕСЬ БЫЛА ОШИБКА, и тест её фиксирует. Первая версия правила выводила
+ * границу из этапов (`INTAKE`, `APPROVAL`, `PREPAYMENT`), а
+ * `ACCEPTED_BY_WORKSHOP` относится к этапу `PRODUCTION` — поэтому правка
+ * запрещалась ровно в том статусе, где она нужна, и требование «меняй работы,
+ * но получи согласование» становилось невыполнимым: раньше работы менять
+ * поздно, позже — они уже выполняются.
+ */
+describe('Граница правки состава работ', () => {
+  it('на этапе приёма и согласования работы правятся', () => {
+    for (const status of [
+      ORDER_STATUS.DRAFT,
+      ORDER_STATUS.AWAITING_APPROVAL,
+      ORDER_STATUS.AWAITING_PREPAYMENT,
+      ORDER_STATUS.ACCEPTED,
+    ] as const) {
+      expect(isWorksEditable(status), `статус ${status}`).toBe(true);
+    }
+  });
+
+  it('в ЦЕХЕ работы правятся, пока не выданы исполнителю', () => {
+    /*
+     * Главная проверка границы и исправление ошибки. `ACCEPTED_BY_WORKSHOP` —
+     * последний статус, где правка ещё возможна: именно здесь менеджер цеха
+     * видит изделие и понимает, что объём неполон.
+     */
+    for (const status of [
+      ORDER_STATUS.QUEUED_FOR_DISPATCH,
+      ORDER_STATUS.IN_TRANSIT_TO_PRODUCTION,
+      ORDER_STATUS.IN_PRODUCTION,
+      ORDER_STATUS.ACCEPTED_BY_WORKSHOP,
+    ] as const) {
+      expect(isWorksEditable(status), `статус ${status}`).toBe(true);
+    }
+  });
+
+  it('после выдачи исполнителю работы НЕ правятся', () => {
+    // С `IN_WORK` ювелир работает по конкретному перечню: правка задним числом
+    // означала бы, что заказ описывает не то, что выполняли.
+    for (const status of [
+      ORDER_STATUS.IN_WORK,
+      ORDER_STATUS.WORK_COMPLETED,
+      ORDER_STATUS.IN_TRANSIT_TO_STORE,
+      ORDER_STATUS.READY_FOR_PICKUP,
+      ORDER_STATUS.UNCLAIMED,
+      ORDER_STATUS.REWORK,
+    ] as const) {
+      expect(isWorksEditable(status), `статус ${status}`).toBe(false);
+    }
+  });
+
+  it('закрытые заказы не правятся', () => {
+    for (const status of [
+      ORDER_STATUS.COMPLETED,
+      ORDER_STATUS.REFUSED,
+      ORDER_STATUS.REFUSED_BEFORE_WORK,
+      ORDER_STATUS.CANCELLED,
+    ] as const) {
+      expect(isWorksEditable(status), `статус ${status}`).toBe(false);
+    }
+  });
+
+  it('граница проходит по статусу, а не по этапу', () => {
+    /*
+     * Регрессия на конкретную ошибку: `ACCEPTED_BY_WORKSHOP` относится к этапу
+     * PRODUCTION, но правка в нём РАЗРЕШЕНА. Если кто-то снова выведет правило
+     * из этапов, тест упадёт — и это правильно, потому что этап описывает, где
+     * находится изделие, а не когда зафиксирован объём работ.
+     */
+    expect(STATUS_STAGE[ORDER_STATUS.ACCEPTED_BY_WORKSHOP]).toBe('PRODUCTION');
+    expect(isWorksEditable(ORDER_STATUS.ACCEPTED_BY_WORKSHOP)).toBe(true);
+
+    // И обратная сторона: соседний статус того же этапа уже закрыт.
+    expect(STATUS_STAGE[ORDER_STATUS.IN_WORK]).toBe('PRODUCTION');
+    expect(isWorksEditable(ORDER_STATUS.IN_WORK)).toBe(false);
+  });
+
+  it('статус, из которого выдаётся работа, ещё открыт для правки', () => {
+    /*
+     * Связь с таблицей переходов: работа выдаётся переходом в `IN_WORK`, и
+     * статус-источник этого перехода обязан быть открыт для правки. Иначе
+     * требование «измени работы и получи согласование, прежде чем выдавать»
+     * снова стало бы невыполнимым.
+     */
+    const sourceStatuses = ORDER_TRANSITIONS.filter((rule) => rule.to === ORDER_STATUS.IN_WORK).map(
+      (rule) => rule.from,
+    );
+
+    expect(sourceStatuses.length).toBeGreaterThan(0);
+    for (const status of sourceStatuses) {
+      if (status === null) continue;
+      expect(isWorksEditable(status), `источник выдачи ${status} должен быть открыт`).toBe(true);
+    }
+  });
+
+  it('каждый статус получает определённый ответ', () => {
+    // Ни один статус не должен «выпасть» из правила: undefined в проверке права
+    // означал бы, что кнопка правки показывается по случайности.
+    for (const status of ALL_ORDER_STATUSES) {
+      expect(typeof isWorksEditable(status), `статус ${status}`).toBe('boolean');
+    }
   });
 });

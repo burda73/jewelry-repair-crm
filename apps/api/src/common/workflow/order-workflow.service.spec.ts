@@ -1022,3 +1022,181 @@ describe('Срок гарантии по умолчанию из настрой�
     expect(monthsBetween(new Date(), captured()?.warrantyUntil as Date)).toBe(6);
   });
 });
+
+/**
+ * Согласование должно покрывать ТЕКУЩУЮ сумму (требование заказчика).
+ *
+ * РЕАЛЬНЫЙ ДЕФЕКТ, который здесь закрывается. Guard `APPROVAL_EXISTS` смотрел
+ * только наличие записи `Approval` со статусом `APPROVED`. Если после
+ * согласования дополнить состав работ, `totalAmountMinor` менялся, а запись
+ * оставалась — и заказ уходил в работу по цене, которую клиент не подтверждал.
+ * Снаружи всё выглядело согласованным: запись есть, дата есть, сумма в записи
+ * (другая) есть.
+ *
+ * ПОЧЕМУ ДЕФЕКТ НЕ БЫЛ ВИДЕН. Пока состав работ не правят после согласования,
+ * обе проверки дают один результат. Расхождение появляется только на заказе,
+ * который согласовали, а потом изменили, — а такого сценария в тестах не было.
+ */
+describe('Согласование покрывает текущую сумму заказа (дефект 71)', () => {
+  function makeService(approvals: Array<{ id: string; amountMinor: number }>, total: number) {
+    const order = {
+      id: 'o-1',
+      status: 'ACCEPTED_BY_WORKSHOP',
+      version: 1,
+      worksTotalMinor: total,
+      stonesTotalMinor: 0,
+      discountMinor: 0,
+      totalAmountMinor: total,
+      prepaymentRequiredMinor: 0,
+      requiresPrepayment: false,
+      paidAmountMinor: 0,
+      warrantyMonths: 12,
+      complexity: 'SIMPLE',
+      // Срок назначен: без него переход упёрся бы в расчёт норматива, и тест
+      // проверял бы не то, что нужно.
+      dueAt: new Date('2027-09-20T12:00:00Z'),
+      readyAt: null,
+      items: [{ id: 'i-1' }],
+      works: [{ id: 'w-1', warrantyMonths: 12 }],
+      approvals,
+      refusalAct: null,
+      claims: [],
+      batchItems: [],
+      // Исполнитель назначен: иначе переход не дошёл бы до проверки суммы.
+      assignments: [{ id: 'as-1', status: 'ASSIGNED' }],
+      customer: { consentCallRecording: true },
+    };
+
+    const tx = {
+      order: {
+        updateMany: vi.fn(async () => ({ count: 1 })),
+        findUniqueOrThrow: async () => ({
+          ...order,
+          status: 'IN_WORK',
+          statusHistory: [],
+        }),
+      },
+      orderAssignment: { updateMany: vi.fn(async () => ({ count: 0 })) },
+      orderStatusHistory: {
+        findFirst: async () => null,
+        create: async () => ({ id: 'h-1' }),
+      },
+      auditLog: { create: async () => ({ id: 'a-1' }) },
+    };
+
+    const prisma = {
+      buildOrderScopeFilter: () => ({}),
+      order: { findFirst: async () => order },
+      stageNorm: { findMany: async () => [] },
+      workingCalendar: { findMany: async () => [] },
+      runInTransaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+    };
+
+    const service = new OrderWorkflowService(
+      prisma as never,
+      new ReportsCacheService(),
+      notificationsStub() as never,
+      configStub() as never,
+    );
+
+    return { service };
+  }
+
+  function transition(service: OrderWorkflowService) {
+    return service.transition({
+      orderId: 'o-1',
+      to: ORDER_STATUS.IN_WORK,
+      actorId: 'u-1',
+      actorRole: 'PRODUCTION_MANAGER',
+      version: 1,
+      scope: 'ALL_STORES',
+      scopes: ['ALL_STORES'],
+      storeIds: [],
+    });
+  }
+
+  it('пропускает заказ, когда согласованная сумма совпадает с итогом', async () => {
+    // Обычный случай: клиент согласовал ровно то, что в заказе.
+    const { service } = makeService([{ id: 'ap-1', amountMinor: 120_000 }], 120_000);
+
+    await expect(transition(service)).resolves.toBeDefined();
+  });
+
+  it('НЕ пропускает заказ, если после согласования сумма выросла', async () => {
+    /*
+     * Главная проверка исправления. Без неё заказ уходит в работу по 150 000,
+     * хотя клиент согласовал 120 000, — и это не видно ни в карточке, ни в
+     * истории: согласование на месте.
+     */
+    const { service } = makeService([{ id: 'ap-1', amountMinor: 120_000 }], 150_000);
+
+    await expect(transition(service)).rejects.toMatchObject({
+      response: { code: 'APPROVAL_STALE' },
+    });
+  });
+
+  it('НЕ пропускает заказ, если сумма снизилась после согласования', async () => {
+    // Удешевление — тоже изменение договорённости о сумме.
+    const { service } = makeService([{ id: 'ap-1', amountMinor: 150_000 }], 120_000);
+
+    await expect(transition(service)).rejects.toMatchObject({
+      response: { code: 'APPROVAL_STALE' },
+    });
+  });
+
+  it('НЕ пропускает заказ вообще без согласований', async () => {
+    const { service } = makeService([], 120_000);
+
+    await expect(transition(service)).rejects.toMatchObject({
+      response: { code: 'APPROVAL_MISSING' },
+    });
+  });
+
+  it('в ошибке об устаревании указаны обе суммы и разница', async () => {
+    /*
+     * Сотруднику нужно понять, что именно изменилось: «согласование устарело»
+     * без чисел заставляет сверять состав работ вручную.
+     */
+    const { service } = makeService([{ id: 'ap-1', amountMinor: 120_000 }], 150_000);
+
+    try {
+      await transition(service);
+      expect.unreachable('переход должен был быть отклонён');
+    } catch (error) {
+      const response = (error as { getResponse(): unknown }).getResponse();
+      expect(response).toMatchObject({
+        code: 'APPROVAL_STALE',
+        details: { approvedMinor: 120_000, totalMinor: 150_000, differenceMinor: 30_000 },
+      });
+    }
+  });
+
+  it('сообщение об устаревании подсказывает получить новое согласие', async () => {
+    const { service } = makeService([{ id: 'ap-1', amountMinor: 120_000 }], 150_000);
+
+    try {
+      await transition(service);
+      expect.unreachable('переход должен был быть отклонён');
+    } catch (error) {
+      const response = (error as { getResponse(): { message?: string } }).getResponse();
+      expect(response.message).toContain('согласие клиента');
+    }
+  });
+
+  it('код «устарело» не подменяется кодом «отсутствует»', async () => {
+    /*
+     * Коды обязаны различаться: действия сотрудника разные. «Отсутствует» —
+     * получить согласие впервые; «устарело» — показать клиенту, что изменилось
+     * после прошлого согласования. Свести их вместе значило бы соврать.
+     */
+    const stale = makeService([{ id: 'ap-1', amountMinor: 1 }], 99);
+    try {
+      await transition(stale.service);
+      expect.unreachable('должно было отклонить');
+    } catch (error) {
+      const response = (error as { getResponse(): { code?: string } }).getResponse();
+      expect(response.code).toBe('APPROVAL_STALE');
+      expect(response.code).not.toBe('APPROVAL_MISSING');
+    }
+  });
+});

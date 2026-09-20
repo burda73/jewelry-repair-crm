@@ -346,3 +346,49 @@ export function parseStatusFilter(value: string | string[] | undefined): ParsedS
 
   return { statuses, invalid };
 }
+
+/**
+ * Статусы, в которых можно менять состав работ.
+ *
+ * ## Где граница и почему именно здесь
+ *
+ * Работы правятся, пока изделие НЕ выдано исполнителю. Последний такой статус —
+ * `ACCEPTED_BY_WORKSHOP`: менеджер цеха принимает изделие, осматривает его и
+ * МОЖЕТ дополнить объём (нашли скрытый дефект, изменился план работ). Именно на
+ * этом шаге чаще всего и выясняется, что первоначальная смета неполна, — и
+ * запретить правку здесь значило бы сделать требование «меняй работы, но
+ * получи согласование» невыполнимым: раньше работы менять уже поздно
+ * (заказ в партии), позже — они выполняются.
+ *
+ * С `IN_WORK` состав зафиксирован: ювелир работает по определённому перечню, и
+ * правка задним числом означала бы, что заказ описывает не то, что выполняли.
+ *
+ * ## Почему НЕ по этапам
+ *
+ * Первая версия правила выводила границу из этапов (`INTAKE`, `APPROVAL`,
+ * `PREPAYMENT`), и это была ошибка: `ACCEPTED_BY_WORKSHOP` относится к этапу
+ * `PRODUCTION`, поэтому правка запрещалась ровно в том статусе, где она нужна.
+ * Граница проходит по ВЫДАЧЕ РАБОТЫ, а не по этапу, — этап описывает, где
+ * находится изделие, а не когда зафиксирован объём.
+ */
+export const WORKS_EDITABLE_STATUSES: readonly OrderStatus[] = [
+  ORDER_STATUS.DRAFT,
+  ORDER_STATUS.AWAITING_APPROVAL,
+  ORDER_STATUS.AWAITING_PREPAYMENT,
+  ORDER_STATUS.ACCEPTED,
+  ORDER_STATUS.QUEUED_FOR_DISPATCH,
+  ORDER_STATUS.IN_TRANSIT_TO_PRODUCTION,
+  ORDER_STATUS.IN_PRODUCTION,
+  ORDER_STATUS.ACCEPTED_BY_WORKSHOP,
+];
+
+/**
+ * Можно ли менять состав работ в этом статусе.
+ *
+ * Проверка по списку, а не по этапу: этап описывает, ГДЕ изделие, а граница
+ * правки проходит по тому, ВЫДАНА ли работа исполнителю. Эти две вещи совпадают
+ * не всегда — см. пояснение к `WORKS_EDITABLE_STATUSES`.
+ */
+export function isWorksEditable(status: OrderStatus): boolean {
+  return WORKS_EDITABLE_STATUSES.includes(status);
+}
