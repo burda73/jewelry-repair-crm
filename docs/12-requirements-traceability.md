@@ -123,6 +123,7 @@
 | 2.5 | **Акт отказа от оплаты** (задача 7.5, дефект 61) | `docs/07` §9.2 | `orders.service.ts` → `createRefusalAct()`, `buildRefusalActNo()` | `refusal-act.spec.ts` (10 тестов); удаление `create` убивает 2, смена scope — 1, снятие защиты дубля — 2 |
 | 2.6 | Номер акта отказа не совпадает с номером акта партии | `docs/16` §2 | общий `Counter` `ACT:ГГГГ` | `refusal-act.spec.ts` |
 | 2.1 | **Приёмщик может быть логистом** (задача 7.7) | `docs/02` §4 | вторая запись `UserRole`; `seed.ts` `extraRoles` | `seed` идемпотентен (проверено повторным прогоном) |
+| 2.10 | **Области видимости ролей объединяются** (дефект 65) | `docs/02` §3 | `resolveDataScopes()`, `buildOrderScopeFilter()` с `OR` по областям | shared `data-scope.spec.ts` (12), api `prisma-scope.spec.ts` (12); выбор одной «широкой» области убивает 6 |
 | 2.1 | Переходы учитывают ВЕСЬ набор ролей (дефект 64) | `docs/15` | `checkTransition()` → `rulesAllow()`, `actorRoles` | `order-transitions.spec.ts` (4 теста); принудительное `roles = [actorRole]` убивает 2 |
 | 2.1 | Матрица прав `RECEIVER` не расширена | `docs/02` §4 | права остаются у `LOGISTICIAN` | прогон API: `RECEIVER` без второй роли получает 403 |
 | 2.9 | Просрочка считается по `dueAt`, не по факту уведомления | `docs/07` §13.1.1 | запрос без условия по `escalatedAt` | `overdue-dashboard.service.spec.ts` |
@@ -156,6 +157,8 @@
 | 2.7 | Дашборд просроченных заказов | `docs/06` §3 | `GET /orders/overdue`, индекс `(status, dueAt)` | — |
 | 2.8 | Фиксация оплаты, синхронизация с 1С | `docs/05` §1 | `Payment.idempotencyKey`/`externalId`/`syncStatus` (есть в схеме), `IntegrationOutbox` | этап 3 (отложен заказчиком) |
 | 2.8 | **Условие выдачи — полная оплата** | `docs/02` §5.2 | guard `PAID_IN_FULL`, `isPaidInFull()` | `money-dates.spec.ts` |
+| 2.8 | **Подпись клиента о получении — есть чем поставить** (дефект 66) | `docs/07` §5 | `POST /orders/:id/pickup-signature` → `pickup-signature.service.ts`, право `order:transition` | api `pickup-signature.spec.ts` (13), web `pickup-signature.spec.ts` (14); удаление записи `pickupSignatureFileId` убивает 3, снятие запрета по статусу — 1 |
+| 2.8 | Подпись прикладывается ДО перехода в «Выдан» | `docs/04` §2 | `needsPickupSignature()`, порядок вызовов в `transition-dialog.tsx` | web `pickup-signature.spec.ts`: «переход без подписи не отправляется» |
 | 2.8 | Акт отказа при отказе от оплаты | `docs/03` §2 | `RefusalAct`, guard `REFUSAL_ACT_EXISTS` | `order-transitions.spec.ts` |
 | 2.8 | Статус «невостребовано» через 30 дней | `docs/02` §5.3 | guard `UNCLAIMED_THRESHOLD`, `addCalendarDays()` | `money-dates.spec.ts` |
 | 2.9 | Признак гарантийного заказа | `docs/07` §11 | `Order.isWarranty`, `parentOrderId`; UI — `warranty-order.ts` | `warranty-order.spec.ts` (23 теста) |

@@ -340,6 +340,12 @@ export const t = {
     submitting: 'Выполняется…',
     success: 'Статус изменён',
     failed: 'Не удалось изменить статус',
+    signature: 'Подпись клиента о получении',
+    signatureHint: 'Для выдачи приложите подпись клиента о получении изделия. Изображение или PDF.',
+    signatureUploaded: 'Подпись приложена — можно выдать заказ',
+    signatureUpload: 'Загрузить подпись',
+    signatureUploading: 'Загрузка подписи…',
+    signatureSuccess: 'Подпись клиента сохранена',
   },
 
   cancel: {

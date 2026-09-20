@@ -2,7 +2,12 @@
 
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { useTransition } from '@/lib/queries';
+import { useTransition, useUploadPickupSignature } from '@/lib/queries';
+import {
+  canSubmitTransition,
+  needsPickupSignature,
+  validateSignatureFile,
+} from '@/lib/pickup-signature';
 import { STATUS_LABELS, type OrderStatus } from '@app/shared';
 import type { OrderDetail } from '@/lib/api-types';
 import { Button } from '@/components/ui/button';
@@ -10,6 +15,15 @@ import { Field, FormError } from '@/components/ui/field';
 import { DialogContent } from '@/components/ui/dialog';
 import { Select, Textarea } from '@/components/ui/input';
 import { t } from '@/lib/i18n';
+
+/**
+ * Предельный размер файла подписи.
+ *
+ * Совпадает с серверным значением по умолчанию (`UPLOAD_MAX_BYTES`,
+ * `storage.service.ts`): клиентская проверка лишь избавляет от заведомо
+ * обречённого запроса, сервер ограничивает размер повторно.
+ */
+const MAX_SIGNATURE_BYTES = 10 * 1024 * 1024;
 
 /**
  * Диалог перевода заказа в другой статус.
@@ -30,9 +44,19 @@ export function TransitionDialog({
   order: OrderDetail;
 }): ReactNode {
   const transition = useTransition();
+  const uploadSignature = useUploadPickupSignature();
   const [to, setTo] = useState<OrderStatus | ''>('');
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [signatureFile, setSignatureFile] = useState<File | null>(null);
+
+  /*
+   * Дефект 66: переход в «Выдан» охраняется условием `PICKUP_SIGNATURE`,
+   * которое проверяет уже ЗАПИСАННЫЙ идентификатор файла. Поэтому подпись
+   * загружается до перехода — иначе сервер отклонил бы сам переход, и выдача
+   * заказа осталась бы невыполнимой.
+   */
+  const hasSignature = order.pickupSignatureFileId !== null;
 
   // При открытии выбираем первый доступный переход: у приёмщика обычно
   // одно очевидное действие, и лишний выбор только замедляет работу.
@@ -41,11 +65,13 @@ export function TransitionDialog({
       setTo(order.availableTransitions[0]?.to ?? '');
       setReason('');
       setError(null);
+      setSignatureFile(null);
     }
   }, [open, order.availableTransitions]);
 
   const selected = order.availableTransitions.find((item) => item.to === to);
   const reasonRequired = selected?.requiresReason === true;
+  const signatureNeeded = needsPickupSignature(to, hasSignature);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -62,6 +88,19 @@ export function TransitionDialog({
     }
 
     try {
+      /*
+       * Сначала файл, потом переход: guard проверяет записанный в заказ
+       * идентификатор, поэтому обратный порядок гарантированно дал бы 409.
+       */
+      if (signatureNeeded && signatureFile !== null) {
+        const check = validateSignatureFile(signatureFile, MAX_SIGNATURE_BYTES);
+        if (!check.ok) {
+          setError(check.message);
+          return;
+        }
+        await uploadSignature.mutateAsync({ orderId: order.id, file: signatureFile });
+      }
+
       await transition.mutateAsync({
         orderId: order.id,
         to,
@@ -120,6 +159,28 @@ export function TransitionDialog({
             />
           </Field>
 
+          {signatureNeeded ? (
+            <Field
+              label={t.transition.signature}
+              htmlFor="transition-signature"
+              required
+              hint={t.transition.signatureHint}
+            >
+              <input
+                id="transition-signature"
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={(event) => setSignatureFile(event.target.files?.[0] ?? null)}
+                disabled={transition.isPending || uploadSignature.isPending}
+                className="block w-full min-h-[44px] rounded-md border border-neutral-300 px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5"
+              />
+            </Field>
+          ) : null}
+
+          {!signatureNeeded && to === 'COMPLETED' && hasSignature ? (
+            <p className="text-sm text-green-700">{t.transition.signatureUploaded}</p>
+          ) : null}
+
           {error !== null ? <FormError>{error}</FormError> : null}
 
           <div className="flex justify-end gap-2">
@@ -128,8 +189,21 @@ export function TransitionDialog({
                 {t.common.cancel}
               </Button>
             </Dialog.Close>
-            <Button type="submit" loading={transition.isPending}>
-              {transition.isPending ? t.transition.submitting : t.transition.submit}
+            <Button
+              type="submit"
+              loading={transition.isPending || uploadSignature.isPending}
+              disabled={
+                !canSubmitTransition({
+                  to,
+                  hasSignature,
+                  signatureFile,
+                  signatureUploading: uploadSignature.isPending,
+                })
+              }
+            >
+              {transition.isPending || uploadSignature.isPending
+                ? t.transition.submitting
+                : t.transition.submit}
             </Button>
           </div>
         </form>

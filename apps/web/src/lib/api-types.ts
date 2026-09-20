@@ -256,6 +256,14 @@ export interface OrderDetail {
   discountMinor: number;
   paidAmountMinor: number;
   remainingMinor: number;
+  /**
+   * Идентификатор файла подписи клиента о получении изделия (дефект 66).
+   *
+   * `null` означает, что подписи нет, и переход в «Выдан» будет отклонён с
+   * `PICKUP_SIGNATURE_REQUIRED`. Интерфейс по этому признаку показывает
+   * загрузку подписи до перехода, а не после отказа сервера.
+   */
+  pickupSignatureFileId: string | null;
   prepaymentRequiredMinor: number;
   requiresPrepayment: boolean;
   canStartWork: boolean;

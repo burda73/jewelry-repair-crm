@@ -1405,3 +1405,35 @@ export function useSignBatchAct(): UseMutationResult<
     },
   });
 }
+
+/**
+ * Приложить подпись клиента о получении изделия (дефект 66).
+ *
+ * Отдельная мутация, а не часть перехода: подпись — это файл, а переход
+ * отправляется JSON. Разделение обязательно ещё и потому, что переход охраняется
+ * условием `PICKUP_SIGNATURE`: если бы подпись загружалась ПОСЛЕ перехода,
+ * сервер отклонил бы сам переход, и выдача осталась бы невыполнимой.
+ */
+export function useUploadPickupSignature(): UseMutationResult<
+  { orderId: string; fileId: string },
+  Error,
+  { orderId: string; file: File }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<{ orderId: string; fileId: string }, Error, { orderId: string; file: File }>({
+    mutationFn: ({ orderId, file }) => {
+      const form = new FormData();
+      form.append('file', file);
+      return api.postForm<{ orderId: string; fileId: string }>(
+        `/orders/${orderId}/pickup-signature`,
+        form,
+      );
+    },
+    onSuccess: (_data, variables) => {
+      // Карточка хранит признак наличия подписи: без сброса кэша интерфейс
+      // по-прежнему считал бы её отсутствующей и не предложил бы выдачу.
+      void queryClient.invalidateQueries({ queryKey: orderKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+    },
+  });
+}

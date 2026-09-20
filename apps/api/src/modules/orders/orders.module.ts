@@ -4,6 +4,7 @@ import { OrdersController } from './orders.controller';
 import { AssignmentsService } from './assignments.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import { ReceiptService } from './receipt.service';
+import { PickupSignatureService } from './pickup-signature.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
@@ -11,7 +12,19 @@ import { NotificationsModule } from '../notifications/notifications.module';
   // эффект `NOTIFY_CUSTOMER` требует шаблонов, которые даёт этот модуль.
   imports: [NotificationsModule],
   controllers: [OrdersController],
-  providers: [OrdersService, AssignmentsService, OrderWorkflowService, ReceiptService],
-  exports: [OrdersService, AssignmentsService, OrderWorkflowService, ReceiptService],
+  providers: [
+    OrdersService,
+    AssignmentsService,
+    OrderWorkflowService,
+    ReceiptService,
+    PickupSignatureService,
+  ],
+  exports: [
+    OrdersService,
+    AssignmentsService,
+    OrderWorkflowService,
+    ReceiptService,
+    PickupSignatureService,
+  ],
 })
 export class OrdersModule {}

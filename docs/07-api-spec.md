@@ -106,6 +106,7 @@ GET /orders?limit=50&cursor=eyJjIjoiMjAyNS0wOS0xNVQxMDowMDowMFoiLCJpIjoiY20xIn0
 | GET | `/orders/:id/available-transitions` | Какие переходы доступны текущему пользователю | по scope |
 | POST | `/orders/:id/cancel` | Отмена (причина обязательна) | RECEIVER, PRODUCTION_MANAGER, MANAGER, ADMIN |
 | POST | `/orders/:id/refusal-act` | **Оформить акт отказа от оплаты** (задача 7.5) | `order:transition` |
+| POST | `/orders/:id/pickup-signature` | **Приложить подпись клиента о получении** (дефект 66, `multipart/form-data`, поле `file`) | `order:transition` |
 | GET | `/orders/overdue` | Просроченные (дашборд) | MANAGER, ADMIN, PRODUCTION_MANAGER |
 
 **Фильтры списка:** `status[]`, `storeId[]`, `createdFrom`, `createdTo`, `dueTo`,
@@ -117,7 +118,21 @@ GET /orders?limit=50&cursor=eyJjIjoiMjAyNS0wOS0xNVQxMDowMDowMFoiLCJpIjoiY20xIn0
   "payload": { "performerId": "cm...", "plannedHours": 6 } }
 ```
 Ответ `409` с `code` из списка: `INVALID_TRANSITION`, `PREPAYMENT_REQUIRED`,
-`NOT_PAID_IN_FULL`, `APPROVAL_MISSING`, `CONSENT_REQUIRED`, `FORBIDDEN_ROLE`.
+`NOT_PAID_IN_FULL`, `APPROVAL_MISSING`, `CONSENT_REQUIRED`, `FORBIDDEN_ROLE`,
+`PICKUP_SIGNATURE_REQUIRED`.
+
+**`POST /orders/:id/pickup-signature`** (дефект 66)
+
+Тело — `multipart/form-data` с полем `file`. Принимается только на шаге выдачи
+(`READY_FOR_PICKUP`, `UNCLAIMED`); в другом статусе — `400
+SIGNATURE_NOT_APPLICABLE`, без файла — `400 SIGNATURE_FILE_REQUIRED`. Файл
+сохраняется без пережатия, идентификатор записывается в
+`Order.pickupSignatureFileId` вместе с записью аудита `PICKUP_SIGNATURE_SAVED`.
+
+**Порядок вызова обязателен:** сначала подпись, потом
+`POST /orders/:id/transition` в `COMPLETED`. Переходы 18 и 21 охраняются
+условием `PICKUP_SIGNATURE`, которое читает уже записанный идентификатор, —
+подпись после перехода приведёт к `409 PICKUP_SIGNATURE_REQUIRED`.
 
 ## 4. Изделия и файлы
 

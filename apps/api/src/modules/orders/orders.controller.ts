@@ -9,12 +9,16 @@ import {
   HttpCode,
   HttpStatus,
   Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
-import { ApiTags, ApiOperation, ApiCookieAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiCookieAuth, ApiQuery, ApiConsumes } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { AssignmentsService } from './assignments.service';
 import type { OrderAssignmentDto } from './assignments.service';
+import { PickupSignatureService } from './pickup-signature.service';
 import { ReceiptService } from './receipt.service';
 import { OrderWorkflowService } from '../../common/workflow/order-workflow.service';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
@@ -60,6 +64,7 @@ export class OrdersController {
     private readonly assignmentsService: AssignmentsService,
     private readonly workflow: OrderWorkflowService,
     private readonly receiptService: ReceiptService,
+    private readonly pickupSignature: PickupSignatureService,
   ) {}
 
   @Get()
@@ -333,6 +338,43 @@ export class OrdersController {
    * воспользоваться. Кто именно вправе отказать, решает таблица переходов
    * (20 — приёмщик, менеджер, администратор; 22 — менеджер, администратор).
    */
+  /**
+   * Приложить подпись клиента о получении изделия (ТЗ п. 2.8, дефект 66).
+   *
+   * Без этого маршрута выдача заказа недостижима: переходы 18 и 21 охраняются
+   * условием `PICKUP_SIGNATURE`, а записать файл подписи было нечем. Поле
+   * существовало в схеме с самого начала, но ни API, ни интерфейс его не
+   * заполняли, и любой полный цикл упирался в `409 PICKUP_SIGNATURE_REQUIRED`
+   * на последнем шаге.
+   *
+   * `multipart/form-data`, файл держится в памяти: подпись ограничена по
+   * размеру, а промежуточный файл на диске пришлось бы убирать вручную — при
+   * падении он остался бы мусором.
+   */
+  @Post(':id/pickup-signature')
+  @RequirePermission(PERMISSION.ORDER_TRANSITION)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Приложить подпись клиента о получении (файл)' })
+  uploadPickupSignature(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ orderId: string; fileId: string }> {
+    return this.pickupSignature.save({
+      orderId: id,
+      file:
+        file === undefined
+          ? undefined
+          : {
+              buffer: file.buffer,
+              mimetype: file.mimetype,
+              originalname: file.originalname,
+            },
+      user,
+    });
+  }
+
   @Post(':id/refusal-act')
   @RequirePermission(PERMISSION.ORDER_TRANSITION)
   @HttpCode(HttpStatus.CREATED)
