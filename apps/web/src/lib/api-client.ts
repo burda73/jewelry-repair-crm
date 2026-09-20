@@ -212,8 +212,15 @@ export const api = {
   put: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>(path, { ...options, method: 'PUT', body }),
 
-  delete: <T>(path: string, options?: RequestOptions) =>
-    request<T>(path, { ...options, method: 'DELETE' }),
+  /*
+   * `DELETE` с телом.
+   *
+   * Обычно тело в `DELETE` не нужно, но здесь причина обязательна, а поместить
+   * свободный текст в путь нельзя. Сервер (`DELETE /batches/:id/orders/:orderId`)
+   * читает тело именно так — это осознанное решение, описанное в контроллере.
+   */
+  delete: <T>(path: string, body?: unknown, options?: RequestOptions) =>
+    request<T>(path, { ...options, method: 'DELETE', body }),
 
   /** Загрузка файлов: тело `multipart/form-data`. */
   postForm: <T>(path: string, form: FormData) => postForm<T>(path, form),

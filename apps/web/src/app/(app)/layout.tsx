@@ -42,6 +42,15 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/calendar', label: t.nav.calendar, permissions: ['settings:manage'] },
   { href: '/norms', label: t.nav.norms, permissions: ['settings:manage'] },
   /*
+   * Партии (задача 7.6). Право `logistics:read` есть у логиста, менеджера
+   * производства и руководителя; создание и отправка требуют
+   * `logistics:manage`. Приёмщик попадает сюда через ВТОРУЮ роль
+   * `LOGISTICIAN` — матрица прав `RECEIVER` для этого не расширяется
+   * (решение заказчика), потому что право создавать партии не должен получать
+   * каждый приёмщик.
+   */
+  { href: '/batches', label: t.nav.batches, permissions: ['logistics:read'] },
+  /*
    * Доставки (задача 2.7) видны по праву чтения логистики: отдельной роли
    * «курьер» нет, рейсы везёт `LOGISTICIAN` — «Логист / курьер» (docs/02 §4).
    * Право, а не роль, потому что рейсы распределяет и руководитель

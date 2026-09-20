@@ -37,6 +37,7 @@ import type {
   StoreOption,
   TimelineEntry,
   Batch,
+  BatchCandidateGroup,
   BatchDetail,
   WorkCategoryOption,
   WorkshopOption,
@@ -80,6 +81,8 @@ export const orderKeys = {
 /** Ключи запросов логистики (задачи 2.6–2.7). */
 export const batchKeys = {
   all: ['batches'] as const,
+  list: (filters: Record<string, string>) => ['batches', 'list', filters] as const,
+  candidates: (id: string) => ['batches', 'candidates', id] as const,
   myDeliveries: () => ['batches', 'my-deliveries'] as const,
   detail: (id: string) => ['batches', 'detail', id] as const,
   scan: (code: string) => ['batches', 'scan', code] as const,
@@ -1265,4 +1268,140 @@ export function useBatch(id: string): UseQueryResult<BatchDetail, Error> {
  */
 export async function findBatchByScan(code: string): Promise<BatchDetail> {
   return api.get<BatchDetail>(`/batches/scan${buildQuery({ code })}`);
+}
+
+// ---------------------------------------------------------------------------
+// Раздел партий (задача 7.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Список партий с фильтрами.
+ *
+ * `enabled` зависит от права `logistics:read`: без него маршрут вернёт 403, а
+ * показывать сотруднику ошибку доступа там, где раздела просто нет в меню,
+ * незачем.
+ */
+export function useBatches(
+  filters: Record<string, string>,
+  enabled: boolean,
+): UseQueryResult<{ items: Batch[]; nextCursor: string | null }, Error> {
+  return useQuery<{ items: Batch[]; nextCursor: string | null }, Error>({
+    queryKey: batchKeys.list(filters),
+    queryFn: () =>
+      api.get<{ items: Batch[]; nextCursor: string | null }>(`/batches${buildQuery(filters)}`),
+    enabled,
+  });
+}
+
+/** Кандидаты для включения в партию: подходящие и отклонённые с причинами. */
+export function useBatchCandidates(
+  id: string,
+  enabled: boolean,
+): UseQueryResult<BatchCandidateGroup, Error> {
+  return useQuery<BatchCandidateGroup, Error>({
+    queryKey: batchKeys.candidates(id),
+    queryFn: () => api.get<BatchCandidateGroup>(`/batches/${id}/candidates`),
+    enabled: id !== '' && enabled,
+  });
+}
+
+/** Создать партию (возможно, сразу с составом). */
+export function useCreateBatch(): UseMutationResult<BatchDetail, Error, Record<string, unknown>> {
+  const queryClient = useQueryClient();
+  return useMutation<BatchDetail, Error, Record<string, unknown>>({
+    mutationFn: (input) => api.post<BatchDetail>('/batches', input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: batchKeys.all });
+    },
+  });
+}
+
+/** Добавить заказы в партию. */
+export function useAddBatchOrders(): UseMutationResult<
+  BatchDetail,
+  Error,
+  { id: string; orderIds: string[] }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<BatchDetail, Error, { id: string; orderIds: string[] }>({
+    mutationFn: ({ id, orderIds }) => api.post<BatchDetail>(`/batches/${id}/orders`, { orderIds }),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: batchKeys.detail(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: batchKeys.candidates(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: batchKeys.all });
+    },
+  });
+}
+
+/** Убрать заказ из партии — причина обязательна. */
+export function useRemoveBatchOrder(): UseMutationResult<
+  BatchDetail,
+  Error,
+  { id: string; orderId: string; reason: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<BatchDetail, Error, { id: string; orderId: string; reason: string }>({
+    mutationFn: ({ id, orderId, reason }) =>
+      api.delete<BatchDetail>(`/batches/${id}/orders/${orderId}`, { reason }),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: batchKeys.detail(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: batchKeys.candidates(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: batchKeys.all });
+    },
+  });
+}
+
+/**
+ * Сформировать акт по партии.
+ *
+ * После этого состав менять нельзя: акт — документ о передаче конкретных
+ * изделий, и добавление заказа после его формирования сделало бы бумагу
+ * несоответствующей факту.
+ */
+export function useFormBatchAct(): UseMutationResult<BatchDetail, Error, string> {
+  const queryClient = useQueryClient();
+  return useMutation<BatchDetail, Error, string>({
+    mutationFn: (id) => api.post<BatchDetail>(`/batches/${id}/act`, {}),
+    onSuccess: (_data, id) => {
+      void queryClient.invalidateQueries({ queryKey: batchKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: batchKeys.all });
+    },
+  });
+}
+
+/** Отправить или принять партию (`phase`: `dispatch` | `receive`). */
+export function useBatchPhaseAction(): UseMutationResult<
+  BatchDetail,
+  Error,
+  { id: string; phase: 'dispatch' | 'receive' }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<BatchDetail, Error, { id: string; phase: 'dispatch' | 'receive' }>({
+    mutationFn: ({ id, phase }) => api.post<BatchDetail>(`/batches/${id}/${phase}`, {}),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: batchKeys.detail(variables.id) });
+      void queryClient.invalidateQueries({ queryKey: batchKeys.all });
+      /*
+       * Партия переводит СТАТУСЫ ЗАКАЗОВ, поэтому списки и сводка заказов
+       * устарели. Без сброса сотрудник увидел бы партию «в пути», а заказы в
+       * ней — в прежнем статусе, и решил бы, что операция не сработала.
+       */
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+    },
+  });
+}
+
+/** Подписать акт со стороны отправителя или получателя. */
+export function useSignBatchAct(): UseMutationResult<
+  BatchDetail,
+  Error,
+  { id: string; side: 'FROM' | 'TO' }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<BatchDetail, Error, { id: string; side: 'FROM' | 'TO' }>({
+    mutationFn: ({ id, side }) => api.post<BatchDetail>(`/batches/${id}/act/sign`, { side }),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: batchKeys.detail(variables.id) });
+    },
+  });
 }

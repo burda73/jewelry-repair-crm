@@ -777,6 +777,32 @@ export interface BatchItem {
   addedById: string | null;
 }
 
+/**
+ * Подбор заказов в партию (`GET /batches/:id/candidates`).
+ *
+ * Две группы, а не один список с флагом: у них разная семантика. `eligible`
+ * можно добавить (возможно, с замечанием), `rejected` — нельзя, и причина
+ * показывается сотруднику, чтобы заказ не «пропадал» без объяснения.
+ */
+export interface BatchCandidateGroup {
+  eligible: Array<{
+    id: string;
+    orderNo: string;
+    status: string;
+    /**
+     * Замечание к подходящему заказу (задача 7.4): например, изделие принято в
+     * другом магазине. Не блокирует — контроль остаётся за менеджером.
+     */
+    warning?: string;
+  }>;
+  rejected: Array<{
+    id: string;
+    orderNo: string;
+    reason: string;
+    message: string;
+  }>;
+}
+
 /** Партия с составом. */
 export interface BatchDetail extends Batch {
   items: BatchItem[];
