@@ -100,6 +100,31 @@
 | 2.8 | Сбой на одном заказе не отменяет остальные | `docs/07` §13.1 | `try/catch` внутри цикла | `escalations.service.spec.ts` |
 | 2.8 | Норматив в рабочих часах не истекает раньше срока (дефект 31) | `docs/15` | `addWorkingHours()` | `money-dates.spec.ts` (6 тестов, падают при возврате) |
 | 2.9 | Дашборд просрочек: сводка, разрезы, список | `docs/07` §13.1.1 | `overdue-dashboard.service.ts` → `build()` | `overdue-dashboard.service.spec.ts` (11 тестов) |
+
+### Этап 7. Доработка логистики (задание `docs/16`, дефекты 58–64)
+
+Требования ТЗ п. 2.6–2.8 были реализованы на сервере ещё на этапе 2, но
+**проверить их сотрудником было нельзя**: интерфейса партий не существовало,
+исполнителя нельзя было назначить, отказ недостижим. Строки ниже показывают, чем
+именно закрыт разрыв, — по приёмке `docs/04` §2 и `docs/16` §5.
+
+| ТЗ | Требование | Документ | Код | Тест |
+|----|-----------|----------|-----|------|
+| 2.6 | **Интерфейс партий: список, создание, карточка** (задача 7.6, дефект 58) | `docs/08` §3 | `/batches`, `/batches/new`, `/batches/[id]`; `lib/batches.ts` | `batches.spec.ts` в web (23 теста); мутации: предупреждение → отказ и отправка черновика убиваются |
+| 2.6 | Подбор заказов с объяснением отказа (задача 7.6) | `docs/07` §8.1 | `GET /batches/:id/candidates` → `partitionBatchCandidates()` | `batches.spec.ts` (группы), web `candidateViews` |
+| 2.6 | Предупреждение о чужом магазине не блокирует (решение заказчика) | `docs/16` §2 | `checkBatchEligibility()` → поле `warning` | web `batches.spec.ts`: «предупреждение не превращается в отказ» (падает при мутации) |
+| 2.6 | Доступность действий — один источник с сервером | `docs/15` «Дефект 26» | `canDispatchBatch()` и др. из `@app/shared` | web `batches.spec.ts`: недоступная операция обязана иметь причину (обход всех статусов) |
+| 2.8 | «Принят цехом» / «Выдано в работу» / «Работы завершены» (задача 7.1) | `docs/04` §1 | `ORDER_STATUS`, `STATUS_LABELS`, миграция `20260925000000` | `order-status.spec.ts`, `docs-sync.spec.ts` |
+| 2.8 | **Назначение исполнителя и его ФИО в истории** (задача 7.2) | `docs/07` §9.1 | `assignments.service.ts` → `assign()`, `getTimeline()` (`ASSIGNMENT`) | `assignments.service.spec.ts` (12 тестов); удаление `create` убивает тест |
+| 2.8 | Приёмка работы менеджером | `docs/07` §9.1 | `assignments.service.ts` → `finish()` | `assignments.service.spec.ts` |
+| 2.8 | Перераспределение закрывает прежнее назначение (дефект 60) | `docs/15` | `RESET_PERFORMER` → `orderAssignment.updateMany(RETURNED)` | `order-workflow.service.spec.ts`: 2 теста падают при возврате прежнего поведения |
+| 2.6 | Возврат «без работ»: отказ до начала работ (задача 7.3) | `docs/04` §2 | переходы 26, 27 с обязательной причиной | `order-transitions.spec.ts`, `docs-sync.spec.ts` |
+| 2.6 | Получатель обратной партии — магазин приёма (задача 7.4, дефект 62) | `docs/16` §2 | `batchOrderTargetStatus()` | `batches.spec.ts`; `batches.service.spec.ts` |
+| 2.5 | **Акт отказа от оплаты** (задача 7.5, дефект 61) | `docs/07` §9.2 | `orders.service.ts` → `createRefusalAct()`, `buildRefusalActNo()` | `refusal-act.spec.ts` (10 тестов); удаление `create` убивает 2, смена scope — 1, снятие защиты дубля — 2 |
+| 2.6 | Номер акта отказа не совпадает с номером акта партии | `docs/16` §2 | общий `Counter` `ACT:ГГГГ` | `refusal-act.spec.ts` |
+| 2.1 | **Приёмщик может быть логистом** (задача 7.7) | `docs/02` §4 | вторая запись `UserRole`; `seed.ts` `extraRoles` | `seed` идемпотентен (проверено повторным прогоном) |
+| 2.1 | Переходы учитывают ВЕСЬ набор ролей (дефект 64) | `docs/15` | `checkTransition()` → `rulesAllow()`, `actorRoles` | `order-transitions.spec.ts` (4 теста); принудительное `roles = [actorRole]` убивает 2 |
+| 2.1 | Матрица прав `RECEIVER` не расширена | `docs/02` §4 | права остаются у `LOGISTICIAN` | прогон API: `RECEIVER` без второй роли получает 403 |
 | 2.9 | Просрочка считается по `dueAt`, не по факту уведомления | `docs/07` §13.1.1 | запрос без условия по `escalatedAt` | `overdue-dashboard.service.spec.ts` |
 | 2.9 | Набор заказов совпадает с воркером эскалаций | `docs/07` §13.1.1 | `EXCLUDED_STATUSES` | `overdue-dashboard.service.spec.ts` |
 | 2.9 | Самые задержанные сверху, разрезы по числу | `docs/07` §13.1.1 | сортировка в `build()` и `groupBy()` | `overdue-dashboard.service.spec.ts` |
