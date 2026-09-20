@@ -88,7 +88,24 @@ GET /orders?status=IN_WORK&status=WORK_COMPLETED  ← так сериализу�
 Берётся ПОСЛЕДНЕЕ согласование (`approvedAt desc, createdAt desc`), а не «любое
 подходящее по сумме».
 
-> **Дефект 71 (исправлен).** Прежде проверялось только наличие записи
+### 1.2.3. Откат заказа (только администратор)
+
+`POST /orders/:id/rollback` с телом `{ "toStatus": "...", "reason": "..." }`
+ОБХОДИТ таблицу переходов — в этом смысл инструмента: заказ может оказаться в
+состоянии, куда его привела неверная операция, а обратного перехода в таблице
+может не быть. Право `order:rollback` есть только у администратора.
+
+Ограничения: целевое состояние обязано быть ПРОЙДЕННЫМ этим заказом
+(`GET /orders/:id/rollback-states` отдаёт список), закрытый заказ откатить
+нельзя, причина обязательна, версия проверяется. Откат добавляет НОВУЮ запись в
+историю (прежние не удаляются) и помечается в ленте как «Откат статуса: …».
+Срок (`dueAt`) сбрасывается. Платежи, работы, согласования и документы НЕ
+затрагиваются.
+
+Отказы: `409 ROLLBACK_REJECTED` с `details.reason` — `ORDER_FINAL`,
+`SAME_STATUS`, `NO_HISTORY` или `NOT_IN_HISTORY`.
+
+> **Дефект 79 (реализовано).** Прежде проверялось только наличие записи
 > `Approval`. После правки состава работ запись оставалась, сумма в ней — прежней,
 > и заказ уходил в работу по цене, которую клиент не подтверждал.
 
@@ -168,6 +185,8 @@ GET /orders?status=IN_WORK&status=WORK_COMPLETED  ← так сериализу�
 | DELETE | `/orders/:id/works/:workId` | Удалить работу (причина обязательна) | `calc:composition` |
 | POST | `/orders/:id/assignments` | Выдать работу исполнителю | `production:manage` |
 | POST | `/orders/:id/assignments/:assignmentId/finish` | Принять работу у исполнителя | `production:manage` |
+| GET | `/orders/:id/rollback-states` | Состояния, доступные для отката | `order:rollback` |
+| POST | `/orders/:id/rollback` | Откатить заказ до состояния из истории | `order:rollback` |
 | POST | `/orders/:id/transition` | Переход статуса | по таблице переходов |
 | GET | `/orders/:id/available-transitions` | Какие переходы доступны текущему пользователю | по scope |
 | POST | `/orders/:id/cancel` | Отмена (причина обязательна) | RECEIVER, PRODUCTION_MANAGER, MANAGER, ADMIN |

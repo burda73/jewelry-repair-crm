@@ -21,6 +21,7 @@ import { ApiTags, ApiOperation, ApiCookieAuth, ApiQuery, ApiConsumes } from '@ne
 import { OrdersService } from './orders.service';
 import { AssignmentsService } from './assignments.service';
 import { OrderWorksService } from './order-works.service';
+import { OrderRollbackService } from './order-rollback.service';
 import type { OrderAssignmentDto } from './assignments.service';
 import { PickupSignatureService } from './pickup-signature.service';
 import { ReceiptService } from './receipt.service';
@@ -31,6 +32,7 @@ import {
   ROLE,
   PERMISSION,
   parseStatusFilter,
+  orderRollbackSchema,
   transitionSchema,
   cancelOrderSchema,
   type OrderStatus,
@@ -68,6 +70,7 @@ export class OrdersController {
     private readonly ordersService: OrdersService,
     private readonly assignmentsService: AssignmentsService,
     private readonly orderWorksService: OrderWorksService,
+    private readonly orderRollbackService: OrderRollbackService,
     private readonly workflow: OrderWorkflowService,
     private readonly receiptService: ReceiptService,
     private readonly pickupSignature: PickupSignatureService,
@@ -248,6 +251,52 @@ export class OrdersController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<OrderAssignmentDto> {
     return this.assignmentsService.finish(id, assignmentId, body, user);
+  }
+
+  /**
+   * Состояния заказа, доступные для отката (только администратор).
+   *
+   * Объявлен ДО `:id/...`-маршрутов с параметром, но конфликтов нет: путь
+   * уникален. Возвращаются только ПРОЙДЕННЫЕ состояния — предлагать
+   * недостижимое значило бы гарантировать ошибку.
+   */
+  @Get(':id/rollback-states')
+  @RequirePermission(PERMISSION.ORDER_ROLLBACK)
+  @ApiOperation({ summary: 'Состояния заказа, доступные для отката' })
+  rollbackStates(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ currentStatus: string; isFinal: boolean; states: string[] }> {
+    return this.orderRollbackService.availableStates(id, user);
+  }
+
+  /**
+   * Откатить заказ до состояния из истории (только администратор).
+   *
+   * ОБХОДИТ таблицу переходов — в этом смысл инструмента. Право
+   * `order:rollback` есть только у администратора: исправление ошибок в статусах
+   * это аварийный разбор, а не ежедневная операция.
+   */
+  @Post(':id/rollback')
+  @RequirePermission(PERMISSION.ORDER_ROLLBACK)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Откатить заказ до состояния из истории' })
+  async rollback(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OrderCard> {
+    const parsed = orderRollbackSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Проверьте правильность заполнения полей',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    await this.orderRollbackService.rollback(id, parsed.data.toStatus, parsed.data.reason, user);
+    return this.ordersService.findOne(id, user);
   }
 
   @Post(':id/transition')

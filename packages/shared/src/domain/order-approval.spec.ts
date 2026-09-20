@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   approvalCoverageMessage,
   checkApprovalCoverage,
+  checkOrderRollback,
+  isRollbackReason,
+  rollbackReasonText,
+  rollbackRejectMessage,
+  rollbackTargets,
   type ApprovalCoverage,
 } from './order-approval.js';
 
@@ -127,5 +132,220 @@ describe('Покрытие суммы согласованием: объясне
     };
 
     expect(approvalCoverageMessage(coverage)).not.toMatch(/^Сумма согласована/);
+  });
+});
+
+/**
+ * Откат заказа до состояния из истории (инструмент администратора).
+ *
+ * Откат ОБХОДИТ таблицу переходов, поэтому все её гарантии приходится проверять
+ * заново. Ошибка здесь не проявляется отказом: она проявляется заказом в
+ * состоянии, из которого нет выхода, или документом, противоречащим фактам.
+ */
+describe('Откат заказа: что можно и что нельзя', () => {
+  const history = [
+    { toStatus: 'DRAFT', at: new Date('2026-09-01T10:00:00Z') },
+    { toStatus: 'ACCEPTED', at: new Date('2026-09-02T10:00:00Z') },
+    { toStatus: 'IN_PRODUCTION', at: new Date('2026-09-03T10:00:00Z') },
+  ];
+
+  it('откат к ПРОЙДЕННОМУ состоянию разрешён', () => {
+    const check = checkOrderRollback({
+      currentStatus: 'IN_PRODUCTION',
+      history,
+      target: 'ACCEPTED',
+      isFinal: false,
+    });
+
+    expect(check).toEqual({ ok: true, fromStatus: 'IN_PRODUCTION' });
+  });
+
+  it('откат к состоянию, которого НЕ БЫЛО, запрещён', () => {
+    /*
+     * Главная защита: без неё опечатка или подделанный запрос перевели бы заказ
+     * в состояние, которого у него никогда не было, и «откат» стал бы
+     * произвольной сменой статуса в обход таблицы переходов.
+     */
+    const check = checkOrderRollback({
+      currentStatus: 'IN_PRODUCTION',
+      history,
+      target: 'READY_FOR_PICKUP',
+      isFinal: false,
+    });
+
+    expect(check).toEqual({ ok: false, reason: 'NOT_IN_HISTORY' });
+  });
+
+  it('откат в ТЕКУЩЕЕ состояние запрещён', () => {
+    // Запись в истории ни о чём сбивала бы подсчёт времени в статусах.
+    const check = checkOrderRollback({
+      currentStatus: 'ACCEPTED',
+      history,
+      target: 'ACCEPTED',
+      isFinal: false,
+    });
+
+    expect(check).toEqual({ ok: false, reason: 'SAME_STATUS' });
+  });
+
+  it('закрытый заказ откатить нельзя', () => {
+    /*
+     * Выдача подтверждена подписью клиента и оплатой, отказ и отмена —
+     * документами. «Раскрыть» закрытый заказ значило бы объявить эти документы
+     * недействительными, не оформляя этого.
+     */
+    for (const currentStatus of ['COMPLETED', 'REFUSED', 'CANCELLED']) {
+      const check = checkOrderRollback({
+        currentStatus,
+        history,
+        target: 'ACCEPTED',
+        isFinal: true,
+      });
+
+      expect(check, `статус ${currentStatus}`).toEqual({ ok: false, reason: 'ORDER_FINAL' });
+    }
+  });
+
+  it('закрытость проверяется РАНЬШЕ истории', () => {
+    /*
+     * Порядок проверок важен для понятности отказа. Сотрудник, пытающийся
+     * откатить выданный заказ, должен прочитать «заказ закрыт», а не «этого
+     * состояния не было в истории».
+     */
+    const check = checkOrderRollback({
+      currentStatus: 'COMPLETED',
+      history,
+      target: 'НЕТТАКОГО',
+      isFinal: true,
+    });
+
+    expect(check).toEqual({ ok: false, reason: 'ORDER_FINAL' });
+  });
+
+  it('заказ без истории откатывать некуда', () => {
+    const check = checkOrderRollback({
+      currentStatus: 'DRAFT',
+      history: [],
+      target: 'ACCEPTED',
+      isFinal: false,
+    });
+
+    expect(check).toEqual({ ok: false, reason: 'NO_HISTORY' });
+  });
+
+  it('каждый отказ объяснён сотруднику, тексты различны', () => {
+    /*
+     * Тексты обязаны различаться: действия сотрудника разные — раскрыть заказ
+     * нельзя вообще, а «этого состояния не было» означает, что выбрана не та
+     * строка истории.
+     */
+    const messages = (['ORDER_FINAL', 'SAME_STATUS', 'NO_HISTORY', 'NOT_IN_HISTORY'] as const).map(
+      (reason) => rollbackRejectMessage(reason),
+    );
+
+    for (const message of messages) expect(message.length).toBeGreaterThan(15);
+    expect(new Set(messages).size).toBe(4);
+  });
+
+  it('объяснение для закрытого заказа называет причину', () => {
+    expect(rollbackRejectMessage('ORDER_FINAL')).toContain('подписью');
+  });
+});
+
+describe('Откат заказа: список доступных состояний', () => {
+  it('возвращаются пройденные состояния без текущего', () => {
+    const targets = rollbackTargets(
+      [
+        { toStatus: 'DRAFT', at: new Date('2026-09-01T10:00:00Z') },
+        { toStatus: 'ACCEPTED', at: new Date('2026-09-02T10:00:00Z') },
+        { toStatus: 'IN_PRODUCTION', at: new Date('2026-09-03T10:00:00Z') },
+      ],
+      'IN_PRODUCTION',
+    );
+
+    // От новых к старым: так их показывает вкладка истории.
+    expect(targets.map((t) => t.toStatus)).toEqual(['ACCEPTED', 'DRAFT']);
+  });
+
+  it('текущее состояние в списке отсутствует', () => {
+    // Иначе первым пунктом предлагался бы откат в то же состояние — гарантированная ошибка.
+    const targets = rollbackTargets(
+      [{ toStatus: 'ACCEPTED', at: new Date('2026-09-02T10:00:00Z') }],
+      'ACCEPTED',
+    );
+
+    expect(targets).toEqual([]);
+  });
+
+  it('повторные состояния не дублируются', () => {
+    /*
+     * Заказ может проходить один статус несколько раз (возврат из доработки).
+     * Дубли в списке выглядели бы как разные пункты и сбивали бы с толку.
+     */
+    const targets = rollbackTargets(
+      [
+        { toStatus: 'IN_PRODUCTION', at: new Date('2026-09-01T10:00:00Z') },
+        { toStatus: 'REWORK', at: new Date('2026-09-02T10:00:00Z') },
+        { toStatus: 'IN_PRODUCTION', at: new Date('2026-09-03T10:00:00Z') },
+      ],
+      'WORK_COMPLETED',
+    );
+
+    expect(targets.map((t) => t.toStatus)).toEqual(['IN_PRODUCTION', 'REWORK']);
+  });
+
+  it('список упорядочен от новых к старым', () => {
+    const targets = rollbackTargets(
+      [
+        { toStatus: 'DRAFT', at: new Date('2026-09-01T10:00:00Z') },
+        { toStatus: 'QUEUED_FOR_DISPATCH', at: new Date('2026-09-05T10:00:00Z') },
+        { toStatus: 'ACCEPTED', at: new Date('2026-09-03T10:00:00Z') },
+      ],
+      'IN_PRODUCTION',
+    );
+
+    expect(targets.map((t) => t.toStatus)).toEqual(['QUEUED_FOR_DISPATCH', 'ACCEPTED', 'DRAFT']);
+  });
+});
+
+/**
+ * Пометка отката в ленте событий.
+ *
+ * Причина отката хранится строкой в `OrderStatusHistory.reason`, и по ней лента
+ * понимает, что произошёл откат. Это КОНТРАКТ между сервисом отката и лентой:
+ * расхождение в формате («Откат.» вместо «Откат:») не сломает запись, но лента
+ * перестанет различать откаты, и заметить это будет нечем — сотрудник увидит
+ * обычное «Статус: Заказ принят» там, где правила переходов были обойдены.
+ */
+describe('Пометка отката: контракт между сервисом и лентой', () => {
+  it('причина отката распознаётся', () => {
+    expect(isRollbackReason(rollbackReasonText('Ошибочно переведён в работу'))).toBe(true);
+  });
+
+  it('обычный переход откатом не считается', () => {
+    // Причина штатного перехода (например, возврата на очередь) не должна
+    // выглядеть как откат: это разные события.
+    expect(isRollbackReason('Вернуть в очередь: нужны запчасти')).toBe(false);
+    expect(isRollbackReason(null)).toBe(false);
+    expect(isRollbackReason(undefined)).toBe(false);
+    expect(isRollbackReason('')).toBe(false);
+  });
+
+  it('причина сохранена целиком и без лишних пробелов', () => {
+    // Текст причины читают люди: обрезать или переформатировать его нельзя.
+    expect(rollbackReasonText('  Ошибочно переведён в работу  ')).toBe(
+      'Откат: Ошибочно переведён в работу',
+    );
+  });
+
+  it('распознавание и формирование согласованы', () => {
+    /*
+     * Главная проверка контракта: любая причина, созданная для записи, обязана
+     * распознаваться. Если формат пометки изменят в одном месте и забудут в
+     * другом, лента молча перестанет помечать откаты.
+     */
+    for (const reason of ['Проверка', 'Заказ ошибочно переведён', 'тест']) {
+      expect(isRollbackReason(rollbackReasonText(reason)), `причина «${reason}»`).toBe(true);
+    }
   });
 });

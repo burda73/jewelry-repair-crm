@@ -29,6 +29,7 @@ import {
   OVERDUE_EXCLUDED_STATUSES,
   summaryFromCounts,
   checkApprovalCoverage,
+  isRollbackReason,
   type ApprovalCoverage,
   type OrderStatus,
 } from '@app/shared';
@@ -909,7 +910,18 @@ export class OrdersService {
       ...order.statusHistory.map((h) => ({
         type: 'STATUS' as const,
         at: h.createdAt,
-        title: `Статус: ${statusLabel(h.toStatus)}`,
+        /*
+         * Откат помечается ОТДЕЛЬНО, а не выглядит обычной сменой статуса.
+         *
+         * Запись об откате хранится с причиной «Откат: …» (её пишет
+         * `OrderRollbackService`), и без пометки в ленте откат был бы неотличим
+         * от штатного перехода вперёд: видно «Статус: Заказ принят», и только.
+         * А откат — это обход правил перехода, и он обязан быть заметен: по
+         * ленте разбираются, почему заказ оказался не там, где ожидалось.
+         */
+        title: isRollbackReason(h.reason)
+          ? `Откат статуса: ${statusLabel(h.toStatus)}`
+          : `Статус: ${statusLabel(h.toStatus)}`,
         actor: h.changedBy?.fullName ?? (h.isSystem ? 'Система' : null),
         details: { from: h.fromStatus, to: h.toStatus, reason: h.reason },
       })),

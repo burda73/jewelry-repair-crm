@@ -28,6 +28,7 @@ import type {
   CustomerDetail,
   CustomerSearchItem,
   PaymentResult,
+  OrderAssignment,
   PerformerOption,
   PriceListItemEditorInput,
   PriceListItemOption,
@@ -78,6 +79,25 @@ export const orderKeys = {
   payments: (orderId: string) => ['orders', 'payments', orderId] as const,
   photos: (orderId: string, itemId: string) => ['orders', 'photos', orderId, itemId] as const,
 };
+
+/**
+ * Сбросить данные карточки заказа: саму карточку и её ленту событий.
+ *
+ * Нужно там, где маршрут меняет заказ, но возвращает НЕ его карточку (например,
+ * назначение исполнителя отдаёт назначение). Без сброса сотрудник видел бы
+ * старое состояние до перезагрузки страницы — так и было с выдачей и приёмкой
+ * работы: действие выполнялось, а экран не менялся.
+ *
+ * Список заказов сбрасывается тоже: статус виден и в нём.
+ */
+function invalidateOrderCard(
+  queryClient: ReturnType<typeof useQueryClient>,
+  orderId: string,
+): void {
+  void queryClient.invalidateQueries({ queryKey: orderKeys.detail(orderId) });
+  void queryClient.invalidateQueries({ queryKey: orderKeys.timeline(orderId) });
+  void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+}
 
 /** Ключи запросов логистики (задачи 2.6–2.7). */
 export const batchKeys = {
@@ -1493,36 +1513,49 @@ export function usePerformers(workshopId?: string): UseQueryResult<PerformerOpti
  * назначения значило бы оставить в карточке устаревший статус.
  */
 export function useAssignPerformer(): UseMutationResult<
-  OrderDetail,
+  OrderAssignment,
   Error,
   { orderId: string; performerId: string; plannedHours?: number; comment?: string }
 > {
   const queryClient = useQueryClient();
   return useMutation({
+    /*
+     * Маршрут возвращает НАЗНАЧЕНИЕ, а не карточку заказа, — но меняет и статус
+     * заказа, и его доступные переходы, и ленту событий. Поэтому кэш карточки
+     * СБРАСЫВАЕТСЯ, а не подменяется ответом.
+     *
+     * Здесь был дефект: ответ назначения писался в кэш карточки по ключу
+     * `order.id`, но у назначения `id` — это идентификатор НАЗНАЧЕНИЯ, а не
+     * заказа. Кэш карточки не обновлялся вовсе (и рядом появлялась мусорная
+     * запись по чужому ключу), поэтому сотрудник видел старое состояние, пока
+     * не перезагрузит страницу вручную.
+     */
     mutationFn: (variables) =>
-      api.post<OrderDetail>(`/orders/${variables.orderId}/assignments`, {
+      api.post<OrderAssignment>(`/orders/${variables.orderId}/assignments`, {
         performerId: variables.performerId,
         plannedHours: variables.plannedHours,
         comment: variables.comment,
       }),
-    onSuccess: (order) => queryClient.setQueryData(orderKeys.detail(order.id), order),
+    onSuccess: (_assignment, variables) => invalidateOrderCard(queryClient, variables.orderId),
   });
 }
 
 /** Принять работу у исполнителя: назначение закрывается, заказ идёт дальше. */
 export function useFinishAssignment(): UseMutationResult<
-  OrderDetail,
+  OrderAssignment,
   Error,
   { orderId: string; assignmentId: string; comment?: string }
 > {
   const queryClient = useQueryClient();
   return useMutation({
+    // Возвращается назначение; карточка заказа сбрасывается — см.
+    // `useAssignPerformer` о том же.
     mutationFn: (variables) =>
-      api.post<OrderDetail>(
+      api.post<OrderAssignment>(
         `/orders/${variables.orderId}/assignments/${variables.assignmentId}/finish`,
         { comment: variables.comment },
       ),
-    onSuccess: (order) => queryClient.setQueryData(orderKeys.detail(order.id), order),
+    onSuccess: (_assignment, variables) => invalidateOrderCard(queryClient, variables.orderId),
   });
 }
 
@@ -1578,5 +1611,55 @@ export function useRemoveOrderWork(): UseMutationResult<
         reason: variables.reason,
       }),
     onSuccess: (order) => queryClient.setQueryData(orderKeys.detail(order.id), order),
+  });
+}
+
+/**
+ * Состояния заказа, доступные для отката (инструмент администратора).
+ *
+ * Список приходит с СЕРВЕРА, а не выводится из истории на клиенте: какие
+ * состояния достижимы, зависит от текущего статуса и терминальности заказа, и
+ * своя копия правила разошлась бы с сервером — интерфейс предлагал бы откат,
+ * который сервер отклонит.
+ */
+export function useRollbackStates(
+  orderId: string,
+  enabled: boolean,
+): UseQueryResult<{ currentStatus: string; isFinal: boolean; states: string[] }, Error> {
+  return useQuery({
+    queryKey: ['orders', 'rollback-states', orderId],
+    queryFn: () =>
+      api.get<{ currentStatus: string; isFinal: boolean; states: string[] }>(
+        `/orders/${orderId}/rollback-states`,
+      ),
+    enabled,
+    staleTime: 0,
+  });
+}
+
+/**
+ * Откатить заказ до состояния из истории (только администратор).
+ *
+ * Ответ — карточка заказа целиком, поэтому кэш обновляется ею же: статус,
+ * доступные переходы и история меняются все сразу.
+ */
+export function useOrderRollback(): UseMutationResult<
+  OrderDetail,
+  Error,
+  { orderId: string; toStatus: string; reason: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (variables) =>
+      api.post<OrderDetail>(`/orders/${variables.orderId}/rollback`, {
+        toStatus: variables.toStatus,
+        reason: variables.reason,
+      }),
+    onSuccess: (order) => {
+      queryClient.setQueryData(orderKeys.detail(order.id), order);
+      void queryClient.invalidateQueries({ queryKey: orderKeys.timeline(order.id) });
+      void queryClient.invalidateQueries({ queryKey: orderKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ['orders', 'rollback-states', order.id] });
+    },
   });
 }

@@ -282,6 +282,21 @@ export const removeOrderWorkSchema = z.object({
   reason: z.string().min(3, 'Укажите причину удаления работы').max(1000),
 });
 
+/**
+ * Откат заказа до состояния из истории (инструмент администратора).
+ *
+ * Причина обязательна: откат обходит таблицу переходов, и в документах должен
+ * остаться след, зачем это сделано. Целевой статус проверяется на существование
+ * здесь, а на «был ли он в истории» — в домене: список допустимых состояний
+ * зависит от конкретного заказа.
+ */
+export const orderRollbackSchema = z
+  .object({
+    toStatus: z.enum(Object.values(ORDER_STATUS) as [string, ...string[]]),
+    reason: z.string().min(3, 'Укажите причину отката').max(1000),
+  })
+  .strict();
+
 /** Переход статуса (ТЗ п. 2.7: сроки и эскалации). */
 export const transitionSchema = z.object({
   to: z.enum(Object.values(ORDER_STATUS) as [string, ...string[]]),
@@ -1085,6 +1100,7 @@ export type CalcAdjustmentInput = z.infer<typeof calcAdjustmentSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;
 export type TransitionInput = z.infer<typeof transitionSchema>;
+export type OrderRollbackInput = z.infer<typeof orderRollbackSchema>;
 export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
 export type AddOrderWorkInput = z.infer<typeof addOrderWorkSchema>;
 export type UpdateOrderWorkInput = z.infer<typeof updateOrderWorkSchema>;

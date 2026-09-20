@@ -26,6 +26,7 @@ import { ApprovalDialog } from '@/components/orders/approval-dialog';
 import { AdjustmentDialog } from '@/components/orders/adjustment-dialog';
 import { AssignPerformerDialog } from '@/components/orders/assign-performer-dialog';
 import { WorksEditor } from '@/components/orders/works-editor';
+import { RollbackDialog } from '@/components/orders/rollback-dialog';
 import { ItemPhotos } from '@/components/orders/item-photos';
 import { t, PRIORITY_LABELS } from '@/lib/i18n';
 import { describeDiscount, isWorksEditable } from '@app/shared';
@@ -56,6 +57,7 @@ export default function OrderDetailPage(): ReactNode {
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [worksOpen, setWorksOpen] = useState(false);
+  const [rollbackOpen, setRollbackOpen] = useState(false);
 
   if (order.isLoading) {
     return <p className="py-12 text-center text-sm text-slate-500">{t.common.loading}</p>;
@@ -252,11 +254,6 @@ export default function OrderDetailPage(): ReactNode {
               Корректировка
             </Button>
           ) : null}
-          {canAssign ? (
-            <Button variant="secondary" onClick={() => setAssignOpen(true)}>
-              Выдать работу исполнителю
-            </Button>
-          ) : null}
           {/*
             Квитанция формируется на сервере и открывается в новой вкладке.
             Кнопка не блокируется: даже если печать уже была, сотрудник вправе
@@ -440,25 +437,44 @@ export default function OrderDetailPage(): ReactNode {
                     {activeAssignment.comment !== null ? (
                       <p className="mt-1 text-xs text-slate-500">{activeAssignment.comment}</p>
                     ) : null}
-                    {/*
-                      Приёмка работы — отдельное действие менеджера (ТЗ п. 2.7):
-                      одного «я закончил» от ювелира недостаточно, иначе в магазин
-                      уедет изделие, которое никто не проверял.
-                    */}
-                    {canFinishAssignment && activeAssignment.status !== 'DONE' ? (
-                      <Button
-                        variant="secondary"
-                        className="mt-2"
-                        onClick={() =>
-                          finishAssignment.mutate({
-                            orderId: data.id,
-                            assignmentId: activeAssignment.id,
-                          })
-                        }
-                        disabled={finishAssignment.isPending}
-                      >
-                        {finishAssignment.isPending ? 'Приёмка…' : 'Принять работу'}
-                      </Button>
+                  </div>
+                ) : null}
+
+                {/*
+                  ЕДИНЫЙ БЛОК РАБОТЫ С ИСПОЛНИТЕЛЕМ.
+                  
+                  Выдача и приёмка — два шага одного процесса, поэтому они стоят
+                  рядом и видны в одном месте. Прежде выдача была в шапке, а
+                  приёмка — здесь: сотрудник искал вторую кнопку там же, где
+                  нажимал первую, и не находил.
+                */}
+                {canAssign || canFinishAssignment ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                    {canAssign ? (
+                      <Button onClick={() => setAssignOpen(true)}>Выдать работу исполнителю</Button>
+                    ) : null}
+                    {canFinishAssignment &&
+                    activeAssignment !== undefined &&
+                    activeAssignment.status !== 'DONE' ? (
+                      <>
+                        {/*
+                          Приёмка — отдельное действие менеджера (ТЗ п. 2.7):
+                          одного «я закончил» от ювелира недостаточно, иначе в
+                          магазин уедет изделие, которое никто не проверял.
+                        */}
+                        <Button
+                          variant="secondary"
+                          onClick={() =>
+                            finishAssignment.mutate({
+                              orderId: data.id,
+                              assignmentId: activeAssignment.id,
+                            })
+                          }
+                          disabled={finishAssignment.isPending}
+                        >
+                          {finishAssignment.isPending ? 'Приёмка…' : 'Принять работу'}
+                        </Button>
+                      </>
                     ) : null}
                   </div>
                 ) : null}
@@ -616,6 +632,18 @@ export default function OrderDetailPage(): ReactNode {
         </Tabs.Content>
 
         <Tabs.Content value="history" className="p-4 focus:outline-none">
+          {/*
+            Откат — инструмент администратора и стоит именно здесь: на этой
+            вкладке видно, какие состояния заказ проходил, и осознанный выбор
+            точки отката возможен только рядом с историей.
+          */}
+          {can('order:rollback') ? (
+            <div className="mb-3 flex justify-end">
+              <Button variant="secondary" onClick={() => setRollbackOpen(true)}>
+                Откатить до состояния
+              </Button>
+            </div>
+          ) : null}
           {timeline.isLoading ? (
             <p className="py-6 text-center text-sm text-slate-500">{t.common.loading}</p>
           ) : timeline.data === undefined || timeline.data.length === 0 ? (
@@ -661,6 +689,13 @@ export default function OrderDetailPage(): ReactNode {
       <AssignPerformerDialog open={assignOpen} onOpenChange={setAssignOpen} order={data} />
 
       <WorksEditor open={worksOpen} onOpenChange={setWorksOpen} order={data} />
+
+      <RollbackDialog
+        open={rollbackOpen}
+        onOpenChange={setRollbackOpen}
+        orderId={data.id}
+        orderNo={data.orderNo}
+      />
 
       <AdjustmentDialog
         open={adjustmentOpen}
