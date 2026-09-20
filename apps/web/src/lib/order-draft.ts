@@ -27,7 +27,7 @@ export interface OrderDraftContent {
   /** Выбранный клиент целиком; проверяется только на «выбран ли». */
   selectedCustomer: unknown;
   isNewCustomer: boolean;
-  newCustomer: { fullName: string; phone: string; email: string; notes: string };
+  newCustomer: { fullName: string; phone: string; address: string; email: string; notes: string };
   item: {
     name: string;
     metal: string;
@@ -48,10 +48,19 @@ export function orderDraftHasContent(draft: OrderDraftContent): boolean {
   // `undefined`, и оно означает то же, что `null`, — клиент не выбран.
   if (draft.selectedCustomer != null) return true;
   if (draft.isNewCustomer) {
-    const { fullName, phone, email, notes } = draft.newCustomer;
+    /*
+     * `address` участвует в проверке наравне с остальными полями: без него
+     * черновик, в котором заполнили ТОЛЬКО адрес, считался бы пустым и был бы
+     * потерян при закрытии страницы — а адрес нужен для печати квитанции.
+     *
+     * `?? ''` — для черновиков, сохранённых до появления поля: у них `address`
+     * отсутствует, и обращение к нему уронило бы проверку.
+     */
+    const { fullName, phone, address, email, notes } = draft.newCustomer;
     if (
       fullName.trim() !== '' ||
       phone.trim() !== '' ||
+      (address ?? '').trim() !== '' ||
       email.trim() !== '' ||
       notes.trim() !== ''
     ) {

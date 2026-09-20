@@ -21,6 +21,7 @@ import { WorkingCalendarModule } from './modules/calendar/working-calendar.modul
 import { StageNormsModule } from './modules/norms/stage-norms.module';
 import { BatchesModule } from './modules/batches/batches.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { EscalationsModule } from './modules/escalations/escalations.module';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -107,6 +108,7 @@ function resolveEnvPaths(): string[] {
     StageNormsModule,
     BatchesModule,
     NotificationsModule,
+    SettingsModule,
     EscalationsModule,
     ClaimsModule,
     ReportsCacheModule,

@@ -87,6 +87,15 @@ export const customerSchema = z.object({
   fullName: z.string().min(2, 'Укажите ФИО').max(200),
   phone: phoneSchema,
   email: emailSchema.optional().or(z.literal('')),
+  /**
+   * Адрес заказчика — печатается в квитанции.
+   *
+   * Необязательный: у постоянного клиента адрес уже записан, а разовый визит не
+   * должен упираться в обязательное поле. Ограничение длины, а не формата:
+   * адреса пишут по-разному («гор. Красноярск ул Гусарова д.27 кв.36»), и
+   * проверка «правильности» отвергала бы верные адреса.
+   */
+  address: z.string().max(300).optional(),
   birthDate: z.coerce.date().optional(),
   /** ТЗ п. 2.4: обязательный пункт заявки о записи разговоров. */
   consentCallRecording: z.boolean(),
@@ -118,6 +127,7 @@ export const updateCustomerSchema = z
     fullName: z.string().min(2, 'Укажите ФИО').max(200).optional(),
     phone: phoneSchema.optional(),
     email: emailSchema.optional().or(z.literal('')),
+    address: z.string().max(300).optional(),
     notes: z.string().max(2000).optional(),
     consentCallRecording: z.boolean().optional(),
     consentMarketing: z.boolean().optional(),
@@ -296,6 +306,31 @@ export const orderRollbackSchema = z
     reason: z.string().min(3, 'Укажите причину отката').max(1000),
   })
   .strict();
+
+/**
+ * Реквизиты организации (требование заказчика).
+ *
+ * Название ОБЯЗАТЕЛЬНО: документ без исполнителя печатать нельзя, и пустое
+ * название означало бы квитанцию без наименования организации. Остальные поля
+ * необязательны и приводятся к `null`, если не заполнены.
+ *
+ * Строки, а не числа: ИНН — идентификатор, а не сумма, и ведущие нули в нём
+ * значимы. Разбор и проверка формата намеренно не делаются: ИНН бывает 10 и 12
+ * цифр, у иностранной организации его может не быть вовсе, а отказ в сохранении
+ * реквизитов из-за формата остановил бы печать всех документов.
+ */
+export const organizationRequisitesSchema = z.object({
+  /*
+   * `.trim()` ДО проверки длины: без него `min(1)` пропускает строку из одних
+   * пробелов, и в квитанции печатается пустое наименование организации — при
+   * том, что формально «значение задано». Документ без исполнителя силы не
+   * имеет, поэтому пробелы названием не считаются.
+   */
+  name: z.string().trim().min(1, 'Укажите наименование организации').max(200),
+  inn: z.string().max(20).optional(),
+  phone: z.string().max(30).optional(),
+  address: z.string().max(300).optional(),
+});
 
 /** Переход статуса (ТЗ п. 2.7: сроки и эскалации). */
 export const transitionSchema = z.object({
@@ -1100,6 +1135,7 @@ export type CalcAdjustmentInput = z.infer<typeof calcAdjustmentSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;
 export type TransitionInput = z.infer<typeof transitionSchema>;
+export type OrganizationRequisitesInput = z.infer<typeof organizationRequisitesSchema>;
 export type OrderRollbackInput = z.infer<typeof orderRollbackSchema>;
 export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
 export type AddOrderWorkInput = z.infer<typeof addOrderWorkSchema>;

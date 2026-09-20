@@ -42,6 +42,13 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/calendar', label: t.nav.calendar, permissions: ['settings:manage'] },
   { href: '/norms', label: t.nav.norms, permissions: ['settings:manage'] },
   /*
+   * Настройки системы: реквизиты организации для печатных документов.
+   * Право `settings:manage` без второго варианта — как у календаря и
+   * нормативов: это административный раздел, и он не должен показываться
+   * остальным ролям даже неактивной ссылкой.
+   */
+  { href: '/settings', label: t.nav.settings, permissions: ['settings:manage'] },
+  /*
    * Партии (задача 7.6). Право `logistics:read` есть у логиста, менеджера
    * производства и руководителя; создание и отправка требуют
    * `logistics:manage`. Приёмщик попадает сюда через ВТОРУЮ роль

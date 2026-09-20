@@ -67,7 +67,7 @@ import type {
   NormVersion,
   CreateNormVersionInput,
 } from '@/lib/api-types';
-import type { CustomerInput, OrderStatus } from '@app/shared';
+import type { CustomerInput, OrderStatus, OrganizationRequisites } from '@app/shared';
 
 /** Ключи кэша — в одном месте, чтобы инвалидация не промахивалась. */
 export const orderKeys = {
@@ -1660,6 +1660,43 @@ export function useOrderRollback(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: orderKeys.timeline(order.id) });
       void queryClient.invalidateQueries({ queryKey: orderKeys.all });
       void queryClient.invalidateQueries({ queryKey: ['orders', 'rollback-states', order.id] });
+    },
+  });
+}
+
+/**
+ * Реквизиты организации (требование заказчика).
+ *
+ * Читаются и сохраняются с правом `settings:manage` — только администратор.
+ * Значение нужно экрану настроек; печать документов берёт название на сервере и
+ * у клиента его не запрашивает.
+ */
+export function useOrganizationRequisites(): UseQueryResult<OrganizationRequisites, Error> {
+  return useQuery<OrganizationRequisites, Error>({
+    queryKey: ['settings', 'organization'],
+    queryFn: () => api.get<OrganizationRequisites>('/settings/organization'),
+  });
+}
+
+/** Сохранить реквизиты организации. */
+export function useSaveOrganizationRequisites(): UseMutationResult<
+  OrganizationRequisites,
+  Error,
+  OrganizationRequisites
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input) =>
+      api.put<OrganizationRequisites>('/settings/organization', {
+        name: input.name,
+        // Пустые поля отправляются пустыми строками: сервер приводит их к null,
+        // и это одно место, где правило «пусто = не задано» живёт.
+        inn: input.inn ?? '',
+        phone: input.phone ?? '',
+        address: input.address ?? '',
+      }),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(['settings', 'organization'], saved);
     },
   });
 }

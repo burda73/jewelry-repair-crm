@@ -28,6 +28,7 @@ import {
   ORDER_STATUS,
   OVERDUE_EXCLUDED_STATUSES,
   summaryFromCounts,
+  metalDisplayName,
   checkApprovalCoverage,
   isRollbackReason,
   type ApprovalCoverage,
@@ -41,6 +42,7 @@ import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 import { Prisma } from '@prisma/client';
 import type { CreateOrderInput, OrderWorkInput, CalcAdjustmentInput } from '@app/shared';
 import type { ReceiptContext } from './receipt.service';
+import { SettingsService } from '../settings/settings.service';
 
 /**
  * Русское название канала согласования — попадает в причину корректировки,
@@ -145,10 +147,18 @@ const RECEIPT_SELECT = Prisma.validator<Prisma.OrderSelect>()({
   paidAmountMinor: true,
   receiptPrintCount: true,
   receiptLastPrintedAt: true,
-  customer: { select: { fullName: true, phoneNormalized: true } },
-  createdStore: { select: { name: true } },
+  customer: { select: { fullName: true, phoneNormalized: true, address: true } },
+  // Телефон магазина печатается в шапке рядом с названием (требование заказчика).
+  createdStore: { select: { name: true, phone: true } },
   createdBy: { select: { fullName: true } },
-  items: { select: { name: true, metal: true } },
+  /*
+   * Вес и проба изделия — для блока «Принято от заказчика». Вес указывают при
+   * приёме, проба берётся из карточки: в образце квитанции они стоят рядом с
+   * наименованием металла.
+   */
+  items: {
+    select: { name: true, metal: true, weightGram: true, hallmark: true, defects: true },
+  },
   works: { select: { name: true, amountMinor: true }, orderBy: { createdAt: 'asc' } },
   stones: { select: { name: true, amountMinor: true } },
 });
@@ -290,6 +300,13 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly workflow: OrderWorkflowService,
     private readonly config: ConfigService,
+    /*
+     * Настройки нужны для наименования организации в квитанции. Берём его через
+     * сервис, а не из окружения напрямую: правило выбора источника (настройки →
+     * окружение) живёт в одном месте, и печать квитанции не должна знать, откуда
+     * взялось название.
+     */
+    private readonly settings: SettingsService,
   ) {}
 
   /**
@@ -1261,9 +1278,25 @@ export class OrdersService {
       status: order.status,
       statusLabel: statusLabel(order.status),
       storeName: order.createdStore.name,
+      storePhone: order.createdStore.phone,
+      organizationName: await this.settings.organizationNameForPrint(),
       customerName: order.customer.fullName,
       customerPhone: formatPhone(order.customer.phoneNormalized),
-      items: order.items.map((i) => ({ name: i.name, metal: i.metal })),
+      customerAddress: order.customer.address,
+      items: order.items.map((i) => ({
+        name: i.name,
+        /*
+         * Металл приводится к РУССКОМУ названию: в базе он хранится кодом
+         * (`Au585`, `GOLD`), потому что по нему считается цена. Печатать код в
+         * документе для клиента нельзя — он увидел бы «Au585» вместо «Золото».
+         */
+        metal: metalDisplayName(i.metal),
+        // Вес печатается с тремя знаками, как хранится в базе (`Decimal(10,3)`),
+        // иначе 13,200 г превратилось бы в 13,2 г и потеряло точность приёма.
+        weightGram: i.weightGram === null ? null : i.weightGram.toFixed(3),
+        hallmark: i.hallmark,
+        defects: i.defects,
+      })),
       works: order.works.map((w) => ({ name: w.name, amountMinor: w.amountMinor })),
       stones: order.stones.map((s) => ({ name: s.name, amountMinor: s.amountMinor })),
       worksTotalMinor: order.worksTotalMinor,
@@ -1275,7 +1308,6 @@ export class OrdersService {
       requiresPrepayment: order.requiresPrepayment,
       isWarranty: order.isWarranty,
       description: order.description,
-      companyName: this.config.get<string>('COMPANY_NAME') ?? 'РЕМИКС ГОЛД',
       acceptedBy: order.createdBy.fullName,
       copyNumber: order.receiptPrintCount,
     };

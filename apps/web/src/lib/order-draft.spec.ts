@@ -21,7 +21,7 @@ function emptyDraft(overrides: Partial<OrderDraftContent> = {}): OrderDraftConte
     term: '',
     selectedCustomer: null,
     isNewCustomer: false,
-    newCustomer: { fullName: '', phone: '', email: '', notes: '' },
+    newCustomer: { fullName: '', phone: '', address: '', email: '', notes: '' },
     item: {
       name: '',
       metal: '',
@@ -88,12 +88,18 @@ describe('Черновик: что считается введёнными да�
       { phone: '+79001112233' },
       { email: 'a@b.ru' },
       { notes: 'постоянный клиент' },
+      /*
+       * Адрес участвует наравне с остальными: он печатается в квитанции, и
+       * черновик, в котором заполнили ТОЛЬКО адрес, не должен теряться при
+       * закрытии страницы.
+       */
+      { address: 'гор. Красноярск ул. Гусарова д.27 кв.36' },
     ];
 
     for (const patch of cases) {
       const draft = emptyDraft({
         isNewCustomer: true,
-        newCustomer: { fullName: '', phone: '', email: '', notes: '', ...patch },
+        newCustomer: { fullName: '', phone: '', address: '', email: '', notes: '', ...patch },
       });
       expect(orderDraftHasContent(draft), JSON.stringify(patch)).toBe(true);
     }

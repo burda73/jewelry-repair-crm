@@ -14,6 +14,7 @@ import {
   PRICED_METAL_KINDS,
   detectMetalKind,
   isMetalKind,
+  metalDisplayName,
   metalOptionValue,
 } from './metal-kind.js';
 
@@ -147,5 +148,85 @@ describe('Сопоставление сохранённого металла с�
      */
     expect(detectMetalKind('Платина')).toBe(METAL_KIND.PLATINUM);
     expect(METAL_OPTIONS.map((option) => option.value)).not.toContain(METAL_KIND.PLATINUM);
+  });
+});
+
+/**
+ * Название металла для ПЕЧАТИ (требование заказчика).
+ *
+ * В базе металл хранится кодом (`Au585`, `GOLD`), потому что по нему считается
+ * цена. Напечатать код в квитанции значит показать клиенту «Au585» —
+ * обозначение, которым пользуются ювелиры, а не покупатели. В документе должно
+ * стоять русское название.
+ */
+describe('Название металла для печати', () => {
+  it('код золота печатается как «Золото»', () => {
+    // Именно так хранится металл в базе: `item.metal = 'Au585'`.
+    expect(metalDisplayName('Au585')).toBe('Золото');
+    expect(metalDisplayName('GOLD')).toBe('Золото');
+  });
+
+  it('код серебра печатается как «Серебро»', () => {
+    expect(metalDisplayName('Ag925')).toBe('Серебро');
+    expect(metalDisplayName('SILVER')).toBe('Серебро');
+  });
+
+  it('свободный текст распознаётся и приводится к названию', () => {
+    // Приёмщик мог вписать металл словами до появления списка.
+    expect(metalDisplayName('Золото 585')).toBe('Золото');
+    expect(metalDisplayName('серебро')).toBe('Серебро');
+    expect(metalDisplayName('Au 585')).toBe('Золото');
+  });
+
+  it('платина печатается как «Платина»', () => {
+    expect(metalDisplayName('PLATINUM')).toBe('Платина');
+    expect(metalDisplayName('платина')).toBe('Платина');
+  });
+
+  it('ПАЛЛАДИЙ печатается как введён, а не как «Платина»', () => {
+    /*
+     * ГЛАВНАЯ проверка осторожности. В РАСЧЁТЕ палладий приравнен к платине — в
+     * прейскуранте только три группы металлов. Но для документа это подмена:
+     * клиент сдал палладий, а в квитанции, которая у него остаётся, написано
+     * «Платина». Расхождение в бумаге с тем, что человек принёс.
+     */
+    expect(metalDisplayName('Палладий')).toBe('Палладий');
+    expect(metalDisplayName('палладий')).toBe('палладий');
+    expect(metalDisplayName('Pd950')).not.toBe('Платина');
+  });
+
+  it('незнакомый металл печатается как есть, а не скрывается', () => {
+    /*
+     * Вернуть пустую строку значило бы СКРЫТЬ металл из документа: клиент не
+     * увидел бы, что сдал. Незнакомый текст неверен по форме, но правдив по
+     * сути.
+     */
+    expect(metalDisplayName('Белое золото')).toBe('Золото');
+    expect(metalDisplayName('Нейзильбер')).toBe('Нейзильбер');
+  });
+
+  it('пустое значение — это отсутствие металла, а не пустая строка', () => {
+    // По `null` квитанция решает, печатать ли колонку вообще.
+    expect(metalDisplayName(null)).toBeNull();
+    expect(metalDisplayName(undefined)).toBeNull();
+    expect(metalDisplayName('')).toBeNull();
+    expect(metalDisplayName('   ')).toBeNull();
+  });
+
+  it('значение обрезается от пробелов', () => {
+    // Пробелы по краям в документе выглядят как небрежность ввода.
+    expect(metalDisplayName('  Au585  ')).toBe('Золото');
+  });
+
+  it('в результат не попадают коды металлов', () => {
+    /*
+     * Общая проверка на весь список кодов из прейскуранта: ни один не должен
+     * просочиться в документ как есть — клиент не обязан понимать `Ag925`.
+     */
+    for (const kind of ['GOLD', 'SILVER', 'PLATINUM'] as const) {
+      const printed = metalDisplayName(kind);
+      expect(printed, kind).not.toBe(kind);
+      expect(printed, kind).toMatch(/^[А-Яа-яЁё]+$/);
+    }
   });
 });

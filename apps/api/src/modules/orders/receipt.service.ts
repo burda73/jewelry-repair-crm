@@ -22,9 +22,11 @@ import bwipjs from 'bwip-js';
 import {
   buildReceiptBarcode,
   buildReceiptQr,
-  buildReceiptRows,
-  receiptNotice,
+  buildReceiptSignatures,
+  buildReceiptTotals,
+  formatMoney,
   formatReceiptDate,
+  isFilled,
   type ReceiptData,
 } from '@app/shared';
 
@@ -36,12 +38,12 @@ const MARGIN = 40;
 const INK = '#0f172a';
 const MUTED = '#64748b';
 const LINE = '#cbd5e1';
+/** Фон шапок таблиц: отделяет подписи колонок от данных. */
+const HEADER_BG = '#f1f5f9';
 
-/** Данные квитанции вместе с названием организации и магазина. */
+/** Данные квитанции вместе с реквизитами для шапки и подвала. */
 export interface ReceiptContext extends ReceiptData {
-  /** Название организации в шапке. */
-  companyName: string;
-  /** ФИО сотрудника, принявшего заказ. */
+  /** ФИО сотрудника, принявшего заказ (автор заказа). */
   acceptedBy: string;
   /** Номер печатаемой копии — считает сервер. */
   copyNumber: number;
@@ -102,7 +104,14 @@ export class ReceiptService {
     });
   }
 
-  /** Собрать документ из уже готовых изображений кодов. */
+  /**
+   * Собрать документ по образцу заказчика.
+   *
+   * ПОРЯДОК БЛОКОВ повторяет бумажную форму: шапка с QR, данные заказчика,
+   * таблица принятого металла, таблица работ, денежный блок, подписи. Отступать
+   * от него нельзя — приёмщик и клиент читают документ слева направо сверху
+   * вниз, и переставленный блок ищут не там.
+   */
   private compose(data: ReceiptContext, qrPng: Buffer, code128Png: Buffer): Promise<Buffer> {
     return new Promise<Buffer>((resolve, reject) => {
       const doc = new PDFDocument({ size: 'A4', margin: MARGIN });
@@ -112,147 +121,348 @@ export class ReceiptService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      doc.font(FONT_BOLD);
-      this.drawHeader(doc, data);
-      this.drawCodes(doc, data, qrPng, code128Png);
-      this.drawRows(doc, data);
-      this.drawFooter(doc, data);
+      this.drawHeader(doc, data, qrPng);
+      this.drawCustomer(doc, data);
+      this.drawMetal(doc, data);
+      this.drawWorks(doc, data);
+      this.drawTotals(doc, data);
+      this.drawSignatures(doc, data);
+      this.drawCodes(doc, code128Png);
 
       doc.end();
     });
   }
 
-  /** Шапка: организация, магазин и крупный номер заказа. */
-  private drawHeader(doc: PDFKit.PDFDocument, data: ReceiptContext): void {
-    doc.fontSize(16).fillColor(INK).text(data.companyName, { continued: false });
-    doc.moveDown(0.2);
-    doc.font(FONT_REGULAR).fontSize(10).fillColor(MUTED).text(data.storeName);
+  /**
+   * Шапка: организация, номер заказа с датой, магазин с телефоном и QR-код.
+   *
+   * QR в правом верхнем углу, как в образце: это первое, что находит взгляд
+   * сотрудника, когда он берёт квитанцию, чтобы отсканировать её.
+   */
+  private drawHeader(doc: PDFKit.PDFDocument, data: ReceiptContext, qrPng: Buffer): void {
+    const qrSize = 88;
+    const textWidth = doc.page.width - MARGIN * 2 - qrSize - 12;
 
-    doc.moveDown(0.6);
-    doc.font(FONT_BOLD).fontSize(13).fillColor(INK).text('КВИТАНЦИЯ О ПРИЁМЕ ЗАКАЗА');
-    doc.moveDown(0.3);
+    const top = doc.y;
+    doc.image(qrPng, doc.page.width - MARGIN - qrSize, top, { width: qrSize });
+
+    doc.font(FONT_BOLD).fontSize(13).fillColor(INK);
+    doc.text(data.organizationName, MARGIN, top, { width: textWidth });
+    doc.moveDown(0.35);
 
     /*
-     * Номер заказа печатается крупным моноширинным текстом: это третий способ
-     * ввода (после QR и Code128) — приёмщик может набрать его вручную, поэтому
-     * он должен читаться без напряжения.
+     * Номер и дата одной строкой, как «Заказ клиента № BB0000625 от 20.09.2026».
+     * Дата из `createdAt` — момент приёма, а не печати: перепечатанная копия
+     * должна показывать исходную дату, иначе по ней нельзя сверить срок.
      */
-    doc.font(FONT_BOLD).fontSize(22).fillColor(INK).text(data.orderNo, { characterSpacing: 1 });
-    doc.moveDown(0.2);
+    doc
+      .font(FONT_BOLD)
+      .fontSize(14)
+      .fillColor(INK)
+      .text(`Заказ № ${data.orderNo} от ${formatReceiptDate(data.createdAt)}`, MARGIN, doc.y, {
+        width: textWidth,
+      });
+    doc.moveDown(0.3);
+
+    doc.font(FONT_REGULAR).fontSize(10).fillColor(MUTED);
+    doc.text(
+      isFilled(data.storePhone)
+        ? `Магазин: ${data.storeName}, тел. ${data.storePhone}`
+        : `Магазин: ${data.storeName}`,
+      MARGIN,
+      doc.y,
+      { width: textWidth },
+    );
+
+    // Высота шапки — не меньше QR: иначе картинка наехала бы на следующий блок.
+    doc.y = Math.max(doc.y, top + qrSize) + 10;
+    doc.x = MARGIN;
+    this.horizontalLine(doc);
+  }
+
+  /** Заказчик: ФИО, адрес и телефон. */
+  private drawCustomer(doc: PDFKit.PDFDocument, data: ReceiptContext): void {
+    const valueX = MARGIN + 70;
+    const valueWidth = doc.page.width - MARGIN - valueX;
+
+    /** Строка «подпись: значение»; пустые значения не печатаются. */
+    const row = (label: string, value: string | null): void => {
+      if (!isFilled(value)) return;
+      const y = doc.y;
+      doc.font(FONT_REGULAR).fontSize(10).fillColor(MUTED).text(`${label}:`, MARGIN, y, {
+        width: 66,
+      });
+      doc
+        .font(FONT_REGULAR)
+        .fontSize(10)
+        .fillColor(INK)
+        .text(value ?? '', valueX, y, {
+          width: valueWidth,
+        });
+      doc.x = MARGIN;
+    };
+
+    row('Заказчик', data.customerName);
+    /*
+     * Адрес необязателен: у разового клиента его может не быть. Пустая строка
+     * «Адрес: » в документе выглядит как незаполненный бланк.
+     */
+    row('Адрес', data.customerAddress);
+    row('Телефон', data.customerPhone);
+
+    doc.moveDown(0.5);
+  }
+
+  /**
+   * Таблица принятого металла: наименование, проба, вес.
+   *
+   * Печатается ТОЛЬКО графа «Принято»: выдача, расход и потери относятся к
+   * изготовлению изделия из металла клиента, а при ремонте вещь возвращается
+   * владельцу целиком. Дефекты идут строкой под таблицей — в образце они стоят
+   * отдельной колонкой, но текст бывает длинным и растянул бы таблицу.
+   */
+  private drawMetal(doc: PDFKit.PDFDocument, data: ReceiptContext): void {
+    if (data.items.length === 0) return;
+
+    const widths = [0, 0.42, 0.18, 0.4];
+    const usable = doc.page.width - MARGIN * 2;
+    const columns = widths.map((w) => usable * w);
+
+    this.tableHeader(doc, ['Наименование металла', 'Проба', 'Принято, г'], columns, [
+      'left',
+      'center',
+      'center',
+    ]);
+
+    for (const item of data.items) {
+      /*
+       * Наименование принятой ценности: «Кольцо золото 585». Металл отдельной
+       * колонкой не дублируется — он уже назван в наименовании, а в образце
+       * колонка называется «Наименование металла».
+       */
+      const metal = [item.metal, item.name].filter((part) => isFilled(part)).join(', ');
+      this.tableRow(
+        doc,
+        [metal === '' ? '—' : metal, item.hallmark ?? '—', formatGram(item.weightGram)],
+        columns,
+        ['left', 'center', 'center'],
+      );
+    }
+
+    /*
+     * Дефекты — одной строкой под таблицей с указанием изделия: в заказе их
+     * может быть несколько, и «Разрыв шинки» без названия вещи непонятно к чему
+     * относится, а в споре о повреждении это решает.
+     */
+    const defects = data.items
+      .filter((item) => isFilled(item.defects))
+      .map((item) => `${item.name}: ${(item.defects ?? '').trim()}`);
+    if (defects.length > 0) {
+      doc.moveDown(0.3);
+      doc.font(FONT_REGULAR).fontSize(9).fillColor(MUTED);
+      doc.text(`Описание дефектов и ценностей: ${defects.join('; ')}`, MARGIN, doc.y, {
+        width: usable,
+      });
+    }
+
+    doc.moveDown(0.6);
+  }
+
+  /** Таблица работ: наименование и стоимость — как в калькуляции заказа. */
+  private drawWorks(doc: PDFKit.PDFDocument, data: ReceiptContext): void {
+    const usable = doc.page.width - MARGIN * 2;
+    const columns = [0, usable - 110, 110];
+
+    this.tableHeader(doc, ['Наименование работ и видов оплат', '', 'Стоимость'], columns, [
+      'left',
+      'left',
+      'right',
+    ]);
+
+    if (data.works.length === 0 && data.stones.length === 0) {
+      this.tableRow(doc, ['—', '', '—'], columns, ['left', 'left', 'right']);
+      doc.moveDown(0.6);
+      return;
+    }
+
+    for (const work of data.works) {
+      this.tableRow(doc, [work.name, '', formatMoney(work.amountMinor)], columns, [
+        'left',
+        'left',
+        'right',
+      ]);
+    }
+    for (const stone of data.stones) {
+      this.tableRow(doc, [`Камень: ${stone.name}`, '', formatMoney(stone.amountMinor)], columns, [
+        'left',
+        'left',
+        'right',
+      ]);
+    }
+
+    doc.moveDown(0.6);
+  }
+
+  /** Денежный блок: итог и, при предоплате, расчёт с клиентом. */
+  private drawTotals(doc: PDFKit.PDFDocument, data: ReceiptContext): void {
+    const usable = doc.page.width - MARGIN * 2;
+    const labelWidth = usable - 130;
+    const valueX = MARGIN + labelWidth;
+    const valueWidth = 130;
+
+    for (const row of buildReceiptTotals(data)) {
+      const y = doc.y;
+      // Итоговая строка набрана жирным: признак `emphasis` приходит из домена,
+      // поэтому «Итого» нельзя случайно потерять среди расчётов.
+      doc
+        .font(row.emphasis ? FONT_BOLD : FONT_REGULAR)
+        .fontSize(row.emphasis ? 12 : 10)
+        .fillColor(row.emphasis ? INK : MUTED)
+        .text(row.label, MARGIN, y, { width: labelWidth });
+
+      doc
+        .font(row.emphasis ? FONT_BOLD : FONT_REGULAR)
+        .fontSize(row.emphasis ? 12 : 10)
+        .fillColor(INK)
+        .text(row.value, valueX, y, { width: valueWidth, align: 'right' });
+
+      doc.x = MARGIN;
+      doc.y = Math.max(doc.y, y + (row.emphasis ? 16 : 13)) + 2;
+    }
+
+    doc.moveDown(0.6);
+  }
+
+  /** Юридическая строка и место для подписей сторон. */
+  private drawSignatures(doc: PDFKit.PDFDocument, data: ReceiptContext): void {
+    const signatures = buildReceiptSignatures({ acceptorName: data.acceptedBy });
+
+    this.horizontalLine(doc);
+    doc.moveDown(0.5);
+
     doc
       .font(FONT_REGULAR)
       .fontSize(10)
-      .fillColor(MUTED)
-      .text(`Принят: ${formatReceiptDate(data.createdAt)} · ${data.acceptedBy}`);
+      .fillColor(INK)
+      .text(signatures.agreement, MARGIN, doc.y, { width: doc.page.width - MARGIN * 2 });
 
-    doc.moveDown(0.8);
-    this.horizontalLine(doc);
-  }
+    doc.moveDown(1.6);
 
-  /** QR-код и линейный код рядом с номером. */
-  private drawCodes(
-    doc: PDFKit.PDFDocument,
-    data: ReceiptContext,
-    qrPng: Buffer,
-    code128Png: Buffer,
-  ): void {
-    const top = doc.y;
+    const usable = doc.page.width - MARGIN * 2;
+    const half = usable / 2;
+    const lineY = doc.y;
+    const lineWidth = half - 40;
 
-    doc.image(qrPng, MARGIN, top, { width: 120 });
-    // Подпись под QR: клиент и сотрудник должны понимать, что это для сканера.
-    doc
-      .font(FONT_REGULAR)
-      .fontSize(8)
-      .fillColor(MUTED)
-      .text('Сканируйте для быстрого поиска заказа', MARGIN, top + 124, { width: 120 });
-
-    const rightX = MARGIN + 130;
-    doc.font(FONT_BOLD).fontSize(10).fillColor(INK).text('Резервный штрих-код', rightX, top);
-    doc.image(code128Png, rightX, top + 16, { width: 200 });
-    doc
-      .font(FONT_REGULAR)
-      .fontSize(9)
-      .fillColor(MUTED)
-      .text(
-        receiptNotice({ isWarranty: data.isWarranty, requiresPrepayment: data.requiresPrepayment }),
-        rightX,
-        top + 60,
-        { width: 240 },
-      );
-
-    doc.y = top + 140;
-    doc.x = MARGIN;
-    doc.moveDown(0.4);
-    this.horizontalLine(doc);
-  }
-
-  /** Таблица «подпись — значение»: состав берётся из домена, не дублируется. */
-  private drawRows(doc: PDFKit.PDFDocument, data: ReceiptContext): void {
-    const valueX = MARGIN + 150;
-    const valueWidth = doc.page.width - MARGIN * 2 - 150;
-
-    for (const row of buildReceiptRows(data)) {
-      const labelY = doc.y;
-      doc.font(FONT_BOLD).fontSize(10).fillColor(MUTED).text(`${row.label}:`, MARGIN, labelY, {
-        width: 140,
-      });
-      const afterLabel = doc.y;
-
-      doc.font(FONT_REGULAR).fontSize(10).fillColor(INK).text(row.value, valueX, labelY, {
-        width: valueWidth,
-      });
-      const afterValue = doc.y;
-
-      // Строка занимает высоту большей из колонок — иначе длинное значение
-      // («Работы») наехало бы на следующую строку.
-      doc.y = Math.max(afterLabel, afterValue) + 4;
-      doc.x = MARGIN;
-    }
-  }
-
-  /** Подписи сторон и отметка о копии. */
-  private drawFooter(doc: PDFKit.PDFDocument, data: ReceiptContext): void {
-    doc.moveDown(0.6);
-    this.horizontalLine(doc);
-    doc.moveDown(0.8);
-
-    const half = (doc.page.width - MARGIN * 2) / 2;
-    const lineY = doc.y + 22;
-
-    doc.font(FONT_REGULAR).fontSize(9).fillColor(MUTED);
-    doc.text('Изделие сдал (клиент)', MARGIN, doc.y, { width: half - 10 });
-    doc.text('Изделие принял (сотрудник)', MARGIN + half + 10, doc.y - doc.currentLineHeight(), {
-      width: half - 10,
-    });
-
-    // Линии для подписей рисуются отдельно: PDFKit не умеет «подчёркнутое поле».
+    // Линии рисуются отдельно: PDFKit не умеет «подчёркнутое поле».
     doc
       .moveTo(MARGIN, lineY)
-      .lineTo(MARGIN + half - 30, lineY)
+      .lineTo(MARGIN + lineWidth, lineY)
       .strokeColor(LINE)
       .stroke();
     doc
-      .moveTo(MARGIN + half + 10, lineY)
-      .lineTo(MARGIN + half * 2 - 20, lineY)
+      .moveTo(MARGIN + half + 20, lineY)
+      .lineTo(MARGIN + half + 20 + lineWidth, lineY)
       .strokeColor(LINE)
       .stroke();
 
-    doc.y = lineY + 10;
-    doc
-      .font(FONT_REGULAR)
-      .fontSize(8)
-      .fillColor(MUTED)
-      .text(
-        `Копия № ${data.copyNumber}. Срок хранения квитанции — до получения изделия.`,
-        MARGIN,
-        doc.y,
-      );
+    doc.font(FONT_REGULAR).fontSize(9).fillColor(MUTED);
+    doc.text(signatures.customerCaption, MARGIN, lineY + 4, { width: lineWidth, align: 'center' });
+    /*
+     * ФИО приёмщика — из автора заказа, а не из того, кто печатает: квитанцию
+     * может перепечатать администратор, и его подпись под чужим приёмом создала
+     * бы документ, где подписант не принимал изделие.
+     */
+    doc.text(
+      signatures.acceptorName === null
+        ? signatures.acceptorCaption
+        : `${signatures.acceptorCaption} ${signatures.acceptorName}`,
+      MARGIN + half + 20,
+      lineY + 4,
+      { width: lineWidth, align: 'center' },
+    );
+
+    doc.y = lineY + 26;
+    doc.x = MARGIN;
+  }
+
+  /** Линейный код и отметка о копии — под подписями. */
+  private drawCodes(doc: PDFKit.PDFDocument, code128Png: Buffer): void {
+    doc.image(code128Png, MARGIN, doc.y, { width: 200 });
+    doc.y += 38;
+    doc.font(FONT_REGULAR).fontSize(8).fillColor(MUTED);
     doc.text(
       'Проверьте изделие и указанные сведения при получении. Претензии по внешнему виду принимаются при выдаче.',
       MARGIN,
-      doc.y + 10,
+      doc.y,
       { width: doc.page.width - MARGIN * 2 },
     );
+  }
+
+  /** Шапка таблицы: подписи колонок на сером фоне. */
+  private tableHeader(
+    doc: PDFKit.PDFDocument,
+    labels: readonly string[],
+    columns: readonly number[],
+    aligns: readonly ('left' | 'center' | 'right')[],
+  ): void {
+    const y = doc.y;
+    const height = 16;
+
+    doc
+      .rect(
+        MARGIN,
+        y,
+        columns.reduce((a, b) => a + b, 0),
+        height,
+      )
+      .fillColor(HEADER_BG)
+      .fill();
+
+    let x = MARGIN;
+    for (let i = 0; i < labels.length; i += 1) {
+      doc
+        .font(FONT_BOLD)
+        .fontSize(8)
+        .fillColor(MUTED)
+        .text(labels[i] ?? '', x + 4, y + 4, { width: (columns[i] ?? 0) - 8, align: aligns[i] });
+      x += columns[i] ?? 0;
+    }
+
+    doc.y = y + height + 2;
+    doc.x = MARGIN;
+    doc.fillColor(INK);
+  }
+
+  /** Строка таблицы с переносом длинного текста и линией под ней. */
+  private tableRow(
+    doc: PDFKit.PDFDocument,
+    values: readonly string[],
+    columns: readonly number[],
+    aligns: readonly ('left' | 'center' | 'right')[],
+  ): void {
+    const y = doc.y;
+    let x = MARGIN;
+    let bottom = y;
+
+    for (let i = 0; i < values.length; i += 1) {
+      doc.font(FONT_REGULAR).fontSize(9).fillColor(INK);
+      doc.text(values[i] ?? '', x + 4, y + 3, {
+        width: (columns[i] ?? 0) - 8,
+        align: aligns[i],
+      });
+      bottom = Math.max(bottom, doc.y);
+      x += columns[i] ?? 0;
+    }
+
+    const lineY = bottom + 2;
+    doc
+      .moveTo(MARGIN, lineY)
+      .lineTo(MARGIN + columns.reduce((a, b) => a + b, 0), lineY)
+      .strokeColor(LINE)
+      .stroke();
+
+    doc.y = lineY + 3;
+    doc.x = MARGIN;
   }
 
   private horizontalLine(doc: PDFKit.PDFDocument): void {
@@ -264,4 +474,16 @@ export class ReceiptService {
       .stroke();
     doc.y = y + 6;
   }
+}
+
+/**
+ * Вес в виде «13,200» — с запятой и тремя знаками.
+ *
+ * Точность приёма сохраняется: `13,2` вместо `13,200` читается как другое
+ * измерение, а при споре о недостаче металла значение имеет каждый знак.
+ * `null` печатается прочерком: пустая ячейка выглядит как пропуск в документе.
+ */
+function formatGram(value: string | null): string {
+  if (value === null || value.trim() === '') return '—';
+  return value.replace('.', ',');
 }

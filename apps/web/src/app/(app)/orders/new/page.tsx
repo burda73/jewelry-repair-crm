@@ -52,6 +52,7 @@ import {
   resolveItemPrice,
   detectMetalKind,
   metalOptionValue,
+  phoneInputHint,
   METAL_LABELS,
   METAL_OPTIONS,
 } from '@app/shared';
@@ -129,7 +130,14 @@ interface OrderDraft {
   term: string;
   selectedCustomer: CustomerSearchItem | null;
   isNewCustomer: boolean;
-  newCustomer: { fullName: string; phone: string; email: string; notes: string };
+  newCustomer: {
+    fullName: string;
+    phone: string;
+    /** Адрес печатается в квитанции (требование заказчика). */
+    address: string;
+    email: string;
+    notes: string;
+  };
   consentCallRecording: boolean;
   consentMarketing: boolean;
   item: DraftItem;
@@ -173,11 +181,20 @@ export default function NewOrderPage(): ReactNode {
   const [newCustomer, setNewCustomer] = useState({
     fullName: '',
     phone: '',
+    address: '',
     email: '',
     notes: '',
   });
 
   // Шаг 2 — согласие (ТЗ п. 2.4, обязательный пункт заявки)
+  /*
+   * Подсказка к телефону: показывает, что сохранится. Правило нормализации —
+   * доменное (`phoneInputHint`), и оно проверено тестами: своя копия здесь
+   * разошлась бы с сервером, и подсказка обещала бы один номер, а сохранялся бы
+   * другой.
+   */
+  const phoneHint = useMemo(() => phoneInputHint(newCustomer.phone), [newCustomer.phone]);
+
   const [consentCallRecording, setConsentCallRecording] = useState(false);
   const [consentMarketing, setConsentMarketing] = useState(false);
 
@@ -599,6 +616,9 @@ export default function NewOrderPage(): ReactNode {
         const created = await createCustomer.mutateAsync({
           fullName: newCustomer.fullName.trim(),
           phone: newCustomer.phone.trim(),
+          // Пустой адрес не отправляется: сервер приводит отсутствующее к null,
+          // а пустая строка означала бы «сотри адрес» при редактировании.
+          ...(newCustomer.address.trim() === '' ? {} : { address: newCustomer.address.trim() }),
           ...(newCustomer.email.trim() === '' ? {} : { email: newCustomer.email.trim() }),
           consentCallRecording,
           consentMarketing,
@@ -827,6 +847,7 @@ export default function NewOrderPage(): ReactNode {
                           setNewCustomer({
                             fullName: looksLikePhone ? '' : term.trim(),
                             phone: looksLikePhone ? term.trim() : '',
+                            address: '',
                             email: '',
                             notes: '',
                           });
@@ -927,15 +948,43 @@ export default function NewOrderPage(): ReactNode {
                     maxLength={200}
                   />
                 </Field>
-                <Field label="Телефон" htmlFor="new-phone" required>
+                {/*
+                  Код страны вводить НЕ обязательно: сервер добавляет `+7` сам, а
+                  `8` в начале приводит к тому же номеру. Подсказка показывает,
+                  что именно сохранится, пока сотрудник печатает: без неё это
+                  неочевидно, а прежний placeholder `+7 916…` намекал, что код
+                  обязателен.
+                */}
+                <Field
+                  label="Телефон"
+                  htmlFor="new-phone"
+                  required
+                  hint={phoneHint ?? 'Можно без кода страны: 933 331-93-92'}
+                >
                   <Input
                     id="new-phone"
                     value={newCustomer.phone}
                     onChange={(event) =>
                       setNewCustomer({ ...newCustomer, phone: event.target.value })
                     }
-                    placeholder="+7 916 123-45-67"
+                    placeholder="933 331-93-92"
+                    inputMode="tel"
                     maxLength={30}
+                  />
+                </Field>
+                <Field
+                  label="Адрес"
+                  htmlFor="new-address"
+                  hint="Необязательно. Печатается в квитанции"
+                >
+                  <Input
+                    id="new-address"
+                    value={newCustomer.address}
+                    onChange={(event) =>
+                      setNewCustomer({ ...newCustomer, address: event.target.value })
+                    }
+                    maxLength={300}
+                    placeholder="гор. Красноярск ул. Гусарова д.27 кв.36"
                   />
                 </Field>
                 <Field label="Email" htmlFor="new-email" hint="Необязательно">

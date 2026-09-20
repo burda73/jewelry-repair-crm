@@ -29,6 +29,8 @@ const CUSTOMER_BASE_SELECT = Prisma.validator<Prisma.CustomerSelect>()({
   phone: true,
   phoneNormalized: true,
   email: true,
+  /** Адрес печатается в квитанции, поэтому отдаётся вместе с клиентом. */
+  address: true,
   birthDate: true,
   /**
    * Согласия отдаются клиенту намеренно (ТЗ п. 2.4): интерфейс обязан показать
@@ -249,6 +251,9 @@ export class CustomersService {
           phone: data.phone,
           phoneNormalized,
           email: data.email ? data.email : null,
+          // Пустая строка означает «адрес не указан»: печатать в квитанции
+          // пустую строку с двоеточием нельзя, поэтому приводится к null.
+          address: data.address ? data.address : null,
           birthDate: data.birthDate ?? null,
           consentCallRecording: data.consentCallRecording,
           consentMarketing: data.consentMarketing,
@@ -353,6 +358,10 @@ export class CustomersService {
           // Пустая строка означает «очистить email», поэтому приводится к null,
           // а не отбрасывается: иначе стереть почту через интерфейс было бы нельзя.
           email: data.email === undefined ? undefined : data.email === '' ? null : data.email,
+          // Та же логика, что у email: пустая строка ОЧИЩАЕТ адрес, а
+          // `undefined` (поле не передано) его не трогает.
+          address:
+            data.address === undefined ? undefined : data.address === '' ? null : data.address,
           notes: data.notes,
           consentCallRecording: data.consentCallRecording,
           consentMarketing: data.consentMarketing,
