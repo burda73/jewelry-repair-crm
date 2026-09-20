@@ -144,7 +144,7 @@ export class JwtAuthGuard implements CanActivate {
         primaryRole,
         permissions: payload.permissions ?? [],
         scope: payload.scope ?? 'STORE',
-        scopes: scopes.length > 0 ? scopes : [(payload.scope ?? 'STORE')],
+        scopes: scopes.length > 0 ? scopes : [payload.scope ?? 'STORE'],
         storeIds: payload.storeIds ?? [],
         storeRoles: payload.storeRoles ?? [],
         mustChangePassword: payload.mustChangePassword ?? false,
