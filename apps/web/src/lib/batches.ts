@@ -261,7 +261,16 @@ export type CreateBatchErrors = Partial<Record<keyof CreateBatchForm, string>>;
 export function validateCreateBatch(form: CreateBatchForm): CreateBatchErrors {
   const errors: CreateBatchErrors = {};
 
-  if (form.fromStoreId === '') {
+  /*
+   * Магазин-отправитель обязателен ТОЛЬКО для партии «в цех» (дефект 76).
+   *
+   * Прежде он требовался при любом направлении, и форма заставляла указывать
+   * магазин даже при отправке из цеха в магазин. Заполненное поле уезжало на
+   * сервер, и отправителем в акте приёма-передачи оказывался магазин, хотя
+   * изделия передал цех. Для партии «в магазин» отправитель — цех, и его
+   * определяет сервер по заказам партии.
+   */
+  if (form.direction === BATCH_DIRECTION.TO_PRODUCTION && form.fromStoreId === '') {
     errors.fromStoreId = 'Выберите магазин отправления';
   }
   if (form.direction === BATCH_DIRECTION.TO_PRODUCTION && form.toWorkshopId === '') {

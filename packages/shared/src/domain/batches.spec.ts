@@ -13,7 +13,11 @@ import { describe, expect, it } from 'vitest';
 import {
   BATCH_DIRECTION,
   BATCH_INELIGIBILITY,
+  BATCH_SENDER,
   BATCH_STATUS,
+  batchSenderKind,
+  batchSourceWorkshopMessage,
+  resolveBatchSourceWorkshop,
   batchCompositionLockReason,
   batchDispatchLockReason,
   batchOrderTargetStatus,
@@ -621,5 +625,97 @@ describe('Отправка и приём партии (задача 2.5)', () =>
       batchOrderTargetStatus(BATCH_DIRECTION.TO_STORE, 'RECEIVE'),
     ];
     expect(new Set(statuses).size).toBe(4);
+  });
+});
+
+/**
+ * Отправитель партии определяется НАПРАВЛЕНИЕМ (дефект 76).
+ *
+ * РЕАЛЬНЫЙ ДЕФЕКТ. При формировании отправки из цеха в магазин отправителем
+ * указывался МАГАЗИН. Причина структурная: у партии было только поле
+ * `fromStoreId`, поля «цех-отправитель» не существовало, а форма предлагала
+ * выбрать магазин независимо от направления. В акте приёма-передачи, который
+ * подписывают обе стороны, отправителем значился магазин — то есть документ
+ * называл не того, кто фактически передал изделия.
+ */
+describe('Отправитель партии: следствие направления, а не выбор', () => {
+  it('партию «в цех» отправляет магазин', () => {
+    // Изделия принимают в магазине и везут в цех.
+    expect(batchSenderKind(BATCH_DIRECTION.TO_PRODUCTION)).toBe(BATCH_SENDER.STORE);
+  });
+
+  it('партию «в магазин» отправляет ЦЕХ', () => {
+    // ГЛАВНАЯ проверка дефекта: именно здесь прежде указывался магазин.
+    expect(batchSenderKind(BATCH_DIRECTION.TO_STORE)).toBe(BATCH_SENDER.WORKSHOP);
+  });
+
+  it('отправители двух направлений различны', () => {
+    /*
+     * Если бы функция возвращала одно и то же, отправка из цеха снова
+     * записывалась бы как «из магазина» — исходный дефект.
+     */
+    expect(batchSenderKind(BATCH_DIRECTION.TO_PRODUCTION)).not.toBe(
+      batchSenderKind(BATCH_DIRECTION.TO_STORE),
+    );
+  });
+});
+
+describe('Цех-отправитель: определяется по заказам партии', () => {
+  it('цех берётся из заказов, когда он у них один', () => {
+    const resolved = resolveBatchSourceWorkshop(['w-1', 'w-1', 'w-1']);
+
+    expect(resolved).toEqual({ ok: true, workshopId: 'w-1' });
+  });
+
+  it('партия без заказов — цех неизвестен', () => {
+    // Пустая партия не может знать, откуда отправляет: заказов ещё нет.
+    expect(resolveBatchSourceWorkshop([])).toEqual({ ok: false, reason: 'NO_ORDERS' });
+  });
+
+  it('заказы без цеха — отправлять нельзя', () => {
+    /*
+     * Если цех не заполнен, в акте нечего указать как отправителя. Подставить
+     * произвольный цех значило бы повторно напечатать не того отправителя —
+     * ровно то, на что жаловался заказчик.
+     */
+    expect(resolveBatchSourceWorkshop([null, undefined])).toEqual({
+      ok: false,
+      reason: 'WORKSHOP_UNKNOWN',
+    });
+  });
+
+  it('часть заказов без цеха — тоже отказ', () => {
+    // Неизвестно, где находится часть изделий: один акт на них подписать нельзя.
+    expect(resolveBatchSourceWorkshop(['w-1', null])).toEqual({
+      ok: false,
+      reason: 'WORKSHOP_UNKNOWN',
+    });
+  });
+
+  it('заказы из РАЗНЫХ цехов — отправка одной партией невозможна', () => {
+    /*
+     * Изделия физически лежат в разных местах, и один акт приёма-передачи на
+     * них подписать нельзя. Молча выбрать первый цех значило бы соврать в
+     * документе.
+     */
+    expect(resolveBatchSourceWorkshop(['w-1', 'w-2'])).toEqual({ ok: false, reason: 'MIXED' });
+  });
+
+  it('каждый отказ объяснён сотруднику', () => {
+    /*
+     * Отказ без объяснения заставляет звонить в поддержку. Проверяем, что текст
+     * есть и что тексты разных причин РАЗЛИЧАЮТСЯ: действия сотрудника в этих
+     * случаях разные — добавить заказы, заполнить цех или разбить на две партии.
+     */
+    const messages = (['NO_ORDERS', 'WORKSHOP_UNKNOWN', 'MIXED'] as const).map((reason) =>
+      batchSourceWorkshopMessage(reason),
+    );
+
+    for (const message of messages) expect(message.length).toBeGreaterThan(20);
+    expect(new Set(messages).size).toBe(3);
+  });
+
+  it('объяснение для «разных цехов» подсказывает разбить партию', () => {
+    expect(batchSourceWorkshopMessage('MIXED')).toContain('разных цехах');
   });
 });

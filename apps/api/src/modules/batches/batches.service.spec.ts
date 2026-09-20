@@ -107,7 +107,16 @@ function createPrismaMock() {
   prismaMock.otherBatchRows = [];
   const tx = {
     batch: {
-      create: vi.fn(async () => batchRow()),
+      /*
+       * Возвращается ТА ЖЕ партия, что «создана»: `data` запроса содержит
+       * направление и маршрут, и последующие проверки (подбор заказов,
+       * определение цеха-отправителя) идут по ним. Фиксированная строка
+       * направления `TO_PRODUCTION` заставляла бы тесты партии «в магазин»
+       * падать на чужом маршруте.
+       */
+      create: vi.fn(async (args: { data?: Record<string, unknown> } = {}) =>
+        batchRow({ ...(args.data ?? {}), id: BATCH_ID, status: 'DRAFT' }),
+      ),
       findFirst: vi.fn(async () => batchRow()),
       findMany: vi.fn(async () => []),
       update: vi.fn(),
@@ -2264,5 +2273,202 @@ describe('BatchesService: поиск партии по скану (задача 
     expect(where.AND[1]).toEqual({
       OR: [{ fromStoreId: { in: [STORE_MSK1] } }, { toStoreId: { in: [STORE_MSK1] } }],
     });
+  });
+});
+
+/**
+ * Отправитель партии «в магазин» — ЦЕХ (дефект 76).
+ *
+ * РЕАЛЬНЫЙ ДЕФЕКТ. У партии было только поле «магазин-отправитель», поля
+ * «цех-отправитель» не существовало, и форма предлагала выбрать магазин
+ * независимо от направления. В результате отправка из цеха записывалась как «из
+ * магазина», и в акте приёма-передачи — документе, который подписывают обе
+ * стороны, — отправителем значился магазин, хотя изделия передал цех.
+ */
+describe('BatchesService: отправитель партии (дефект 76)', () => {
+  const WORKSHOP_A = 'cmu5p70yu0009bm7pzqlcawsw';
+  const WORKSHOP_B = 'cmu5p70yu0010bm7pzqlcawsw';
+
+  /*
+   * Партия «в магазин»: получатель — магазин, цеха-получателя нет. Без этого
+   * двойник остаётся партией «в цех», и проверка подходящего цеха отклоняет
+   * заказы — тест падал бы не на проверяемом правиле.
+   */
+  const toStoreBatch = (fromWorkshopId: string | null) => ({
+    ...batchRow({ direction: 'TO_STORE', toWorkshopId: null, toStoreId: STORE_MSK1 }),
+    fromWorkshopId,
+  });
+
+  it('пустую партию «в магазин» создать МОЖНО — цех появится с заказами', async () => {
+    /*
+     * Штатный сценарий: логист формирует рейс, затем подбирает изделия в
+     * карточке партии. Требовать заказы при создании значило бы сломать этот
+     * порядок работы.
+     */
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).create(
+      { direction: 'TO_STORE', toStoreId: STORE_MSK1, plannedAt: new Date() },
+      LOGIST,
+    );
+
+    const args = prisma._tx.batch.create.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    // Цех ещё неизвестен — и это не ошибка.
+    expect(args.data.fromWorkshopId).toBeNull();
+  });
+
+  it('партия «в магазин» с заказами получает цех автоматически', async () => {
+    // ГЛАВНАЯ проверка: цех выводится из заказов партии, а не выбирается вручную.
+    const prisma = createPrismaMock();
+    prisma._tx.order.findMany = vi.fn(async () => [
+      // В партию «в магазин» берут только заказы, уже переведённые в «В пути
+      // в магазин»: партия описывает физическую перевозку, а статус — намерение.
+      orderRow({ id: ORDER_1, status: 'IN_TRANSIT_TO_STORE', workshopId: WORKSHOP_A }),
+    ]);
+
+    await makeService(prisma).create(
+      { direction: 'TO_STORE', toStoreId: STORE_MSK1, plannedAt: new Date(), orderIds: [ORDER_1] },
+      LOGIST,
+    );
+
+    const args = prisma._tx.batch.create.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    expect(args.data.fromWorkshopId).toBe(WORKSHOP_A);
+  });
+
+  it('партия «в магазин» НЕ записывает магазин-отправитель', async () => {
+    /*
+     * Даже если магазин прислали, для этого направления он не сохраняется: иначе
+     * в базе оказались бы и «из магазина», и «из цеха», и отчёт выбрал бы одно
+     * из двух произвольно.
+     */
+    const prisma = createPrismaMock();
+    prisma._tx.order.findMany = vi.fn(async () => [
+      orderRow({ id: ORDER_1, status: 'IN_TRANSIT_TO_STORE', workshopId: WORKSHOP_A }),
+    ]);
+
+    /*
+     * Запрос с магазином-отправителем для партии «в магазин» отклоняется СХЕМОЙ
+     * до сервиса — это и есть контракт: клиент не должен иметь возможности
+     * записать в акт не того отправителя.
+     */
+    await expect(
+      makeService(prisma).create(
+        {
+          direction: 'TO_STORE',
+          toStoreId: STORE_MSK1,
+          fromStoreId: STORE_MSK1,
+          plannedAt: new Date(),
+          orderIds: [ORDER_1],
+        },
+        LOGIST,
+      ),
+    ).rejects.toThrow();
+
+    // И при штатном запросе магазин-отправитель не сохраняется.
+    await makeService(prisma).create(
+      { direction: 'TO_STORE', toStoreId: STORE_MSK1, plannedAt: new Date(), orderIds: [ORDER_1] },
+      LOGIST,
+    );
+
+    const args = prisma._tx.batch.create.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    expect(args.data.fromStoreId).toBeNull();
+  });
+
+  it('партия «в цех» по-прежнему отправляется из магазина', async () => {
+    // Обратная сторона: для этого направления цех-отправитель не заполняется.
+    const prisma = createPrismaMock();
+
+    await makeService(prisma).create(
+      {
+        direction: 'TO_PRODUCTION',
+        fromStoreId: STORE_MSK1,
+        toWorkshopId: WORKSHOP_A,
+        plannedAt: new Date(),
+      },
+      LOGIST,
+    );
+
+    const args = prisma._tx.batch.create.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    expect(args.data.fromStoreId).toBe(STORE_MSK1);
+    expect(args.data.fromWorkshopId).toBeNull();
+  });
+
+  it('заказы без цеха — партию «в магазин» создать нельзя', async () => {
+    /*
+     * Подставить произвольный цех значило бы снова напечатать в акте не того
+     * отправителя. Отказ с объяснением честнее неверного документа.
+     */
+    const prisma = createPrismaMock();
+    prisma._tx.order.findMany = vi.fn(async () => [orderRow({ id: ORDER_1, workshopId: null })]);
+
+    await expect(
+      makeService(prisma).create(
+        {
+          direction: 'TO_STORE',
+          toStoreId: STORE_MSK1,
+          plannedAt: new Date(),
+          orderIds: [ORDER_1],
+        },
+        LOGIST,
+      ),
+    ).rejects.toMatchObject({ response: { code: 'BATCH_SENDER_UNKNOWN' } });
+  });
+
+  it('цех проставляется, когда заказ добавляют в пустую партию', async () => {
+    /*
+     * Ключевая проверка второго пути. Без неё пустая партия «в магазин» так и
+     * осталась бы без цеха-отправителя, и в акте снова оказался бы магазин —
+     * исходный дефект, только отложенный.
+     */
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst = vi.fn(async () => toStoreBatch(null));
+    prisma._tx.order.findMany = vi.fn(async () => [
+      orderRow({ id: ORDER_1, status: 'IN_TRANSIT_TO_STORE', workshopId: WORKSHOP_A }),
+    ]);
+
+    await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
+
+    expect(prisma._tx.batch.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ fromWorkshopId: WORKSHOP_A }),
+      }),
+    );
+  });
+
+  it('заказ из ДРУГОГО цеха в партию не добавляется', async () => {
+    /*
+     * Изделия физически лежат в разных местах, и один акт приёма-передачи на них
+     * подписать нельзя. Цех, уже записанный в партии, участвует в проверке.
+     */
+    const prisma = createPrismaMock();
+    prisma._tx.batch.findFirst = vi.fn(async () => toStoreBatch(WORKSHOP_A));
+    prisma._tx.order.findMany = vi.fn(async () => [
+      orderRow({ id: ORDER_1, status: 'IN_TRANSIT_TO_STORE', workshopId: WORKSHOP_B }),
+    ]);
+
+    await expect(
+      makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST),
+    ).rejects.toMatchObject({ response: { code: 'BATCH_SENDER_UNKNOWN' } });
+  });
+
+  it('партия «в цех» при добавлении заказов цех-отправитель не трогает', async () => {
+    // Для этого направления отправитель — магазин, и поле цеха остаётся пустым.
+    const prisma = createPrismaMock();
+    prisma._tx.order.findMany = vi.fn(async () => [orderRow({ id: ORDER_1 })]);
+
+    await makeService(prisma).addOrders(BATCH_ID, { orderIds: [ORDER_1] }, LOGIST);
+
+    const calls = prisma._tx.batch.update.mock.calls as Array<[{ data: Record<string, unknown> }]>;
+    for (const [args] of calls) {
+      expect(args.data).not.toHaveProperty('fromWorkshopId');
+    }
   });
 });

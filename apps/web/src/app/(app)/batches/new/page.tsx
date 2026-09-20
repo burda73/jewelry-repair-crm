@@ -89,9 +89,15 @@ export default function NewBatchPage(): ReactNode {
     try {
       const batch = await createBatch.mutateAsync({
         direction: form.direction,
-        fromStoreId: form.fromStoreId,
+        /*
+         * Отправителя выбирать нельзя (дефект 76): он — следствие направления.
+         * Партию «в цех» отправляет магазин, партию «в магазин» — ЦЕХ, и цех
+         * сервер определяет сам по заказам партии. Передавать здесь
+         * `fromStoreId` для отправки в магазин значило бы записать в акт
+         * отправителем магазин — именно этот дефект и исправляется.
+         */
         ...(form.direction === BATCH_DIRECTION.TO_PRODUCTION
-          ? { toWorkshopId: form.toWorkshopId }
+          ? { fromStoreId: form.fromStoreId, toWorkshopId: form.toWorkshopId }
           : { toStoreId: form.toStoreId }),
         // Плановая дата передаётся полднем: сервер хранит UTC, а дата без
         // времени в минусовой/плюсовой зоне сдвинула бы сутки.
@@ -144,26 +150,44 @@ export default function NewBatchPage(): ReactNode {
               </Select>
             </Field>
 
-            <Field
-              label={t.batches.fromStore}
-              htmlFor="from-store"
-              required
-              error={errors.fromStoreId}
-            >
-              <Select
-                id="from-store"
-                value={form.fromStoreId}
-                onChange={(event) => update('fromStoreId', event.target.value)}
-                aria-invalid={errors.fromStoreId !== undefined}
+            {/*
+             * Магазин-отправитель запрашивается ТОЛЬКО для партии «в цех».
+             *
+             * Для отправки «в магазин» отправитель — ЦЕХ, и он не выбирается:
+             * сервер определяет его по цеху заказов партии. Прежде здесь
+             * показывался выбор магазина при любом направлении, и отправка из
+             * цеха записывалась как «из магазина»: в акте приёма-передачи
+             * отправителем значился магазин, хотя изделия передал цех
+             * (дефект 76).
+             */}
+            {isToProduction ? (
+              <Field
+                label={t.batches.fromStore}
+                htmlFor="from-store"
+                required
+                error={errors.fromStoreId}
               >
-                <option value="">{t.batches.choose}</option>
-                {(stores.data ?? []).map((store) => (
-                  <option key={store.id} value={store.id}>
-                    {store.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+                <Select
+                  id="from-store"
+                  value={form.fromStoreId}
+                  onChange={(event) => update('fromStoreId', event.target.value)}
+                  aria-invalid={errors.fromStoreId !== undefined}
+                >
+                  <option value="">{t.batches.choose}</option>
+                  {(stores.data ?? []).map((store) => (
+                    <option key={store.id} value={store.id}>
+                      {store.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : (
+              <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                Отправитель — цех. Он определяется автоматически по цеху заказов этой партии,
+                поэтому выбирать его не нужно. Если у заказов не указан цех, партию создать не
+                удастся.
+              </p>
+            )}
 
             {/*
              * Поле получателя зависит от направления: партия «в цех» без цеха и

@@ -22,6 +22,10 @@ import {
   exceedsBatchLimit,
   partitionBatchCandidates,
   batchDispatchLockReason,
+  batchSenderKind,
+  batchSourceWorkshopMessage,
+  resolveBatchSourceWorkshop,
+  BATCH_SENDER,
   batchListQuerySchema,
   batchOrderTargetStatus,
   batchPhotoDeleteLockReason,
@@ -39,6 +43,7 @@ import {
   DEFAULT_TRANSIT_NORM_HOURS,
   type BatchActSnapshot,
   type BatchDirection,
+  type BatchSenderKind,
   type BatchStatus,
   type TransitState,
 } from '@app/shared';
@@ -64,6 +69,21 @@ export interface BatchDto {
   status: string;
   fromStoreId: string | null;
   fromStoreName: string | null;
+  /**
+   * Цех-отправитель партии «в магазин» (дефект 76).
+   *
+   * Нужен интерфейсу и акту: отправку из цеха прежде можно было записать только
+   * как «из магазина», и документ называл не того, кто передал изделия.
+   */
+  fromWorkshopId: string | null;
+  fromWorkshopName: string | null;
+  /**
+   * Кто отправитель по направлению партии: магазин или цех.
+   *
+   * Вычисляется, а не хранится: это следствие маршрута, и отдельное поле могло
+   * бы разойтись с `direction` после правки направления.
+   */
+  senderKind: BatchSenderKind;
   toStoreId: string | null;
   toStoreName: string | null;
   toWorkshopId: string | null;
@@ -217,6 +237,7 @@ export class BatchesService {
       ...(query.cursor === undefined ? {} : { cursor: { id: query.cursor }, skip: 1 }),
       include: {
         fromStore: { select: { name: true } },
+        fromWorkshop: { select: { name: true } },
         toStore: { select: { name: true } },
         toWorkshop: { select: { name: true } },
       },
@@ -254,6 +275,7 @@ export class BatchesService {
       where: { AND: [{ status: BATCH_STATUS.IN_TRANSIT }, this.buildScopeFilter(actor)] },
       include: {
         fromStore: { select: { name: true } },
+        fromWorkshop: { select: { name: true } },
         toStore: { select: { name: true } },
         toWorkshop: { select: { name: true } },
       },
@@ -307,6 +329,7 @@ export class BatchesService {
       },
       include: {
         fromStore: { select: { name: true } },
+        fromWorkshop: { select: { name: true } },
         toStore: { select: { name: true } },
         toWorkshop: { select: { name: true } },
       },
@@ -404,6 +427,7 @@ export class BatchesService {
       where: { AND: [{ id }, scopeFilter] },
       include: {
         fromStore: { select: { name: true } },
+        fromWorkshop: { select: { name: true } },
         toStore: { select: { name: true } },
         toWorkshop: { select: { name: true } },
         items: {
@@ -454,6 +478,55 @@ export class BatchesService {
    * нажавшие «создать» одновременно, получили бы один номер, и второй запрос
    * упал бы на уникальном индексе вместо понятной ошибки.
    */
+  /**
+   * Цех-отправитель партии «в магазин» (дефект 76).
+   *
+   * Определяется АВТОМАТИЧЕСКИ по цеху заказов партии: привязки «пользователь →
+   * цех» в системе нет (`user_store` есть, `user_workshop` нет), а изделия
+   * физически находятся там, где их ремонтировали. Это и надёжнее привязки
+   * сотрудника: даже если менеджер переведён в другой цех, документ назовёт цех,
+   * откуда изделия действительно уехали.
+   *
+   * Для партии «в цех» возвращается `null`: там отправляет магазин, и цех
+   * появится только как получатель.
+   *
+   * Если цех определить нельзя, партия НЕ создаётся. Подставить произвольный
+   * цех значило бы снова напечатать в акте не того отправителя — ровно то, на
+   * что жаловался заказчик.
+   */
+  private async resolveSenderWorkshop(
+    tx: Prisma.TransactionClient,
+    input: { direction: BatchDirection },
+    orderIds: readonly string[],
+  ): Promise<string | null> {
+    if (batchSenderKind(input.direction) !== BATCH_SENDER.WORKSHOP) return null;
+
+    /*
+     * Партию можно создать ПУСТОЙ и наполнить её в карточке — это штатный
+     * сценарий (логист формирует рейс, затем подбирает изделия). Цех в этот
+     * момент определить не по чему, и это не ошибка: он появится, когда в партию
+     * попадёт первый заказ. Требовать заказы при создании значило бы сломать
+     * существующий порядок работы.
+     */
+    if (orderIds.length === 0) return null;
+
+    const orders = await tx.order.findMany({
+      where: { id: { in: [...orderIds] } },
+      select: { workshopId: true },
+    });
+
+    const resolved = resolveBatchSourceWorkshop(orders.map((order) => order.workshopId));
+    if (!resolved.ok) {
+      throw new ConflictException({
+        code: 'BATCH_SENDER_UNKNOWN',
+        message: batchSourceWorkshopMessage(resolved.reason),
+        details: { reason: resolved.reason },
+      });
+    }
+
+    return resolved.workshopId;
+  }
+
   async create(rawInput: unknown, actor: AuthenticatedUser): Promise<BatchDetailDto> {
     const input = parseOrThrow(createBatchSchema, rawInput);
     const orderIds = input.orderIds ?? [];
@@ -487,12 +560,31 @@ export class BatchesService {
 
       const batchNo = buildBatchNo(plannedAt, counter.value);
 
+      /*
+       * ОТПРАВИТЕЛЬ ОПРЕДЕЛЯЕТСЯ ПО НАПРАВЛЕНИЮ, а не выбирается сотрудником
+       * (дефект 76). Прежде `fromStoreId` приходил из формы независимо от
+       * направления, и отправка из цеха в магазин записывалась как «из
+       * магазина»: в акте приёма-передачи отправителем значился магазин, хотя
+       * изделия передал цех. Это документ, который подписывают обе стороны.
+       */
+      const sourceWorkshopId = await this.resolveSenderWorkshop(tx, input, orderIds);
+
       const batch = await tx.batch.create({
         data: {
           batchNo,
           direction: input.direction,
           status: BATCH_STATUS.DRAFT,
-          fromStoreId: input.fromStoreId ?? null,
+          /*
+           * Магазин-отправитель остаётся только у партии «в цех». Для партии «в
+           * магазин» он принудительно пуст: иначе в базе оказалось бы и «из
+           * магазина», и «из цеха» одновременно, и любой отчёт выбрал бы одно
+           * из двух произвольно.
+           */
+          fromStoreId:
+            batchSenderKind(input.direction) === BATCH_SENDER.STORE
+              ? (input.fromStoreId ?? null)
+              : null,
+          fromWorkshopId: sourceWorkshopId,
           toStoreId: input.toStoreId ?? null,
           toWorkshopId: input.toWorkshopId ?? null,
           courierId: input.courierId ?? null,
@@ -725,6 +817,7 @@ export class BatchesService {
         where: { AND: [{ id: batchId }, scopeFilter] },
         include: {
           fromStore: { select: { name: true } },
+          fromWorkshop: { select: { name: true } },
           toStore: { select: { name: true } },
           toWorkshop: { select: { name: true } },
           items: {
@@ -781,10 +874,22 @@ export class BatchesService {
         create: { scope, value: 1 },
       });
 
+      /*
+       * Отправитель в акте берётся ПО НАПРАВЛЕНИЮ (дефект 76). Прежде здесь
+       * всегда стоял магазин с запасным значением «Магазин», поэтому акт на
+       * отправку из цеха называл отправителем магазин — то есть документ,
+       * который подписывают обе стороны, указывал не того, кто передал изделия.
+       */
+      const senderKind = batchSenderKind(batch.direction);
+      const fromLabel =
+        senderKind === BATCH_SENDER.WORKSHOP
+          ? (batch.fromWorkshop?.name ?? 'Цех')
+          : (batch.fromStore?.name ?? 'Магазин');
+
       const snapshot = buildBatchActSnapshot({
         batchNo: batch.batchNo,
         direction: batch.direction,
-        fromLabel: batch.fromStore?.name ?? 'Магазин',
+        fromLabel,
         toLabel: batch.toWorkshop?.name ?? batch.toStore?.name ?? 'Получатель',
         formedAt: now,
         items: batch.items.map((item) => ({
@@ -1526,6 +1631,8 @@ export class BatchesService {
       id: string;
       direction: BatchDirection;
       fromStoreId: string | null;
+      /* Цех-отправитель партии «в магазин» (дефект 76). */
+      fromWorkshopId: string | null;
       toWorkshopId: string | null;
     },
     orderIds: readonly string[],
@@ -1574,6 +1681,42 @@ export class BatchesService {
     }
     if (rejected.length > 0) {
       throw new ConflictException(`Заказы не могут быть добавлены — ${rejected.join('; ')}`);
+    }
+
+    /*
+     * Цех-отправитель партии «в магазин» проставляется, когда в неё попадает
+     * первый заказ (дефект 76).
+     *
+     * Партию можно создать пустой и наполнить в карточке, поэтому определять
+     * отправителя только при создании недостаточно: у пустой партии его не из
+     * чего вывести, и в акте приёма-передачи отправителем оказался бы магазин —
+     * исходный дефект. Часть заказов без цеха или заказы из РАЗНЫХ цехов дают
+     * отказ: подставить произвольный цех значило бы снова соврать в документе.
+     */
+    if (batchSenderKind(batch.direction) === BATCH_SENDER.WORKSHOP) {
+      /*
+       * Цех, уже записанный в партии, участвует в проверке ТОЛЬКО когда он есть:
+       * у пустой партии его нет по определению, и это не «неизвестный цех», а
+       * «ещё не определён». Приравнять эти состояния значило бы запретить
+       * наполнение пустой партии — то есть сломать штатный порядок работы.
+       */
+      const workshopIds = orders.map((order) => order.workshopId);
+      if (batch.fromWorkshopId !== null) workshopIds.push(batch.fromWorkshopId);
+
+      const resolved = resolveBatchSourceWorkshop(workshopIds);
+      if (!resolved.ok) {
+        throw new ConflictException({
+          code: 'BATCH_SENDER_UNKNOWN',
+          message: batchSourceWorkshopMessage(resolved.reason),
+          details: { reason: resolved.reason },
+        });
+      }
+      if (batch.fromWorkshopId !== resolved.workshopId) {
+        await tx.batch.update({
+          where: { id: batch.id },
+          data: { fromWorkshopId: resolved.workshopId },
+        });
+      }
     }
 
     /*
@@ -1829,6 +1972,7 @@ export class BatchesService {
       direction: string;
       status: string;
       fromStoreId: string | null;
+      fromWorkshopId?: string | null;
       toStoreId: string | null;
       toWorkshopId: string | null;
       courierId: string | null;
@@ -1839,6 +1983,7 @@ export class BatchesService {
       comment: string | null;
       createdAt: Date;
       fromStore?: { name: string } | null;
+      fromWorkshop?: { name: string } | null;
       toStore?: { name: string } | null;
       toWorkshop?: { name: string } | null;
     },
@@ -1852,6 +1997,9 @@ export class BatchesService {
       status: row.status,
       fromStoreId: row.fromStoreId,
       fromStoreName: row.fromStore?.name ?? null,
+      fromWorkshopId: row.fromWorkshopId ?? null,
+      fromWorkshopName: row.fromWorkshop?.name ?? null,
+      senderKind: batchSenderKind(row.direction as BatchDirection),
       toStoreId: row.toStoreId,
       toStoreName: row.toStore?.name ?? null,
       toWorkshopId: row.toWorkshopId,

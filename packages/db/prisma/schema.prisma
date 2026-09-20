@@ -58,6 +58,8 @@ model Workshop {
   performers Performer[]
   orders     Order[]
   batchesTo  Batch[]     @relation("BatchToWorkshop")
+  /* Партии, которые этот цех ОТПРАВИЛ (дефект 76). */
+  batchesFrom Batch[]    @relation("BatchFromWorkshop")
 
   @@map("workshop")
 }
@@ -928,6 +930,16 @@ model Batch {
   direction    BatchDirection
   status       BatchStatus    @default(DRAFT)
   fromStoreId  String?
+  /*
+   * Цех-отправитель партии «в магазин» (дефект 76).
+   *
+   * Поля не было вовсе, поэтому отправку из цеха можно было записать только как
+   * «из магазина» — и в акте приёма-передачи отправителем значился магазин, то
+   * есть документ называл не того, кто передал изделия. Заполняется
+   * АВТОМАТИЧЕСКИ по цеху заказов партии; для партии «в цех» остаётся пустым,
+   * потому что там отправляет магазин (`fromStoreId`).
+   */
+  fromWorkshopId String?
   toStoreId    String?
   toWorkshopId String?
   courierId    String?
@@ -941,6 +953,7 @@ model Batch {
   updatedAt    DateTime       @updatedAt
 
   fromStore  Store?       @relation("BatchFromStore", fields: [fromStoreId], references: [id])
+  fromWorkshop Workshop?  @relation("BatchFromWorkshop", fields: [fromWorkshopId], references: [id])
   toStore    Store?       @relation("BatchToStore", fields: [toStoreId], references: [id])
   toWorkshop Workshop?    @relation("BatchToWorkshop", fields: [toWorkshopId], references: [id])
   items      BatchItem[]

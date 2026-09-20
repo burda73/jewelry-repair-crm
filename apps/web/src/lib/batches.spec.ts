@@ -30,6 +30,7 @@ import {
   isCreateBatchValid,
   receiveConsequences,
   validateCreateBatch,
+  type CreateBatchForm,
 } from './batches';
 import type { BatchCandidateGroup } from './api-types';
 
@@ -347,5 +348,87 @@ describe('Печать реестра (акт)', () => {
     expect(batchActPdfPath('cmu8p6fku0008amsd0jpm7j3r')).toBe(
       '/api/v1/batches/cmu8p6fku0008amsd0jpm7j3r/act/pdf',
     );
+  });
+});
+
+/**
+ * Отправитель партии в форме создания (дефект 76).
+ *
+ * РЕАЛЬНЫЙ ДЕФЕКТ. Форма требовала магазин отправления при ЛЮБОМ направлении,
+ * поэтому при отправке из цеха в магазин сотрудник вынужденно выбирал магазин,
+ * и он же попадал отправителем в акт приёма-передачи. Документ называл не того,
+ * кто передал изделия.
+ */
+describe('Форма партии: отправитель по направлению', () => {
+  /** Заполненная форма без единой ошибки, кроме проверяемой. */
+  function form(overrides: Partial<CreateBatchForm> = {}): CreateBatchForm {
+    return {
+      direction: BATCH_DIRECTION.TO_PRODUCTION,
+      fromStoreId: 'store-1',
+      toStoreId: 'store-2',
+      toWorkshopId: 'workshop-1',
+      plannedAt: '2026-09-25',
+      comment: '',
+      ...overrides,
+    };
+  }
+
+  it('для партии «в магазин» магазин-отправитель НЕ требуется', () => {
+    /*
+     * ГЛАВНАЯ проверка исправления. Прежде эта форма считалась невалидной, и
+     * сотрудник был вынужден выбрать магазин — который и становился
+     * отправителем в акте.
+     */
+    const errors = validateCreateBatch(
+      form({ direction: BATCH_DIRECTION.TO_STORE, fromStoreId: '' }),
+    );
+
+    expect(errors.fromStoreId).toBeUndefined();
+    expect(errors).toEqual({});
+  });
+
+  it('для партии «в цех» магазин-отправитель обязателен', () => {
+    // Изделия принимают в магазине: без него неизвестно, откуда их везут.
+    const errors = validateCreateBatch(
+      form({ direction: BATCH_DIRECTION.TO_PRODUCTION, fromStoreId: '' }),
+    );
+
+    expect(errors.fromStoreId).toBe('Выберите магазин отправления');
+  });
+
+  it('для партии «в магазин» обязателен магазин НАЗНАЧЕНИЯ', () => {
+    // Обратная сторона: отправитель не запрашивается, но получателя выбрать нужно.
+    const errors = validateCreateBatch(
+      form({ direction: BATCH_DIRECTION.TO_STORE, fromStoreId: '', toStoreId: '' }),
+    );
+
+    expect(errors.toStoreId).toBe('Для партии в магазин выберите магазин назначения');
+  });
+
+  it('заполненный магазин-отправитель не ломает партию «в магазин»', () => {
+    /*
+     * Устаревший черновик формы мог сохранить значение. Оно не должно мешать
+     * созданию: сервер игнорирует отправителя-магазин для этого направления.
+     */
+    const errors = validateCreateBatch(form({ direction: BATCH_DIRECTION.TO_STORE }));
+
+    expect(errors).toEqual({});
+  });
+
+  it('направления проверяются независимо друг от друга', () => {
+    /*
+     * Регрессия на исходную ошибку: проверка отправителя была общей для обоих
+     * направлений. Если её снова сделать общей, партия «в магазин» опять начнёт
+     * требовать магазин.
+     */
+    const toProduction = validateCreateBatch(
+      form({ direction: BATCH_DIRECTION.TO_PRODUCTION, fromStoreId: '' }),
+    );
+    const toStore = validateCreateBatch(
+      form({ direction: BATCH_DIRECTION.TO_STORE, fromStoreId: '' }),
+    );
+
+    expect(toProduction.fromStoreId).toBeDefined();
+    expect(toStore.fromStoreId).toBeUndefined();
   });
 });
