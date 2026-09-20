@@ -27,6 +27,7 @@ import {
   formatMoney,
   formatReceiptDate,
   isFilled,
+  metalTableColumns,
   type ReceiptData,
 } from '@app/shared';
 
@@ -224,9 +225,14 @@ export class ReceiptService {
   private drawMetal(doc: PDFKit.PDFDocument, data: ReceiptContext): void {
     if (data.items.length === 0) return;
 
-    const widths = [0, 0.42, 0.18, 0.4];
+    /*
+     * Наименование металла вчетверо шире каждой из колонок «Проба» и «Принято».
+     * Пропорция живёт в домене (`metalTableColumns`), потому что это требование
+     * к документу, а не деталь отрисовки: там её можно проверить тестом без
+     * сборки PDF.
+     */
     const usable = doc.page.width - MARGIN * 2;
-    const columns = widths.map((w) => usable * w);
+    const columns = metalTableColumns(usable);
 
     this.tableHeader(doc, ['Наименование металла', 'Проба', 'Принято, г'], columns, [
       'left',

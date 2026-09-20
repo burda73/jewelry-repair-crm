@@ -3,6 +3,7 @@ import {
   buildReceiptRows,
   buildReceiptSignatures,
   buildReceiptTotals,
+  metalTableColumns,
   RECEIPT_AGREEMENT,
 } from './receipt.js';
 
@@ -300,5 +301,77 @@ describe('Квитанция: дефекты и наименование цен�
 
     const металл = rows.find((r) => r.label === 'Металл');
     expect(металл?.value).toBe('Золото');
+  });
+});
+
+/**
+ * Ширины колонок таблицы металла.
+ *
+ * ТРЕБОВАНИЕ ЗАКАЗЧИКА. Колонка «Наименование металла» должна быть вчетверо
+ * шире каждой из колонок «Проба» и «Принято». Смысл в том, что наименование —
+ * единственная колонка с текстом произвольной длины («Золото, Цепь (Au585)»),
+ * а «Проба» и «Принято» содержат три-четыре знака. При равных долях
+ * наименование переносилось бы на вторую строку, а узкие колонки стояли бы
+ * полупустыми.
+ *
+ * Пропорция проверяется здесь, а не в тесте PDF: собрать PDF можно, но его
+ * содержимое отрисовано глифами и координатами, и утверждение о пропорции
+ * пришлось бы выводить из разбора потока страницы — хрупко и непонятно при
+ * падении. Арифметика колонок — чистый домен, и проверяется как домен.
+ */
+describe('Таблица металла: ширины колонок', () => {
+  const PAGE_WIDTH = 595.28; // A4, книжная
+  const MARGIN = 40;
+  const usable = PAGE_WIDTH - MARGIN * 2;
+
+  it('наименование вчетверо шире «Пробы»', () => {
+    const [name, proba] = metalTableColumns(usable);
+
+    expect(name! / proba!).toBeCloseTo(4, 6);
+  });
+
+  it('наименование вчетверо шире «Принято»', () => {
+    const [name, , accepted] = metalTableColumns(usable);
+
+    expect(name! / accepted!).toBeCloseTo(4, 6);
+  });
+
+  it('«Проба» и «Принято» равны между собой', () => {
+    // Они и должны быть равны: обе содержат короткое число, и разная ширина
+    // выглядела бы случайной.
+    const [, proba, accepted] = metalTableColumns(usable);
+
+    expect(proba).toBeCloseTo(accepted!, 6);
+  });
+
+  it('колонки заполняют полосу набора ровно, без остатка', () => {
+    // Иначе таблица была бы уже или шире полосы набора, и линия под строкой
+    // (она рисуется по сумме колонок) не совпала бы с текстом.
+    const columns = metalTableColumns(usable);
+
+    expect(columns.reduce((sum, w) => sum + w, 0)).toBeCloseTo(usable, 6);
+  });
+
+  it('наименование занимает две трети ширины таблицы', () => {
+    // 4 : 1 : 1 — это 4/6 = 2/3 полосы набора.
+    const [name] = metalTableColumns(usable);
+
+    expect(name! / usable).toBeCloseTo(2 / 3, 6);
+  });
+
+  it('колонки положительные и не выходят за поля страницы', () => {
+    const columns = metalTableColumns(usable);
+
+    expect(columns).toHaveLength(3);
+    for (const w of columns) expect(w).toBeGreaterThan(0);
+    expect(columns[0]! + columns[1]! + columns[2]!).toBeLessThanOrEqual(PAGE_WIDTH - MARGIN * 2);
+  });
+
+  it('пропорция не зависит от ширины страницы', () => {
+    // A5 или альбомная ориентация не должны менять соотношение колонок.
+    const [nameA4, probaA4] = metalTableColumns(usable);
+    const [nameA5, probaA5] = metalTableColumns(usable / 2);
+
+    expect(nameA4! / probaA4!).toBeCloseTo(nameA5! / probaA5!, 6);
   });
 });
