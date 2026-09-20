@@ -26,7 +26,8 @@ import {
   addWorkingDays,
   formatPhone,
   ORDER_STATUS,
-  IN_PRODUCTION_STATUSES,
+  OVERDUE_EXCLUDED_STATUSES,
+  summaryFromCounts,
   type OrderStatus,
 } from '@app/shared';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -251,28 +252,6 @@ export interface OrderListQuery {
 }
 
 /** Сводка для дашборда: счётчики по группам статусов. */
-/**
- * Статусы, которые в счётчик «просрочено» не попадают.
- *
- * `DRAFT` и `ACCEPTED` — заказ ещё не в производстве, срок по нему не начал
- * идти: `dueAt` там либо пуст, либо относится к приёмке.
- * `AWAITING_PREPAYMENT` ждёт клиента, а не сотрудника — напоминать некому.
- * Терминальные закрыты, и просрочки у них быть не может.
- *
- * Список совпадает с набором воркера эскалаций и дашборда просрочек: три
- * места, показывающие одну просрочку, обязаны считать её одинаково.
- */
-const OVERDUE_EXCLUDED_STATUSES: readonly OrderStatus[] = [
-  ORDER_STATUS.DRAFT,
-  ORDER_STATUS.ACCEPTED,
-  ORDER_STATUS.AWAITING_PREPAYMENT,
-  ORDER_STATUS.COMPLETED,
-  ORDER_STATUS.REFUSED,
-  ORDER_STATUS.REFUSED_BEFORE_WORK,
-  ORDER_STATUS.CANCELLED,
-  ORDER_STATUS.UNCLAIMED,
-];
-
 export interface OrderSummary {
   total: number;
   overdue: number;
@@ -728,7 +707,21 @@ export class OrdersService {
         OR: [{ createdStoreId: { in: query.storeId } }, { pickupStoreId: { in: query.storeId } }],
       });
     }
-    if (query.overdue) conditions.push({ dueAt: { lt: new Date() } });
+    if (query.overdue) {
+      /*
+       * Тот же набор исключений, что и в счётчике дашборда (дефект 68).
+       *
+       * Прежде здесь стояло только `dueAt < now`, и ссылка с карточки
+       * «Просрочено» открывала больше заказов, чем показывала сама карточка:
+       * выданные и отменённые заказы с истёкшим сроком в число не входили, а в
+       * список попадали. Расхождение счётчика и списка читается как ошибка
+       * системы, поэтому правило берётся из домена, а не пишется заново.
+       */
+      conditions.push({
+        dueAt: { lt: new Date() },
+        status: { notIn: [...OVERDUE_EXCLUDED_STATUSES] },
+      });
+    }
     if (query.isWarranty !== undefined) conditions.push({ isWarranty: query.isWarranty });
     if (query.priority) conditions.push({ priority: query.priority });
     if (query.orderNo)
@@ -957,70 +950,67 @@ export class OrdersService {
 
     const now = new Date();
 
-    const [aggregate, byStatus, overdueCount, unclaimedCount, awaitingPrepaymentCount] =
-      await Promise.all([
-        this.prisma.order.aggregate({ where: scopeFilter, _count: { _all: true } }),
-        this.prisma.order.groupBy({
-          by: ['status'],
-          where: scopeFilter,
-          _count: { _all: true },
-        }),
-        /*
-         * ДЕФЕКТ, найденный при сверке с docs/06 §3: здесь считались ВСЕ заказы с
-         * прошедшим сроком, включая закрытые. Выданный заказ с истёкшим сроком
-         * изготовления попадал в «просрочено» навсегда: чем дольше работает
-         * сеть, тем больше счётчик, и руководитель видел растущую просрочку,
-         * которую невозможно закрыть — выполненные заказы в ней остаются.
-         *
-         * Спецификация (docs/06 §3, «Просрочено сейчас») требует исключать
-         * терминальные статусы, и отчёт `deadlines`/`overdue` их уже исключает.
-         * Здесь тот же список, что и в отчёте: дашборд и отчёт об одном и том же
-         * обязаны показывать одно число, иначе доверия не будет ни к одному.
-         */
-        this.prisma.order.count({
-          where: {
-            AND: [
-              scopeFilter,
-              { dueAt: { lt: now } },
-              { status: { notIn: [...OVERDUE_EXCLUDED_STATUSES] } },
-            ],
-          },
-        }),
-        this.prisma.order.count({
-          where: { AND: [scopeFilter, { status: ORDER_STATUS.UNCLAIMED }] },
-        }),
-        this.prisma.order.count({
-          where: { AND: [scopeFilter, { status: ORDER_STATUS.AWAITING_PREPAYMENT }] },
-        }),
-      ]);
+    /*
+     * Отдельных запросов на «невостребованные» и «ожидают предоплату» больше
+     * нет: оба числа выводятся из разбивки по статусам (`byStatus`) общей
+     * функцией `summaryFromCounts`. Прежде они считались своими `count`,
+     * потому что каждое число в ответе писалось здесь руками, — и именно эта
+     * манера привела к расхождению счётчика «просрочено» со списком.
+     */
+    const [aggregate, byStatus, overdueCount] = await Promise.all([
+      this.prisma.order.aggregate({ where: scopeFilter, _count: { _all: true } }),
+      this.prisma.order.groupBy({
+        by: ['status'],
+        where: scopeFilter,
+        _count: { _all: true },
+      }),
+      /*
+       * ДЕФЕКТ, найденный при сверке с docs/06 §3: здесь считались ВСЕ заказы с
+       * прошедшим сроком, включая закрытые. Выданный заказ с истёкшим сроком
+       * изготовления попадал в «просрочено» навсегда: чем дольше работает
+       * сеть, тем больше счётчик, и руководитель видел растущую просрочку,
+       * которую невозможно закрыть — выполненные заказы в ней остаются.
+       *
+       * Спецификация (docs/06 §3, «Просрочено сейчас») требует исключать
+       * терминальные статусы, и отчёт `deadlines`/`overdue` их уже исключает.
+       * Здесь тот же список, что и в отчёте: дашборд и отчёт об одном и том же
+       * обязаны показывать одно число, иначе доверия не будет ни к одному.
+       */
+      this.prisma.order.count({
+        where: {
+          AND: [
+            scopeFilter,
+            { dueAt: { lt: now } },
+            { status: { notIn: [...OVERDUE_EXCLUDED_STATUSES] } },
+          ],
+        },
+      }),
+    ]);
 
     const counts = new Map<OrderStatus, number>();
     for (const row of byStatus) {
       counts.set(row.status, row._count._all);
     }
 
-    return {
+    /*
+     * Числа собираются общей функцией домена, а не здесь.
+     *
+     * Раньше каждая группа статусов была выписана в этом `return` отдельно — и
+     * ровно поэтому счётчик «просрочено» разошёлся со ссылкой на список: правку
+     * внесли в подсчёт, а в фильтр списка забыли. Теперь и число, и фильтр
+     * берутся из `DASHBOARD_COUNTERS`, и разойтись они не могут.
+     *
+     * «В производстве» — это ВСЕ статусы цеха, а не только `IN_PRODUCTION`:
+     * после задачи 7.1 заказы в цехе находятся в `ACCEPTED_BY_WORKSHOP`,
+     * `IN_WORK` и `WORK_COMPLETED`, а `IN_PRODUCTION` остался только у заказов,
+     * принятых до этой правки. Подсчёт по одному статусу показывал бы
+     * «в производстве: 0» при полном цехе заказов.
+     */
+    return summaryFromCounts({
       total: aggregate._count._all,
+      byStatus: counts,
       overdue: overdueCount,
-      unclaimed: unclaimedCount,
-      awaitingPrepayment: awaitingPrepaymentCount,
-      /*
-       * «В производстве» — это ВСЕ статусы цеха, а не только `IN_PRODUCTION`.
-       *
-       * После введения статусов производства (задача 7.1) заказы в цехе
-       * находятся в `ACCEPTED_BY_WORKSHOP`, `IN_WORK` и `WORK_COMPLETED`;
-       * `IN_PRODUCTION` остался только у заказов, принятых до этой правки.
-       * Подсчёт по одному статусу показывал бы «в производстве: 0» при полном
-       * цехе заказов — дашборд врал бы в самую заметную сторону.
-       */
-      inProduction: IN_PRODUCTION_STATUSES.reduce((sum, s) => sum + (counts.get(s) ?? 0), 0),
-      readyForPickup: counts.get(ORDER_STATUS.READY_FOR_PICKUP) ?? 0,
-      awaitingApproval: counts.get(ORDER_STATUS.AWAITING_APPROVAL) ?? 0,
-      inTransit:
-        (counts.get(ORDER_STATUS.IN_TRANSIT_TO_PRODUCTION) ?? 0) +
-        (counts.get(ORDER_STATUS.IN_TRANSIT_TO_STORE) ?? 0) +
-        (counts.get(ORDER_STATUS.QUEUED_FOR_DISPATCH) ?? 0),
-    };
+    });
   }
 
   /**

@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { ORDER_STATUS } from '@app/shared';
+import { ORDER_STATUS, OVERDUE_EXCLUDED_STATUSES } from '@app/shared';
 import { OrdersService } from './orders.service';
 import type { AuthenticatedUser } from '../../common/auth/jwt-auth.guard';
 
@@ -35,10 +35,12 @@ function user(): AuthenticatedUser {
 
 function makeService() {
   const orderCount = vi.fn(async () => 0);
+  const orderFindMany = vi.fn(async () => []);
   const prisma = {
     buildOrderScopeFilter: vi.fn(() => ({ storeId: 's-1' })),
     order: {
       count: orderCount,
+      findMany: orderFindMany,
       aggregate: vi.fn(async () => ({ _count: { _all: 0 } })),
       groupBy: vi.fn(async () => []),
     },
@@ -46,7 +48,13 @@ function makeService() {
   const workflow = {};
   const config = { get: vi.fn(() => undefined) };
   const service = new OrdersService(prisma as never, workflow as never, config as never);
-  return { service, orderCount };
+  return { service, orderCount, orderFindMany };
+}
+
+/** `where`, с которым список заказов обратился к базе. */
+function listWhere(orderFindMany: ReturnType<typeof vi.fn>): string {
+  const call = orderFindMany.mock.calls[0];
+  return JSON.stringify((call?.[0] as { where?: unknown })?.where ?? {});
 }
 
 /** Тело запроса, в котором считалась просрочка. */
@@ -136,5 +144,76 @@ describe('Просрочка в сводке заказов (дефект, за�
     for (const status of terminal) {
       expect(where, `статус ${status} из набора отчёта`).toContain(status);
     }
+  });
+});
+
+/**
+ * Дефект 68: ссылка с карточки «Просрочено» открывала НЕ то число.
+ *
+ * Счётчик дашборда исключал закрытые заказы, а список по `?overdue=true`
+ * фильтровал только по сроку. Карточка показывала 5, а ссылка открывала 12:
+ * выданные и отменённые заказы с истёкшим сроком в число не входили, но в список
+ * попадали. Расхождение числа и списка читается как ошибка системы, и доверия
+ * после него не будет ни к карточке, ни к списку.
+ *
+ * ПОЧЕМУ ДЕФЕКТ НЕ БЫЛ ВИДЕН. На пустой базе и на базе без закрытых заказов с
+ * прошедшим сроком оба правила дают одно число. Ошибка накапливается месяцами
+ * работы — как и в дефекте задачи 5.8, найденном в этом же счётчике.
+ */
+describe('Фильтр просрочки в списке совпадает со счётчиком (дефект 68)', () => {
+  it('список исключает тот же набор статусов, что и счётчик', async () => {
+    /*
+     * Главная проверка исправления: правило берётся из домена
+     * (`OVERDUE_EXCLUDED_STATUSES`), поэтому оба запроса обязаны нести один и
+     * тот же набор. Тест сравнивает ДВА места между собой, а не сверяет
+     * выписанный список руками, — иначе он повторил бы ошибку и прошёл бы на
+     * расхождении.
+     */
+    const forSummary = makeService();
+    await forSummary.service.getSummary(user());
+    const summaryWhere = JSON.stringify(overdueWhere(forSummary.orderCount));
+
+    const forList = makeService();
+    await forList.service.findAll({ overdue: true }, user());
+    const list = listWhere(forList.orderFindMany);
+
+    for (const status of OVERDUE_EXCLUDED_STATUSES) {
+      expect(summaryWhere, `счётчик должен исключать ${status}`).toContain(status);
+      expect(list, `список должен исключать ${status}`).toContain(status);
+    }
+  });
+
+  it('список без фильтра просрочки закрытые заказы НЕ исключает', async () => {
+    /*
+     * Обратная сторона: исключение относится только к просрочке. Обычный список
+     * обязан показывать и выданные заказы, иначе их нельзя было бы найти.
+     */
+    const { service, orderFindMany } = makeService();
+    await service.findAll({}, user());
+
+    const where = listWhere(orderFindMany);
+    for (const status of OVERDUE_EXCLUDED_STATUSES) {
+      expect(where, `без overdue статус ${status} не исключается`).not.toContain(status);
+    }
+  });
+
+  it('условие по сроку в списке сохраняется', async () => {
+    // Исправление не должно было убрать `dueAt < now`: без него «просрочкой»
+    // стали бы все заказы вообще.
+    const { service, orderFindMany } = makeService();
+    await service.findAll({ overdue: true }, user());
+
+    const where = listWhere(orderFindMany);
+    expect(where).toContain('dueAt');
+    expect(where).toContain('lt');
+  });
+
+  it('область видимости в списке сохраняется', async () => {
+    // Просрочка в списке считается по магазинам сотрудника; потеря условия
+    // показала бы приёмщику чужую просрочку.
+    const { service, orderFindMany } = makeService();
+    await service.findAll({ overdue: true }, user());
+
+    expect(listWhere(orderFindMany)).toContain('s-1');
   });
 });

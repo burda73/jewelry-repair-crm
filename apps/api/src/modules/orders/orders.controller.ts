@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -26,6 +27,7 @@ import { Roles, RequirePermission } from '../../common/auth/roles.decorator';
 import {
   ROLE,
   PERMISSION,
+  parseStatusFilter,
   transitionSchema,
   cancelOrderSchema,
   type OrderStatus,
@@ -90,11 +92,30 @@ export class OrdersController {
     const asArray = (value?: string | string[]): string[] | undefined =>
       value === undefined ? undefined : Array.isArray(value) ? value : [value];
 
+    /*
+     * Статусы разбираются общей функцией домена: она принимает и `?status=A,B`
+     * (так выглядит срез в адресе страницы, его копируют целиком), и
+     * `?status=A&status=B` (так его сериализует клиент).
+     *
+     * Раньше значение оборачивалось в массив как есть, и `?status=A,B` уезжало в
+     * базу одним значением `"A,B"`: Prisma отвечала ошибкой валидации, и список
+     * заказов возвращал 500 — то есть скопированная из адресной строки ссылка
+     * ломала экран. Неизвестный статус давал ту же 500 вместо понятного 400.
+     */
+    const parsedStatus = parseStatusFilter(status);
+    if (parsedStatus.invalid.length > 0) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Неизвестный статус заказа',
+        details: { status: parsedStatus.invalid },
+      });
+    }
+
     return this.ordersService.findAll(
       {
         limit: limit ? Number(limit) : undefined,
         cursor: cursor ?? undefined,
-        status: asArray(status) as OrderStatus[] | undefined,
+        status: parsedStatus.statuses.length > 0 ? parsedStatus.statuses : undefined,
         storeId: asArray(storeId),
         overdue: overdue === 'true',
         orderNo: orderNo ?? undefined,

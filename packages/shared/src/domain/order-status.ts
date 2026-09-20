@@ -289,3 +289,60 @@ export function pickStageNorm<T extends StageNormLike>(
   if (candidates.length === 0) return null;
   return candidates.find((norm) => norm.workType === workType) ?? candidates[0] ?? null;
 }
+
+/** Результат разбора параметра `status`. */
+export interface ParsedStatusFilter {
+  /** Известные статусы; пустой массив означает «фильтра нет». */
+  readonly statuses: OrderStatus[];
+  /**
+   * Значения, которых нет среди статусов заказа.
+   *
+   * Возвращаются, а не отбрасываются. Отбросить их значило бы ответить на
+   * `?status=ОПЕЧАТКА` ПОЛНЫМ списком заказов: человек просил отфильтровать, а
+   * получил всё — и решил бы, что фильтр не работает. Это хуже явной ошибки.
+   */
+  readonly invalid: string[];
+}
+
+/**
+ * Разобрать значение параметра `status` из адреса или запроса.
+ *
+ * Два формата обязаны работать оба, и это не удобство, а следствие того, как
+ * параметр попадает в систему:
+ *
+ * * `?status=A,B` — так выглядит СРЕЗ в адресе страницы (docs/08 §7), его
+ *   копируют из строки браузера и пересылают коллеге целиком;
+ * * `?status=A&status=B` — так его сериализует клиент из массива.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНАЯ ФУНКЦИЯ. Раньше контроллер просто оборачивал значение в
+ * массив, и формат с запятой уезжал в базу как ОДНО значение `"A,B"`. Prisma
+ * отвечала ошибкой валидации, и список заказов возвращал **500** вместо 400 —
+ * то есть ссылка, скопированная из адресной строки, ломала экран. Неизвестное
+ * значение статуса давало ту же 500.
+ *
+ * Функция чистая: она разбирает и сообщает, что нашла, а решение о коде ответа
+ * принимает вызывающий. Домен не знает про HTTP.
+ */
+export function parseStatusFilter(value: string | string[] | undefined): ParsedStatusFilter {
+  if (value === undefined) return { statuses: [], invalid: [] };
+
+  const raw = (Array.isArray(value) ? value : [value])
+    .flatMap((entry) => entry.split(','))
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '');
+
+  const known = new Set<string>(ALL_ORDER_STATUSES);
+  const statuses: OrderStatus[] = [];
+  const invalid: string[] = [];
+
+  for (const entry of raw) {
+    if (known.has(entry)) {
+      const status = entry as OrderStatus;
+      if (!statuses.includes(status)) statuses.push(status);
+    } else if (!invalid.includes(entry)) {
+      invalid.push(entry);
+    }
+  }
+
+  return { statuses, invalid };
+}

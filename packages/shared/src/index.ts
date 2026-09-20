@@ -13,6 +13,7 @@ export * from './domain/escalation.js';
 export * from './domain/notification-templates.js';
 export * from './domain/reports.js';
 export * from './domain/dashboard.js';
+export * from './domain/order-counters.js';
 export * from './ports/notification.port.js';
 export * from './domain/notification-policy.js';
 export * from './domain/receipt.js';

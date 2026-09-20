@@ -5,6 +5,8 @@
  * мультиязычность и, главное, защита от расхождений — одна и та же подпись
  * в разных экранах должна выглядеть одинаково.
  */
+import type { DashboardCounterKey } from '@app/shared';
+
 export const t = {
   app: {
     title: 'Ремонт ювелирных изделий',
@@ -361,14 +363,17 @@ export const t = {
     title: 'Дашборд',
     greeting: 'Здравствуйте',
     overview: 'Обзор',
-    totalOrders: 'Всего заказов',
-    inProduction: 'В производстве',
-    readyForPickup: 'Готовы к выдаче',
-    unclaimed: 'Невостребованные',
+    /*
+     * Подписи плиток «Обзор» живут в `DASHBOARD_COUNTER_LABELS`, а не здесь:
+     * они обязаны совпадать с фильтром ссылки из домена, и разнести их по двум
+     * словарям значило бы снова получить две правды. Здесь остаётся только то,
+     * что используется вне плиток (быстрые действия).
+     */
     overdue: 'Просроченные',
-    awaitingPrepayment: 'Ожидают предоплату',
     myOrders: 'Мои заказы',
     quickActions: 'Быстрые действия',
+    /** Подсказка на плитке: куда ведёт клик. */
+    showOrders: 'Показать заказы',
   },
 
   common: {
@@ -500,6 +505,28 @@ export const t = {
 } as const;
 
 /** Приоритеты заказа: отображение в интерфейсе. */
+/**
+ * Подписи и цвета плиток раздела «Обзор».
+ *
+ * Карта объявлена как `Record<DashboardCounterKey, …>`: добавленный в домене
+ * счётчик без подписи — ошибка компиляции, а не пустая плитка на дашборде.
+ * Раньше подписи лежали прямо в разметке рядом с числами сервера, и «просрочено»
+ * разошлось со своим фильтром: правку внесли в подсчёт, а в ссылку забыли.
+ */
+export const DASHBOARD_COUNTER_LABELS: Record<
+  DashboardCounterKey,
+  { label: string; tone: 'default' | 'warning' | 'danger' | 'success' }
+> = {
+  total: { label: 'Всего заказов', tone: 'default' },
+  inProduction: { label: 'В производстве', tone: 'default' },
+  readyForPickup: { label: 'Готовы к выдаче', tone: 'success' },
+  overdue: { label: 'Просроченные', tone: 'danger' },
+  awaitingPrepayment: { label: 'Ожидают предоплату', tone: 'warning' },
+  unclaimed: { label: 'Невостребованные', tone: 'warning' },
+  awaitingApproval: { label: 'Ожидают согласования', tone: 'warning' },
+  inTransit: { label: 'В пути', tone: 'default' },
+};
+
 export const PRIORITY_LABELS: Record<string, string> = {
   LOW: 'Низкий',
   NORMAL: 'Обычный',

@@ -8,19 +8,11 @@ import { useAuth } from '@/lib/auth-context';
 import { api } from '@/lib/api-client';
 import { StatCard } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { t } from '@/lib/i18n';
+import { DASHBOARD_COUNTERS, counterListHref, type OrderSummaryCounts } from '@app/shared';
+import { t, DASHBOARD_COUNTER_LABELS } from '@/lib/i18n';
 
 /** Сводка заказов — ответ `GET /orders/summary`. */
-interface OrderSummary {
-  total: number;
-  overdue: number;
-  unclaimed: number;
-  awaitingPrepayment: number;
-  awaitingApproval: number;
-  inProduction: number;
-  readyForPickup: number;
-  inTransit: number;
-}
+type OrderSummary = OrderSummaryCounts;
 
 /**
  * Дашборд.
@@ -91,41 +83,37 @@ export default function DashboardPage(): ReactNode {
           <h2 id="dashboard-overview" className="mb-3 text-sm font-semibold text-slate-500">
             {t.dashboard.overview}
           </h2>
+          {/*
+            Плитки строятся из общего описания `DASHBOARD_COUNTERS`: оно же
+            задаёт фильтр ссылки. Раньше подписи и фильтры были выписаны здесь
+            руками рядом с числами сервера, и «просрочено» разошлось: карточка
+            исключала закрытые заказы, а список по ссылке — нет. Теперь число и
+            адрес берутся из одной записи, и разойтись не могут.
+
+            Ноль не делает плитку неактивной: пустой список с фильтром —
+            понятный ответ «таких заказов нет», а серая плитка выглядит как
+            сломанная кнопка и не объясняет, почему она ничего не делает.
+          */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard
-              label={t.dashboard.totalOrders}
-              value={isLoading ? '…' : (data?.total ?? 0)}
-            />
-            <StatCard
-              label={t.dashboard.inProduction}
-              value={isLoading ? '…' : (data?.inProduction ?? 0)}
-            />
-            <StatCard
-              label={t.dashboard.readyForPickup}
-              value={isLoading ? '…' : (data?.readyForPickup ?? 0)}
-              tone="success"
-            />
-            <StatCard
-              label={t.dashboard.overdue}
-              value={isLoading ? '…' : (data?.overdue ?? 0)}
-              tone={data !== undefined && data.overdue > 0 ? 'danger' : 'default'}
-            />
-            <StatCard
-              label={t.dashboard.awaitingPrepayment}
-              value={isLoading ? '…' : (data?.awaitingPrepayment ?? 0)}
-              tone="warning"
-            />
-            <StatCard
-              label={t.dashboard.unclaimed}
-              value={isLoading ? '…' : (data?.unclaimed ?? 0)}
-              tone="warning"
-            />
-            <StatCard
-              label="Ожидают согласования"
-              value={isLoading ? '…' : (data?.awaitingApproval ?? 0)}
-              tone="warning"
-            />
-            <StatCard label="В пути" value={isLoading ? '…' : (data?.inTransit ?? 0)} />
+            {DASHBOARD_COUNTERS.map((counter) => {
+              const value = data?.[counter.key] ?? 0;
+              return (
+                <StatCard
+                  key={counter.key}
+                  label={DASHBOARD_COUNTER_LABELS[counter.key].label}
+                  value={isLoading ? '…' : value}
+                  // Красный только при ненулевой просрочке: постоянный красный
+                  // перестают замечать.
+                  tone={
+                    counter.key === 'overdue' && value === 0
+                      ? 'default'
+                      : DASHBOARD_COUNTER_LABELS[counter.key].tone
+                  }
+                  href={counterListHref(counter.filter)}
+                  hint={isLoading ? undefined : t.dashboard.showOrders}
+                />
+              );
+            })}
           </div>
         </section>
       ) : null}

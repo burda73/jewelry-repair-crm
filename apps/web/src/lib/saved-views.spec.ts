@@ -29,6 +29,7 @@ import {
   type SavedView,
 } from './saved-views';
 import type { OrderFilters } from './api-types';
+import { DASHBOARD_COUNTERS, counterListHref, type CounterFilter } from '@app/shared';
 
 class FakeStorage {
   private readonly map = new Map<string, string>();
@@ -328,5 +329,79 @@ describe('Представления: срез в адресе страницы'
     const { search } = queryToFilters(new URLSearchParams('q=+%D0%B7%D0%B0%D0%BA%D0%B0%D0%B7+'));
 
     expect(search).toBe('заказ');
+  });
+});
+
+/**
+ * Ссылки плиток дашборда читаются списком заказов.
+ *
+ * Домен строит адрес (`counterListHref`), список разбирает его
+ * (`queryToFilters`). Если форматы разойдутся, клик по плитке откроет
+ * НЕФИЛЬТРОВАННЫЙ список: число на карточке и содержимое страницы будут разными.
+ * Проверка живёт в веб-тестах, потому что именно здесь находятся обе половины
+ * контракта — построитель адреса из домена и его разбор из интерфейса.
+ */
+describe('Ссылки плиток дашборда: адрес читается списком заказов', () => {
+  /** Разобрать адрес так, как это делает страница списка. */
+  function parse(href: string): { filters: OrderFilters; search: string } {
+    const query = href.includes('?') ? href.slice(href.indexOf('?') + 1) : '';
+    return queryToFilters(new URLSearchParams(query));
+  }
+
+  it('фильтр по статусу возвращается тем же набором статусов', () => {
+    /*
+     * Основная проверка: набор не потерялся, не перепутался и не превратился в
+     * строку с запятой внутри одного статуса.
+     */
+    const restored = parse(counterListHref({ status: ['IN_WORK', 'WORK_COMPLETED'] }));
+    expect(restored.filters.status).toEqual(['IN_WORK', 'WORK_COMPLETED']);
+  });
+
+  it('просрочка возвращается именно просрочкой', () => {
+    // `overdue=false` и отсутствие параметра значат одно и то же, поэтому
+    // проверяем именно `true`.
+    const restored = parse(counterListHref({ overdue: true }));
+    expect(restored.filters.overdue).toBe(true);
+  });
+
+  it('пустой фильтр не добавляет списку условий', () => {
+    // «Всего заказов» обязано открывать список без фильтров: лишний параметр
+    // отсеял бы часть заказов, и число не совпало бы.
+    const restored = parse(counterListHref({}));
+    expect(restored.filters).toEqual({});
+    expect(restored.search).toBe('');
+  });
+
+  it('каждый счётчик дашборда даёт ровно свой фильтр и ничего лишнего', () => {
+    /*
+     * Проходим по всем плиткам: ни одна не должна «потеряться» по дороге в
+     * список. Сравнение идёт с фильтром из домена, поэтому новый счётчик
+     * проверяется автоматически, без правки теста.
+     */
+    for (const counter of DASHBOARD_COUNTERS) {
+      const restored = parse(counterListHref(counter.filter));
+      const expected: CounterFilter = counter.filter;
+
+      expect(restored.filters.overdue, `счётчик ${counter.key}`).toBe(
+        expected.overdue === true ? true : undefined,
+      );
+      expect(restored.filters.status, `счётчик ${counter.key}`).toEqual(
+        expected.status === undefined ? undefined : [...expected.status],
+      );
+    }
+  });
+
+  it('несколько статусов одного счётчика не склеиваются в один', () => {
+    /*
+     * «В производстве» состоит из пяти статусов. Если бы список читал строку
+     * целиком как один статус, фильтр не нашёл бы ничего и экран показал бы
+     * пустой список при полном цехе заказов.
+     */
+    const production = DASHBOARD_COUNTERS.find((c) => c.key === 'inProduction');
+    expect(production, 'счётчик «В производстве»').toBeDefined();
+
+    const restored = parse(counterListHref(production!.filter));
+    expect(restored.filters.status).toHaveLength(production!.filter.status!.length);
+    expect(restored.filters.status).not.toContain('IN_WORK,WORK_COMPLETED');
   });
 });
