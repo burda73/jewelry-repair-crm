@@ -132,6 +132,37 @@ describe('Настройки: сохранение реквизитов', () => 
     expect(saved.address).toBeNull();
   });
 
+  it('null в необязательных полях принимается: это форма «не заполнено»', async () => {
+    /*
+     * Проверено на боевом сервере: клиент, прочитавший реквизиты и отправивший
+     * их обратно без изменений, получал 400 на `inn: null`. Именно `null`
+     * возвращает GET и хранит база, поэтому сохранение настроек ломалось бы
+     * ровно тогда, когда ничего не меняли.
+     */
+    const { service } = makeService();
+
+    const saved = await service.saveOrganizationRequisites(
+      { name: 'ИП Бурда', inn: null, phone: null, address: null },
+      admin(),
+    );
+
+    expect(saved).toMatchObject({ name: 'ИП Бурда', inn: null, phone: null, address: null });
+  });
+
+  it('прочитанные реквизиты можно сохранить обратно без изменений', async () => {
+    // Круговой рейс GET → PUT: форма настроек загружает значение и отправляет
+    // его назад. Если этот путь падает, администратор не может сохранить экран,
+    // даже ничего не тронув.
+    const { service } = makeService({
+      stored: { name: 'ИП Бурда Виталий Валерьевич', inn: null, phone: null, address: null },
+    });
+
+    const loaded = await service.getOrganizationRequisites();
+    const saved = await service.saveOrganizationRequisites(loaded, admin());
+
+    expect(saved).toEqual(loaded);
+  });
+
   it('запись и аудит — в одной транзакции', async () => {
     /*
      * Без записи в аудите нельзя ответить, кто и когда поменял наименование в
