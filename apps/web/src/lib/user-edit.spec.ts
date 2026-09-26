@@ -200,10 +200,10 @@ describe('describeUserDraftError', () => {
 });
 
 describe('passwordPolicyViolations', () => {
-  it('перечисляет все причины для совсем слабого пароля', () => {
+  it('сообщает о коротком пароле', () => {
     const violations = passwordPolicyViolations('12345');
 
-    expect(violations).toEqual(['TOO_SHORT', 'MISSING_LOWER', 'MISSING_UPPER']);
+    expect(violations).toEqual(['TOO_SHORT']);
   });
 
   it('ничего не находит в пароле от генератора', () => {
@@ -212,10 +212,22 @@ describe('passwordPolicyViolations', () => {
     expect(passwordPolicyViolations(generatePassword())).toEqual([]);
   });
 
-  it('различает отсутствие разных классов символов', () => {
-    expect(passwordPolicyViolations('abcdefghijkl')).toEqual(['MISSING_UPPER', 'MISSING_DIGIT']);
-    expect(passwordPolicyViolations('ABCDEFGHIJKL')).toEqual(['MISSING_LOWER', 'MISSING_DIGIT']);
-    expect(passwordPolicyViolations('Abcdefghijkl')).toEqual(['MISSING_DIGIT']);
+  it('не предъявляет требований к составу символов', () => {
+    /*
+     * Политика сократилась до длины (решение заказчика). Случаи подобраны так,
+     * что каждый нарушил бы ровно одно из снятых правил: если правило вернут,
+     * соответствующий случай даст непустой список и тест упадёт.
+     */
+    expect(passwordPolicyViolations('абвгдеж')).toEqual([]); // без прописных и цифр
+    expect(passwordPolicyViolations('АБВГДЕЖ')).toEqual([]); // без строчных и цифр
+    expect(passwordPolicyViolations('123456')).toEqual([]); // только цифры
+    expect(passwordPolicyViolations('abcdef')).toEqual([]); // без цифр и специальных
+  });
+
+  it('ровно 6 символов уже проходит', () => {
+    // Граница: 5 — короткий, 6 — достаточно.
+    expect(passwordPolicyViolations('12345')).toEqual(['TOO_SHORT']);
+    expect(passwordPolicyViolations('123456')).toEqual([]);
   });
 
   it('не считает слишком длинный пароль нарушением длины', () => {

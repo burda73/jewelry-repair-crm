@@ -133,9 +133,16 @@ export function describeUserDraftError(draft: UserEditDraft): string | null {
   return null;
 }
 
-/** Код причины, по которой пароль не проходит политику; `null` — проходит. */
-export type PasswordPolicyViolation =
-  'TOO_SHORT' | 'MISSING_LOWER' | 'MISSING_UPPER' | 'MISSING_DIGIT';
+/**
+ * Код причины, по которой пароль не проходит политику; список пуст — проходит.
+ *
+ * Осталась ОДНА причина: политика сократилась до длины (минимум 6 символов,
+ * решение заказчика). Коды `MISSING_LOWER`, `MISSING_UPPER` и `MISSING_DIGIT`
+ * убраны вместе с требованиями, которые они описывали: код, который невозможно
+ * получить, пришлось бы держать в словаре переводов и объяснять при следующей
+ * правке — то есть он только вводил бы в заблуждение.
+ */
+export type PasswordPolicyViolation = 'TOO_SHORT';
 
 /**
  * Разобрать пароль по правилам политики.
@@ -146,10 +153,7 @@ export type PasswordPolicyViolation =
  */
 export function passwordPolicyViolations(password: string): PasswordPolicyViolation[] {
   const violations: PasswordPolicyViolation[] = [];
-  if (password.length < 12) violations.push('TOO_SHORT');
-  if (!/[a-z]/.test(password)) violations.push('MISSING_LOWER');
-  if (!/[A-Z]/.test(password)) violations.push('MISSING_UPPER');
-  if (!/\d/.test(password)) violations.push('MISSING_DIGIT');
+  if (password.length < 6) violations.push('TOO_SHORT');
   return violations;
 }
 
@@ -167,7 +171,7 @@ export function isPasswordReady(password: string): boolean {
 /**
  * Стоит ли показывать, чего не хватает в пароле.
  *
- * На нетронутом поле подсказка «минимум 12 символов» читалась бы как уже
+ * На нетронутом поле подсказка «минимум 6 символов» читалась бы как уже
  * допущенная ошибка, поэтому причины показываются только после начала ввода.
  */
 export function shouldExplainPassword(password: string): boolean {

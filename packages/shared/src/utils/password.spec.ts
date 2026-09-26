@@ -144,18 +144,59 @@ describe('generatePassword: случайность', () => {
 
 describe('isStrongEnoughPassword: совпадает с passwordSchema', () => {
   it('согласован с passwordSchema на наборе случаев', () => {
+    /*
+     * Случаи подобраны вокруг новой границы в 6 символов и по обе стороны от
+     * старой в 12: если бы здесь осталась прежняя политика, набор всё равно
+     * поймал бы расхождение с сервером.
+     */
     const cases = [
+      '123456',
+      'short', // 5 символов — на границе
+      'abcdef', // ровно 6
       'Str0ngPassword12',
-      'short',
       'alllowercase123',
       'ALLUPPERCASE123',
       'NoDigitsHereAtAll',
+      '        ', // пробелы допустимы: политика ограничивает только длину
       'a'.repeat(129),
       generatePassword(),
     ];
     for (const value of cases) {
       expect(isStrongEnoughPassword(value), `расхождение на «${value}»`).toBe(
         passwordSchema.safeParse(value).success,
+      );
+    }
+  });
+
+  it('принимает пароль из 6 символов без состава символов', () => {
+    // Новое требование заказчика: состав символов больше не проверяется.
+    expect(isStrongEnoughPassword('123456')).toBe(true);
+    expect(isStrongEnoughPassword('пароль')).toBe(true);
+    expect(isStrongEnoughPassword('abcdef')).toBe(true);
+  });
+
+  it('по-прежнему отклоняет пароль короче 6 символов', () => {
+    // Граница должна остаться границей: иначе политика перестала бы существовать.
+    expect(isStrongEnoughPassword('авбгд')).toBe(false); // 5
+    expect(isStrongEnoughPassword('12345')).toBe(false); // 5
+    expect(isStrongEnoughPassword('')).toBe(false);
+  });
+
+  it('не требует ни регистра, ни цифр, ни специальных символов', () => {
+    /*
+     * Проверка «от противного»: каждый из этих паролей нарушил бы ХОТЯ БЫ ОДНО
+     * прежнее требование и был бы отклонён старой политикой. Так тест ловит
+     * возврат любого из снятых правил по отдельности, а не только всех сразу.
+     */
+    const безРегистра = 'абвгдеж'; // нет прописных и цифр
+    const толькоПрописные = 'АБВГДЕЖ';
+    const толькоЦифры = '123456';
+    const безСпецсимволов = 'simple';
+
+    for (const value of [безРегистра, толькоПрописные, толькоЦифры, безСпецсимволов]) {
+      expect(isStrongEnoughPassword(value), `должен приниматься: «${value}»`).toBe(true);
+      expect(passwordSchema.safeParse(value).success, `сервер должен принять: «${value}»`).toBe(
+        true,
       );
     }
   });
